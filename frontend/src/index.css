@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* モバイルでブラウザが本文を勝手に拡大しないようにする（DevTools デバイスモード含む） */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    'Noto Sans JP',
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
