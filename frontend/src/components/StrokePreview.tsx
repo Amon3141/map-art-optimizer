@@ -47,7 +47,8 @@ export function StrokePreview({ points, className = '' }: StrokePreviewProps) {
         <polyline
           fill="none"
           stroke="currentColor"
-          strokeWidth={2.5}
+          strokeWidth={3}
+          vectorEffect="non-scaling-stroke"
           strokeLinecap="round"
           strokeLinejoin="round"
           points={d}

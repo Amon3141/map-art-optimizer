@@ -75,6 +75,10 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   const endStroke = () => {
     if (!drawing) return
     setDrawing(false)
+    setPoints((prev) => {
+      if (prev.length < 2) return prev
+      return simplifyStroke(prev)
+    })
   }
 
   const handleConfirm = () => {
@@ -82,8 +86,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
       setHint('線を描いてから決定してください。')
       return
     }
-    const simplified = simplifyStroke(points)
-    onConfirm(simplified)
+    onConfirm(points)
     onClose()
   }
 
@@ -103,16 +106,26 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
           形を描く
         </h2>
         <p className="mt-1.5 text-sm text-stone-600">
-          指またはマウスでなぞってください。線を離すと一段落。もう一度キャンバスに触れると、いまの線を消して書き直せます。
+          指またはマウスでなぞってください。もう一度キャンバスに触れると、いまの線を消して書き直せます。
         </p>
-        <canvas
-          ref={canvasRef}
-          className="mt-4 h-64 w-full cursor-crosshair touch-none rounded-xl border border-dashed border-stone-300 bg-white sm:h-80 md:h-[22rem] lg:h-[26rem]"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endStroke}
-          onPointerCancel={endStroke}
-        />
+        <div className="relative mt-4">
+          <canvas
+            ref={canvasRef}
+            className="h-64 w-full cursor-crosshair touch-none rounded-xl border border-dashed border-stone-300 bg-white sm:h-80 md:h-[22rem] lg:h-[26rem]"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endStroke}
+            onPointerCancel={endStroke}
+          />
+          {points.length >= 2 ? (
+            <p
+              className="pointer-events-none absolute bottom-2 right-2 select-none text-[11px] text-stone-400"
+              aria-live="polite"
+            >
+              {drawing ? `${points.length} 点（描画中）` : `${points.length} 点（簡略化後）`}
+            </p>
+          ) : null}
+        </div>
         {hint ? <p className="mt-2 text-sm text-amber-800">{hint}</p> : null}
         <div className="mt-4 flex justify-end gap-2 lg:mt-6">
           <button

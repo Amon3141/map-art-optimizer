@@ -10,7 +10,7 @@
 ```
 map-draw-optimizer/
   docs/
-  frontend/     # Vite アプリ（左パネルは components/HomeSidebar.tsx）
+  frontend/     # Vite アプリ
   backend/      # FastAPI
 ```
 
@@ -40,7 +40,7 @@ map-draw-optimizer/
 
 ## 手書きストロークの簡略化
 
-**Ramer–Douglas–Peucker**。キャンバス座標（ピクセル）上で許容誤差 `SIMPLIFY_TOLERANCE_PX`（[`frontend/src/lib/simplify.ts`](../frontend/src/lib/simplify.ts)、調整可）。確定後の点列は [`StrokePreview`](../frontend/src/components/StrokePreview.tsx) でサイドバーに縮小表示。
+**Ramer–Douglas–Peucker**。キャンバス座標（ピクセル）上で許容誤差 `SIMPLIFY_TOLERANCE_PX`（[`frontend/src/lib/simplify.ts`](../frontend/src/lib/simplify.ts)、調整可）。手書きモーダルでは **ポインターを離したタイミング**で簡略化しキャンバス表示を更新（決定時はそのまま確定）。確定後の点列は [`StrokePreview`](../frontend/src/components/StrokePreview.tsx) でサイドバーに縮小表示。
 
 ## Overpass 利用上の注意
 

@@ -42,14 +42,14 @@ export function HomeSidebar({
         </button>
 
         {hasShape && strokePoints ? (
-          <div className="flex flex-col items-center gap-1.5">
-            <StrokePreview points={strokePoints} className="w-full max-w-[220px]" />
-            <p className="text-xs text-stone-600">簡略化後 {strokePoints.length} 点</p>
-          </div>
+          <StrokePreview
+            points={strokePoints}
+            className="mx-auto w-full max-w-[220px]"
+          />
         ) : null}
       </div>
 
-      <div　className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2.5">
         <label
           className="block text-sm font-medium text-stone-700"
         >
