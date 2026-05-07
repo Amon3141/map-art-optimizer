@@ -1,5 +1,8 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { DEBUG_ROAD_TYPE_VALUES, type DebugRoadType } from '../lib/debugRoadTypes'
+import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
+import type { DebugMapViewMode } from './DebugMapPanel'
 import { DebugWayList } from './DebugWayList'
 
 const EMPTY_PLACEHOLDER = '（未取得）'
@@ -21,6 +24,13 @@ export type DebugSidebarProps = {
   onRoadTypeChecked: (value: DebugRoadType, checked: boolean) => void
   canFetchWays: boolean
   onFetchWays: () => void
+  mapViewMode: DebugMapViewMode
+  onMapViewModeChange: (mode: DebugMapViewMode) => void
+  graphOptions: GraphBuildOptionsPayload
+  onGraphOptionsChange: (next: GraphBuildOptionsPayload) => void
+  graphLoading: boolean
+  graphError: string | null
+  graphPreview: GraphPreviewResponse | null
 }
 
 export function DebugSidebar({
@@ -38,9 +48,17 @@ export function DebugSidebar({
   onRoadTypeChecked,
   canFetchWays,
   onFetchWays,
+  mapViewMode,
+  onMapViewModeChange,
+  graphOptions,
+  onGraphOptionsChange,
+  graphLoading,
+  graphError,
+  graphPreview,
 }: DebugSidebarProps) {
   const features = geojson?.features ?? []
   const fetchedWayCount = geojson != null ? features.length : null
+  const hasRoadData = features.length > 0
 
   const emptyPlaceholder = (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -48,10 +66,45 @@ export function DebugSidebar({
     </div>
   )
 
+  const toggleOpt = (key: keyof GraphBuildOptionsPayload, checked: boolean) => {
+    if (key === 'snap_epsilon_m') return
+    onGraphOptionsChange({ ...graphOptions, [key]: checked })
+  }
+
   return (
     <aside className="flex min-h-0 w-full flex-1 flex-col gap-4.5 overflow-hidden p-5 pb-4 lg:max-w-sm lg:h-full lg:flex-none lg:min-h-0 lg:overflow-visible lg:shrink-0 lg:py-5 lg:pl-5 lg:pr-0">
       <div className="shrink-0 flex flex-col gap-2.5">
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">デバッグページ</h1>
+        <div
+          className="inline-flex w-full shrink-0 rounded-xl border border-dashed border-stone-400 bg-white p-0.5 shadow-sm"
+          role="group"
+          aria-label="マップ表示モード"
+        >
+          <button
+            type="button"
+            onClick={() => onMapViewModeChange('osm')}
+            className={[
+              'min-w-0 flex-1 rounded-[10px] px-2 py-2 text-xs font-medium transition-colors sm:text-sm',
+              mapViewMode === 'osm'
+                ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
+                : 'text-stone-600 hover:text-stone-800',
+            ].join(' ')}
+          >
+            OSMモード
+          </button>
+          <button
+            type="button"
+            onClick={() => onMapViewModeChange('graph')}
+            className={[
+              'min-w-0 flex-1 rounded-[10px] px-2 py-2 text-xs font-medium transition-colors sm:text-sm',
+              mapViewMode === 'graph'
+                ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
+                : 'text-stone-600 hover:text-stone-800',
+            ].join(' ')}
+          >
+            グラフモード
+          </button>
+        </div>
         <div
           className="rounded-xl border border-stone-200/90 bg-white/80 p-3 shadow-sm"
           role="group"
@@ -108,7 +161,7 @@ export function DebugSidebar({
           className="rounded-xl bg-[#4a6f8a] px-4 py-2.5 text-sm font-medium text-white shadow-sm disabled:opacity-50"
           onClick={onFetchWays}
         >
-          {loading ? '取得中…' : '表示範囲で道路 way を取得（最大100）'}
+          {loading ? '取得中…' : '表示範囲で道路 way を取得（最大1000）'}
         </button>
       </div>
 
@@ -120,66 +173,161 @@ export function DebugSidebar({
       {error ? <p className="shrink-0 text-sm text-red-700">{error}</p> : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-        <div
-          className="inline-flex w-fit shrink-0 self-start rounded-xl border border-dashed border-stone-400 bg-white p-0.5 shadow-sm"
-          role="group"
-          aria-label="左パネル表示モード"
-        >
-          <button
-            type="button"
-            onClick={() => onPanelModeChange('text')}
-            className={[
-              'rounded-[10px] px-3 py-2 text-sm font-medium transition-colors',
-              panelMode === 'text'
-                ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
-                : 'text-stone-600 hover:text-stone-800',
-            ].join(' ')}
-          >
-            テキスト
-          </button>
-          <button
-            type="button"
-            onClick={() => onPanelModeChange('ui')}
-            className={[
-              'rounded-[10px] px-3 py-2 text-sm font-medium transition-colors',
-              panelMode === 'ui'
-                ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
-                : 'text-stone-600 hover:text-stone-800',
-            ].join(' ')}
-          >
-            一覧
-          </button>
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-          {fetchedWayCount != null ? (
-            <p className="shrink-0 text-[11px] leading-none text-stone-400 tabular-nums">
-              取得した道路 way: {fetchedWayCount} 件
-            </p>
-          ) : null}
-
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] lg:min-h-[200px]">
-            {panelMode === 'text' ? (
-              textDump ? (
-                <pre className="min-h-0 flex-1 overflow-auto p-3 text-[11px] leading-snug text-stone-800">
-                  {textDump}
-                </pre>
-              ) : (
-                emptyPlaceholder
-              )
-            ) : geojson ? (
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                <DebugWayList
-                  features={features}
-                  selectedWayId={selectedWayId}
-                  onSelectWay={onSelectWay}
+        {mapViewMode === 'graph' ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+            <div className="shrink-0 rounded-xl border border-stone-200/90 bg-white/90 p-3 shadow-sm">
+              <p className="mb-2 text-xs font-medium text-stone-700">グラフ構築オプション</p>
+              {graphLoading && hasRoadData ? (
+                <p className="mb-2 text-[11px] text-stone-500">更新中…</p>
+              ) : null}
+              <ul className="flex flex-col gap-3 text-sm text-stone-800">
+                <GraphOptionBlock
+                  title="重複・冗長ジオメトリの除去"
+                  checked={graphOptions.deduplicate_geometry}
+                  onToggle={(c) => toggleOpt('deduplicate_geometry', c)}
+                  result={
+                    <DedupeMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
+                  }
                 />
-              </div>
-            ) : (
-              emptyPlaceholder
-            )}
+                <GraphOptionBlock
+                  title="同じ OSM node id の頂点をつなぐ"
+                  checked={graphOptions.connect_osm_node_ids}
+                  onToggle={(c) => toggleOpt('connect_osm_node_ids', c)}
+                  result={
+                    <ConnectOsmMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
+                  }
+                />
+                <GraphOptionBlock
+                  title="道路の交差で線を分割する"
+                  checked={graphOptions.split_intersections}
+                  onToggle={(c) => toggleOpt('split_intersections', c)}
+                  result={
+                    <SplitMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
+                  }
+                />
+                <GraphOptionBlock
+                  title="距離が近い頂点をまとめる（ε 以内）"
+                  checked={graphOptions.snap_endpoints}
+                  onToggle={(c) => toggleOpt('snap_endpoints', c)}
+                  result={
+                    <SnapMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
+                  }
+                  footer={
+                    <label className="mt-1 flex items-center gap-2 text-xs text-stone-600">
+                      <span className="shrink-0">ε (m)</span>
+                      <input
+                        type="number"
+                        min={0.05}
+                        max={500}
+                        step={0.5}
+                        disabled={!graphOptions.snap_endpoints}
+                        value={graphOptions.snap_epsilon_m}
+                        onChange={(e) =>
+                          onGraphOptionsChange({
+                            ...graphOptions,
+                            snap_epsilon_m: Number(e.target.value) || graphOptions.snap_epsilon_m,
+                          })
+                        }
+                        className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
+                      />
+                    </label>
+                  }
+                />
+              </ul>
+              {graphPreview ? (
+                <p className="mt-3 border-t border-stone-200 pt-3 text-xs tabular-nums text-stone-600">
+                  グラフ全体：ノード {graphPreview.stats.node_count ?? '—'} · エッジ{' '}
+                  {graphPreview.stats.edge_count ?? '—'}
+                </p>
+              ) : null}
+            </div>
+            {!hasRoadData ? (
+              <p className="shrink-0 text-sm text-stone-500">
+                道路データを取得すると、グラフモードで自動的に構築されます。
+              </p>
+            ) : null}
+            {graphError ? <p className="shrink-0 text-sm text-red-700">{graphError}</p> : null}
           </div>
-        </div>
+        ) : (
+          <>
+            <div
+              className="inline-flex w-fit shrink-0 self-start rounded-xl border border-dashed border-stone-400 bg-white p-0.5 shadow-sm"
+              role="group"
+              aria-label="左パネル表示モード"
+            >
+              <button
+                type="button"
+                onClick={() => onPanelModeChange('text')}
+                className={[
+                  'rounded-[10px] px-3 py-2 text-sm font-medium transition-colors',
+                  panelMode === 'text'
+                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
+                    : 'text-stone-600 hover:text-stone-800',
+                ].join(' ')}
+              >
+                テキスト
+              </button>
+              <button
+                type="button"
+                onClick={() => onPanelModeChange('ui')}
+                className={[
+                  'rounded-[10px] px-3 py-2 text-sm font-medium transition-colors',
+                  panelMode === 'ui'
+                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner'
+                    : 'text-stone-600 hover:text-stone-800',
+                ].join(' ')}
+              >
+                一覧
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+              {fetchedWayCount != null ? (
+                <p className="shrink-0 text-[11px] leading-none text-stone-400 tabular-nums">
+                  取得した道路 way: {fetchedWayCount} 件
+                </p>
+              ) : null}
+
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] lg:min-h-[200px]">
+                {panelMode === 'text' ? (
+                  textDump ? (
+                    <pre className="min-h-0 flex-1 overflow-auto p-3 text-[11px] leading-snug text-stone-800">
+                      {textDump}
+                    </pre>
+                  ) : (
+                    emptyPlaceholder
+                  )
+                ) : geojson ? (
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                    <DebugWayList
+                      features={features}
+                      selectedWayId={selectedWayId}
+                      onSelectWay={onSelectWay}
+                    />
+                  </div>
+                ) : (
+                  emptyPlaceholder
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <Link
@@ -189,5 +337,175 @@ export function DebugSidebar({
         ← アプリに戻る
       </Link>
     </aside>
+  )
+}
+
+function GraphOptionBlock({
+  title,
+  checked,
+  onToggle,
+  result,
+  footer,
+}: {
+  title: string
+  checked: boolean
+  onToggle: (c: boolean) => void
+  result?: ReactNode
+  footer?: ReactNode
+}) {
+  return (
+    <li className="rounded-lg border border-stone-100 bg-[#faf8f4]/90 px-2 py-2">
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+        />
+        <button
+          type="button"
+          className="cursor-pointer text-left text-sm font-medium leading-snug text-stone-800 hover:text-stone-950"
+          onClick={() => onToggle(!checked)}
+        >
+          {title}
+        </button>
+      </div>
+      {footer}
+      {checked && result != null ? (
+        <div className="mt-2 border-t border-stone-200/80 pt-2">{result}</div>
+      ) : null}
+    </li>
+  )
+}
+
+function DedupeMetrics({
+  m,
+  graphLoading,
+  hasRoadData,
+}: {
+  m: GraphStepMetrics | undefined
+  graphLoading: boolean
+  hasRoadData: boolean
+}) {
+  if (!hasRoadData) {
+    return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
+  }
+  const d = m?.deduplicate
+  if (d == null) {
+    return (
+      <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
+    )
+  }
+  return (
+    <div className="space-y-1">
+      <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
+        <li>冗長セグメントを折り畳むために除去した頂点: {d.removed_duplicate_vertices ?? '—'}</li>
+        <li>
+          各 way の折れ点数: {d.way_vertices_before ?? '—'} → {d.way_vertices_after ?? '—'}
+        </li>
+      </ul>
+      <p className="text-[10px] leading-snug text-stone-500">
+        除去された辺は<strong className="font-medium text-stone-700">点線</strong>、関連する頂点は
+        <strong className="font-medium text-stone-700">半透明の丸</strong>でマップに重ね表示されます。
+      </p>
+    </div>
+  )
+}
+
+function ConnectOsmMetrics({
+  m,
+  graphLoading,
+  hasRoadData,
+}: {
+  m: GraphStepMetrics | undefined
+  graphLoading: boolean
+  hasRoadData: boolean
+}) {
+  if (!hasRoadData) {
+    return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
+  }
+  const d = m?.connect_osm
+  if (d == null) {
+    return (
+      <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
+    )
+  }
+  return (
+    <div className="space-y-1">
+      <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
+        <li>まとめたグループ数: {d.osm_id_groups_merged ?? '—'}</li>
+        <li>グラフから除いた頂点: {d.graph_vertices_removed_by_merge ?? '—'}</li>
+        <li>OSM id で合体した頂点（マップでは黄色のノード）: {d.merged_vertex_count ?? '—'}</li>
+      </ul>
+      <p className="text-[10px] leading-snug text-stone-500">
+        マップの<strong className="font-medium text-yellow-600">黄色のノード</strong>
+        が、この合体が起きた頂点です。
+      </p>
+    </div>
+  )
+}
+
+function SplitMetrics({
+  m,
+  graphLoading,
+  hasRoadData,
+}: {
+  m: GraphStepMetrics | undefined
+  graphLoading: boolean
+  hasRoadData: boolean
+}) {
+  if (!hasRoadData) {
+    return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
+  }
+  const d = m?.split
+  if (d == null) {
+    return (
+      <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
+    )
+  }
+  return (
+    <div className="space-y-1">
+      <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
+        <li>交差処理の適用回数: {d.intersection_splits_applied ?? '—'}</li>
+        <li>追加した交点頂点: {d.new_vertices_from_split ?? '—'}</li>
+      </ul>
+      <p className="text-[10px] leading-snug text-stone-500">
+        交差で線が分割されて<strong className="font-medium text-rose-700">新しく追加された頂点</strong>
+        は、マップでは<strong className="font-medium text-rose-700">朱色のノード</strong>（synthetic）として表示されます。
+      </p>
+    </div>
+  )
+}
+
+function SnapMetrics({
+  m,
+  graphLoading,
+  hasRoadData,
+}: {
+  m: GraphStepMetrics | undefined
+  graphLoading: boolean
+  hasRoadData: boolean
+}) {
+  if (!hasRoadData) {
+    return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
+  }
+  const d = m?.snap
+  if (d == null) {
+    return (
+      <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
+    )
+  }
+  return (
+    <div className="space-y-1">
+      <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
+        <li>しきい値 ε (m): {d.epsilon_m ?? '—'}</li>
+        <li>まとめた近接グループ: {d.snap_clusters ?? '—'}</li>
+        <li>グラフから除いた頂点: {d.vertices_merged_by_snap ?? '—'}</li>
+      </ul>
+      <p className="text-[10px] leading-snug text-stone-500">
+        マップの<strong className="font-medium text-lime-600">緑のノード</strong>
+        が、距離 snap で代表点にまとめた頂点です。
+      </p>
+    </div>
   )
 }

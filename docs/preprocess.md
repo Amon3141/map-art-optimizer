@@ -155,9 +155,9 @@ OSM では、十字のように交わる縦道 `A–B` と横道 `C–D` が、*
 後続ステップ（スナップ・経路探索・スコア）が期待する **不変に近い契約**の例:
 
 - `**nodes`**: 内部ノード id → 平面座標 `(x_m, y_m)`。
-- `**edges**`: `u`, `v`, `length_m`, `highway`, その他ペナルティ用属性。オプションで **元の折れ線の座標列**（形状評価・デバッグ用）。
+- `**edges`**: `u`, `v`, `length_m`, `highway`, その他ペナルティ用属性。オプションで **元の折れ線の座標列**（形状評価・デバッグ用）。
 - `**spatial_index`**: 辺 id に対する最近傍（または矩形内候補）クエリ。
-- `**proj**`: 平面 → **WGS84** の逆変換（API 正は GeoJSON の `[lon, lat]`。決定事項は [decisions.md](./decisions.md)）。
+- `**proj`**: 平面 → **WGS84** の逆変換（API 正は GeoJSON の `[lon, lat]`。決定事項は [decisions.md](./decisions.md)）。
 
 ---
 
