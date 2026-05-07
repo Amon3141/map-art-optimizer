@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Sidebar } from '../components/Sidebar'
 import { MapPanel } from '../components/MapPanel'
 import { SketchModal } from '../components/SketchModal'
-import type { Point } from '../lib/simplify_old'
+import type { Point } from '../lib/simplify'
 
 export function HomePage() {
   const [targetKm, setTargetKm] = useState(10)

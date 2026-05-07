@@ -1,7 +1,7 @@
 import { MdOutlineDraw } from 'react-icons/md'
 import { Link } from 'react-router-dom'
 import { SketchPreview } from './SketchPreview'
-import type { Point } from '../lib/simplify_old'
+import type { Point } from '../lib/simplify'
 
 const showDebugNav = import.meta.env.VITE_DEBUG === 'true'
 

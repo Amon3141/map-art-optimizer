@@ -1,4 +1,4 @@
-import type { Point } from '../lib/simplify_old'
+import type { Point } from '../lib/simplify'
 
 type SketchPreviewProps = {
   points: Point[]
