@@ -44,7 +44,7 @@ export function Sidebar({
         {hasShape && strokePoints ? (
           <SketchPreview
             points={strokePoints}
-            className="mx-auto w-full max-w-[220px]"
+            className="mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
           />
         ) : null}
       </div>

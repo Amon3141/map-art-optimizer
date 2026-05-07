@@ -8,7 +8,6 @@ export type MapPanelProps = {
   overlayLineColor?: string
   overlaySelectedId?: number | string | null
   overlayHighlightColor?: string
-  /** false のとき、オーバーレイ更新で地図の表示範囲（カメラ）を変えない */
   fitOverlayToData?: boolean
   onMapReady?: (map: MapLibreMap) => void
 }
@@ -236,6 +235,11 @@ export function MapPanel({
   return (
     <div className={`relative min-h-0 w-full min-w-0 flex-1 ${className}`}>
       <div ref={containerRef} className="absolute inset-0" />
+      {/* マップの内側ボーダーにつける薄いshadow */}
+      <div
+        className="pointer-events-none absolute inset-0 z-1 shadow-[inset_0_4px_40px_0_rgb(62_36_30/0.095),inset_0_0_280px_0_rgb(48_28_24/0.115)]"
+        aria-hidden
+      />
       <div className="pointer-events-none absolute left-3 top-3 z-10 sm:left-4 sm:top-4">
         <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
       </div>
