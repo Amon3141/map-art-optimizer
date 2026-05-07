@@ -28,13 +28,13 @@ function sortedTagLines(props: Record<string, unknown>): [string, string][] {
   return pairs.map(([k, v]) => [k, tagValueString(v)])
 }
 
-export type DebugHighwayListProps = {
+export type DebugWayListProps = {
   features: GeoJSON.Feature[]
   selectedWayId: number | string | null
   onSelectWay: (id: number | string | null) => void
 }
 
-export function DebugHighwayList({ features, selectedWayId, onSelectWay }: DebugHighwayListProps) {
+export function DebugWayList({ features, selectedWayId, onSelectWay }: DebugWayListProps) {
   const cardRefs = useRef(new Map<string, HTMLElement>())
 
   useEffect(() => {
