@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from dotenv import load_dotenv
@@ -10,6 +10,19 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
+
+# デバッグ /api/debug/highways で許可する highway=* の値（Overpass にそのまま渡す）
+DEBUG_HIGHWAY_WHITELIST: frozenset[str] = frozenset(
+    {
+        "motorway",
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary",
+        "unclassified",
+        "residential",
+    }
+)
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -44,14 +57,29 @@ def ways_to_geojson(elements: list[dict[str, Any]]) -> dict[str, Any]:
             coords.append([float(lon), float(lat)])
         if len(coords) < 2:
             continue
+        tags = dict(el.get("tags") or {})
+        way_id = el.get("id")
+        # OSM に rare だが id=* タグがあると "id" がタグで上書きされ、一覧・強調のキーがずれる。
+        # osm_way_id は必ずタグの後に置き、way の要素 id を固定する。
+        properties = {**tags, "osm_way_id": way_id}
         features.append(
             {
                 "type": "Feature",
                 "geometry": {"type": "LineString", "coordinates": coords},
-                "properties": {"id": el.get("id"), **{k: v for k, v in el.get("tags", {}).items()}},
+                "properties": properties,
             }
         )
     return {"type": "FeatureCollection", "features": features}
+
+
+def way_element_for_preview(el: dict[str, Any]) -> dict[str, Any]:
+    """テキストプレビュー用: タグ等はそのまま、nodes / geometry は件数のみ。"""
+    nodes = el.get("nodes")
+    geometry = el.get("geometry")
+    preview = {k: v for k, v in el.items() if k not in ("nodes", "geometry")}
+    preview["nodes_count"] = len(nodes) if isinstance(nodes, list) else 0
+    preview["geometry_count"] = len(geometry) if isinstance(geometry, list) else 0
+    return preview
 
 
 @app.get("/health")
@@ -61,6 +89,13 @@ def health() -> dict[str, str]:
 
 @app.get("/api/debug/highways")
 async def debug_highways(
+    highway: Annotated[
+        list[str],
+        Query(
+            min_length=1,
+            description="含める highway=*",
+        ),
+    ],
     min_lat: float = Query(..., description="South edge (WGS84)"),
     min_lon: float = Query(..., description="West edge"),
     max_lat: float = Query(..., description="North edge"),
@@ -70,10 +105,23 @@ async def debug_highways(
     if min_lat >= max_lat or min_lon >= max_lon:
         raise HTTPException(status_code=400, detail="Invalid bbox")
 
-    query = f"""
-[out:json][timeout:25];
+    selected: list[str] = []
+    seen: set[str] = set()
+    for h in highway:
+        if h not in DEBUG_HIGHWAY_WHITELIST:
+            raise HTTPException(
+                status_code=400,
+                detail=f"許可されていない highway 値です: {h!r}",
+            )
+        if h not in seen:
+            seen.add(h)
+            selected.append(h)
+
+    # south,west,north,east — クエリ全体を表示範囲（bbox）に制限
+    way_lines = "\n".join(f'  way["highway"="{h}"];' for h in selected)
+    query = f"""[bbox:{min_lat},{min_lon},{max_lat},{max_lon}][out:json][timeout:25];
 (
-  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
+{way_lines}
 );
 out geom;
 """
@@ -93,7 +141,9 @@ out geom;
     ways = [e for e in elements if e.get("type") == "way"][:limit]
     geojson = ways_to_geojson(ways)
 
-    preview_obj: dict[str, Any] = {"elements": ways}
+    preview_obj: dict[str, Any] = {
+        "elements": [way_element_for_preview(w) for w in ways],
+    }
     raw_preview = json.dumps(preview_obj, ensure_ascii=False, indent=2)
     if len(raw_preview) > 12000:
         raw_preview = raw_preview[:12000] + "\n… (truncated)"

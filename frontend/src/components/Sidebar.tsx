@@ -1,23 +1,23 @@
 import { MdOutlineDraw } from 'react-icons/md'
 import { Link } from 'react-router-dom'
-import { StrokePreview } from './StrokePreview'
-import type { Point } from '../lib/simplify'
+import { SketchPreview } from './SketchPreview'
+import type { Point } from '../lib/simplify_old'
 
 const showDebugNav = import.meta.env.VITE_DEBUG === 'true'
 
-export type HomeSidebarProps = {
+export type SidebarProps = {
   targetKm: number
   onTargetKmChange: (km: number) => void
   strokePoints: Point[] | null
   onOpenSketch: () => void
 }
 
-export function HomeSidebar({
+export function Sidebar({
   targetKm,
   onTargetKmChange,
   strokePoints,
   onOpenSketch,
-}: HomeSidebarProps) {
+}: SidebarProps) {
   const hasShape = Boolean(strokePoints && strokePoints.length >= 2)
 
   return (
@@ -34,7 +34,7 @@ export function HomeSidebar({
       <div className="flex flex-col gap-3">
         <button
           type="button"
-          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-stone-400 bg-white py-3 text-sm font-medium text-stone-800 shadow-sm hover:border-[#4a6f8a] hover:bg-[#f3f6f8]"
+          className="inline-flex items-center justify-center gap-1 rounded-xl border border-dashed border-stone-400 bg-white py-3 text-sm font-medium text-stone-800 shadow-sm hover:border-[#4a6f8a] hover:bg-[#f3f6f8]"
           onClick={onOpenSketch}
         >
           <MdOutlineDraw className="h-5 w-5 shrink-0 text-stone-700" aria-hidden />
@@ -42,7 +42,7 @@ export function HomeSidebar({
         </button>
 
         {hasShape && strokePoints ? (
-          <StrokePreview
+          <SketchPreview
             points={strokePoints}
             className="mx-auto w-full max-w-[220px]"
           />

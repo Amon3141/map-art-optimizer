@@ -5,7 +5,7 @@
 - [x] `docs/` 骨格
 - [x] フロント: レイアウト、手書きモーダル、MapLibre、デバッグページ
 - [x] バックエンド: health、Overpass プロキシ、highways GeoJSON
-- [x] 確定形状のサイドバープレビュー（`StrokePreview`）
+- [x] 確定形状のサイドバープレビュー
 
 次の候補:
 

@@ -1,6 +1,8 @@
 export type Point = { x: number; y: number }
 
-/** Ramer–Douglas–Peucker in pixel space. 大きいほど点が減る（形は粗くなる）。docs/architecture.md 参照 */
+/** Ramer–Douglas–Peucker in pixel space。 docs/architecture.md 参照
+ * 大きいほど点が減る（形は粗くなる）
+ * */
 export const SIMPLIFY_TOLERANCE_PX = 5
 
 function perpendicularDistance(p: Point, a: Point, b: Point): number {

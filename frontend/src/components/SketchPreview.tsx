@@ -1,12 +1,12 @@
-import type { Point } from '../lib/simplify'
+import type { Point } from '../lib/simplify_old'
 
-type StrokePreviewProps = {
+type SketchPreviewProps = {
   points: Point[]
   className?: string
 }
 
 /** 点列を境界ボックス内に等比で収めて SVG で表示する */
-export function StrokePreview({ points, className = '' }: StrokePreviewProps) {
+export function SketchPreview({ points, className = '' }: SketchPreviewProps) {
   if (points.length < 2) return null
 
   let minX = Infinity

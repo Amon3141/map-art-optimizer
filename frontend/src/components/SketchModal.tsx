@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { MdOutlineDraw } from 'react-icons/md'
-import { type Point, simplifyStroke } from '../lib/simplify'
+import { type Point, simplifyStroke } from '../lib/simplify_old'
 
 export type SketchModalProps = {
   onClose: () => void
