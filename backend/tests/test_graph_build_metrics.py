@@ -1,6 +1,9 @@
 """Graph build metrics and node visualization metadata."""
 
+import math
+
 from app.osm.graph_build import GraphBuildOptions, build_graph_from_geojson, graph_to_geojson_fc
+from app.osm.projection import EARTH_RADIUS_M
 
 
 def test_step_metrics_deduplicate_only():
@@ -120,3 +123,116 @@ def test_connect_osm_merge_metrics():
         if f["properties"].get("highlight_osm_merge")
     ]
     assert len(merged_highlight) >= 1
+
+
+def test_split_intersection_one_crossing():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.0002, 0]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [1, 2]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0.0001, -0.0001], [0.0001, 0.0001]]},
+                "properties": {"osm_way_id": 2, "highway": "residential", "osm_node_ids": [3, 4]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(split_intersections=True)
+    r = build_graph_from_geojson(fc, 0.0001, 0.0, opts)
+    sp = r.step_metrics.get("split") or {}
+    assert sp.get("intersection_splits_applied", 0) >= 1
+    assert r.stats["edge_count"] == 4
+    assert r.stats["node_count"] == 6
+    assert r.stats["synthetic_node_count"] == 2
+
+
+def test_snap_endpoints_merge_close_vertices():
+    dy = (2.0 / EARTH_RADIUS_M) * (180.0 / math.pi)
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0, 0.001]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [10, 11]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0.001 + dy], [0, 0.002]]},
+                "properties": {"osm_way_id": 2, "highway": "residential", "osm_node_ids": [20, 21]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(snap_endpoints=True, snap_epsilon_m=5.0)
+    r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
+    sn = r.step_metrics.get("snap") or {}
+    assert sn.get("snap_clusters", 0) >= 1
+    assert sn.get("vertices_merged_by_snap", 0) >= 1
+    assert r.stats["node_count"] == 3
+
+
+def test_connect_osm_two_disjoint_shared_ids():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.001, 0]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [1, 100]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0.001, 0], [0.002, 0]]},
+                "properties": {"osm_way_id": 2, "highway": "residential", "osm_node_ids": [100, 2]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0.01], [0, 0.011]]},
+                "properties": {"osm_way_id": 3, "highway": "residential", "osm_node_ids": [3, 200]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0.011], [0, 0.012]]},
+                "properties": {"osm_way_id": 4, "highway": "residential", "osm_node_ids": [200, 4]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(connect_osm_node_ids=True)
+    r = build_graph_from_geojson(fc, 0.001, 0.005, opts)
+    cm = r.step_metrics.get("connect_osm") or {}
+    assert cm.get("osm_id_groups_merged") == 2
+    assert cm.get("graph_vertices_removed_by_merge") == 2
+
+
+def test_all_graph_options_enabled_crossing_fixture():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.0002, 0]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [1, 2]},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0.0001, -0.0001], [0.0001, 0.0001]]},
+                "properties": {"osm_way_id": 2, "highway": "residential", "osm_node_ids": [3, 4]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(
+        connect_osm_node_ids=True,
+        split_intersections=True,
+        snap_endpoints=True,
+        snap_epsilon_m=5.0,
+    )
+    r = build_graph_from_geojson(fc, 0.0001, 0.0, opts)
+    assert r.step_metrics.get("connect_osm") is not None
+    assert (r.step_metrics.get("split") or {}).get("intersection_splits_applied", 0) >= 1
+    assert r.step_metrics.get("snap") is not None
+    assert r.stats["node_count"] >= 1
+    assert r.stats["edge_count"] >= 1

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { DEBUG_ROAD_TYPE_VALUES, type DebugRoadType } from '../lib/debugRoadTypes'
+import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
 import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
 import type { DebugMapViewMode } from './DebugMapPanel'
 import { DebugWayList } from './DebugWayList'
@@ -438,7 +439,10 @@ function ConnectOsmMetrics({
         <li>OSM id で合体した頂点（マップでは黄色のノード）: {d.merged_vertex_count ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        マップの<strong className="font-medium text-yellow-600">黄色のノード</strong>
+        マップの
+        <strong className="font-medium" style={{ color: HIGHLIGHT_OSM_MERGE }}>
+          黄色のノード
+        </strong>
         が、この合体が起きた頂点です。
       </p>
     </div>
@@ -470,8 +474,8 @@ function SplitMetrics({
         <li>追加した交点頂点: {d.new_vertices_from_split ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        交差で線が分割されて<strong className="font-medium text-rose-700">新しく追加された頂点</strong>
-        は、マップでは<strong className="font-medium text-rose-700">朱色のノード</strong>（synthetic）として表示されます。
+        交差で線が分割されて新しく追加された頂点
+        は、マップでは<strong className="font-medium text-rose-700">朱色のノード</strong>として表示されます。
       </p>
     </div>
   )
@@ -503,7 +507,10 @@ function SnapMetrics({
         <li>グラフから除いた頂点: {d.vertices_merged_by_snap ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        マップの<strong className="font-medium text-lime-600">緑のノード</strong>
+        マップの
+        <strong className="font-medium" style={{ color: HIGHLIGHT_SNAP_MERGE }}>
+          緑のノード
+        </strong>
         が、距離 snap で代表点にまとめた頂点です。
       </p>
     </div>

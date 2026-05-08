@@ -59,6 +59,12 @@ MAX_SPLIT_ITER = 2000
 
 PILE_LONLAT_DECIMALS = 5
 
+# 交差探索グリッド: bbox 短辺をこの分割数で割ったセル（下限あり）
+_SPLIT_GRID_DIVISIONS = 64
+_SPLIT_CELL_MIN_M = 2.0
+# セル内候補が多すぎるときのフォールバック（同一セル内のみ全対全）
+_SPLIT_CELL_DENSE_THRESHOLD = 256
+
 
 def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
@@ -107,6 +113,81 @@ def nearest_point_on_segment(
     t = ((_sub(q, a)[0]) * vx + (_sub(q, a)[1]) * vy) / len2
     t = max(0.0, min(1.0, t))
     return (a[0] + t * vx, a[1] + t * vy), t
+
+
+# --- uniform spatial grid (H0-e: preprocess.md) ---
+# snap: cell_m = snap_epsilon_m（ε 以内の点対は同一セルまたは8近傍に収まる）
+# split: cell_m = max(bbox_short_side / N, floor_m) で長辺は複数セルに登録
+
+
+def _grid_cell_xy(x: float, y: float, cell_m: float) -> tuple[int, int]:
+    return (math.floor(x / cell_m), math.floor(y / cell_m))
+
+
+def _segment_aabb(
+    p0: tuple[float, float], p1: tuple[float, float], pad: float = 0.0
+) -> tuple[float, float, float, float]:
+    x0, y0 = p0
+    x1, y1 = p1
+    xmin = min(x0, x1) - pad
+    xmax = max(x0, x1) + pad
+    ymin = min(y0, y1) - pad
+    ymax = max(y0, y1) + pad
+    return xmin, xmax, ymin, ymax
+
+
+def _iter_cell_rect(
+    xmin: float, xmax: float, ymin: float, ymax: float, cell_m: float
+) -> list[tuple[int, int]]:
+    if cell_m <= 0:
+        return []
+    ix0 = math.floor(xmin / cell_m)
+    ix1 = math.floor(xmax / cell_m)
+    iy0 = math.floor(ymin / cell_m)
+    iy1 = math.floor(ymax / cell_m)
+    out: list[tuple[int, int]] = []
+    for ix in range(ix0, ix1 + 1):
+        for iy in range(iy0, iy1 + 1):
+            out.append((ix, iy))
+    return out
+
+
+def _cells_for_segment(
+    a: tuple[float, float], b: tuple[float, float], cell_m: float
+) -> list[tuple[int, int]]:
+    xmin, xmax, ymin, ymax = _segment_aabb(a, b)
+    return _iter_cell_rect(xmin, xmax, ymin, ymax, cell_m)
+
+
+def _index_edge_segments_by_cell(
+    graph: RoadGraph, cell_m: float
+) -> dict[tuple[int, int], list[tuple[str, int]]]:
+    """各セルに、その bbox と交わる (edge_id, seg_i) を列挙。"""
+    cell_map: dict[tuple[int, int], list[tuple[str, int]]] = {}
+    for eid, e in graph.edges.items():
+        pl = e.polyline_xy_m
+        if len(pl) < 2:
+            continue
+        for seg_i in range(len(pl) - 1):
+            a, b = pl[seg_i], pl[seg_i + 1]
+            for key in _cells_for_segment(a, b, cell_m):
+                cell_map.setdefault(key, []).append((eid, seg_i))
+    return cell_map
+
+
+def _split_grid_cell_m(graph: RoadGraph) -> float:
+    xs: list[float] = []
+    ys: list[float] = []
+    for e in graph.edges.values():
+        for px, py in e.polyline_xy_m:
+            xs.append(px)
+            ys.append(py)
+    if not xs:
+        return _SPLIT_CELL_MIN_M
+    span_x = max(xs) - min(xs)
+    span_y = max(ys) - min(ys)
+    short_side = max(min(span_x, span_y), _SPLIT_CELL_MIN_M)
+    return max(short_side / _SPLIT_GRID_DIVISIONS, _SPLIT_CELL_MIN_M)
 
 
 # --- GeoJSON parsing ---
@@ -341,29 +422,97 @@ def collapse_nodes(
 
 
 def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
-    """マージ後にノードが複数の OSM id グループに現れるため、変化がなくなるまで繰り返す。"""
-    groups_merged = 0
+    """
+    同一 OSM node id を共有するグラフ頂点を union-find でまとめ、一括で remap する。
+    osm_id_groups_merged は「重複があった OSM id」の数（初期グラフ上）。
+    """
+    groups: dict[int, list[str]] = {}
+    for nid, node in graph.nodes.items():
+        for osm_id in node.source_osm_node_ids:
+            groups.setdefault(osm_id, []).append(nid)
+    osm_id_groups_merged = sum(1 for _oid, members in groups.items() if len(set(members)) >= 2)
+
+    parent = {n: n for n in graph.nodes}
+    for _oid, members in groups.items():
+        uniq = sorted(set(members))
+        if len(uniq) < 2:
+            continue
+        base = uniq[0]
+        for other in uniq[1:]:
+            _uf_union(parent, base, other)
+
+    clusters: dict[str, list[str]] = {}
+    for nid in graph.nodes:
+        r = _uf_find(parent, nid)
+        clusters.setdefault(r, []).append(nid)
+
+    rem: dict[str, str] = {}
+    merged_canonical: dict[str, InternalNode] = {}
     vertices_removed = 0
-    while True:
-        groups: dict[int, list[str]] = {}
-        for nid, node in graph.nodes.items():
-            for osm_id in node.source_osm_node_ids:
-                groups.setdefault(osm_id, []).append(nid)
-        progressed = False
-        for _osm_id, members in groups.items():
-            uniq = sorted(set(members))
-            if len(uniq) < 2:
-                continue
-            removed = collapse_nodes(graph, uniq, merge_kind="osm_id")
-            if removed:
-                groups_merged += 1
-                vertices_removed += removed
-                progressed = True
-                break
-        if not progressed:
-            break
+    for _root, members in clusters.items():
+        canonical = min(members)
+        for k in members:
+            rem[k] = canonical
+        if len(members) < 2:
+            continue
+        vertices_removed += len(members) - 1
+        xs = sum(graph.nodes[k].x_m for k in members) / len(members)
+        ys = sum(graph.nodes[k].y_m for k in members) / len(members)
+        src = _merge_source_ids([graph.nodes[k].source_osm_node_ids for k in members])
+        ep_any = any(graph.nodes[k].is_way_polyline_endpoint for k in members)
+        snap_any = any(graph.nodes[k].merged_from_snap for k in members)
+        osm_merge_any = True
+        merged_canonical[canonical] = InternalNode(
+            id=canonical,
+            x_m=xs,
+            y_m=ys,
+            source_osm_node_ids=src,
+            is_way_polyline_endpoint=ep_any,
+            merged_from_snap=snap_any,
+            merged_from_osm_id=osm_merge_any,
+        )
+
+    final_nodes: dict[str, InternalNode] = {}
+    for nid, node in graph.nodes.items():
+        if rem[nid] != nid:
+            continue
+        if nid in merged_canonical:
+            final_nodes[nid] = merged_canonical[nid]
+        else:
+            final_nodes[nid] = InternalNode(
+                id=nid,
+                x_m=node.x_m,
+                y_m=node.y_m,
+                source_osm_node_ids=list(node.source_osm_node_ids),
+                is_way_polyline_endpoint=node.is_way_polyline_endpoint,
+                merged_from_snap=node.merged_from_snap,
+                merged_from_osm_id=node.merged_from_osm_id,
+            )
+
+    new_edges: dict[str, InternalEdge] = {}
+    for eid, e in graph.edges.items():
+        u = rem[e.u]
+        v = rem[e.v]
+        if u == v:
+            continue
+        pl = list(e.polyline_xy_m)
+        if pl:
+            nu = final_nodes[u]
+            nv = final_nodes[v]
+            pl[0] = (nu.x_m, nu.y_m)
+            pl[-1] = (nv.x_m, nv.y_m)
+        new_edges[eid] = InternalEdge(
+            id=eid,
+            u=u,
+            v=v,
+            polyline_xy_m=pl,
+            osm_way_id=e.osm_way_id,
+            highway=e.highway,
+        )
+    graph.nodes = final_nodes
+    graph.edges = new_edges
     return {
-        "osm_id_groups_merged": groups_merged,
+        "osm_id_groups_merged": osm_id_groups_merged,
         "graph_vertices_removed_by_merge": vertices_removed,
     }
 
@@ -382,16 +531,28 @@ def _uf_union(parent: dict[str, str], a: str, b: str) -> None:
 
 
 def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
-    nids = list(graph.nodes.keys())
-    parent = {n: n for n in nids}
-    for i, a in enumerate(nids):
-        na = graph.nodes[a]
-        for b in nids[i + 1 :]:
-            nb = graph.nodes[b]
-            if _dist((na.x_m, na.y_m), (nb.x_m, nb.y_m)) <= epsilon_m:
-                _uf_union(parent, a, b)
+    """ε 近傍の頂点を union。セルサイズ = ε（同一・隣接セルに候補が収まる）。"""
+    cell_m = max(epsilon_m, 1e-6)
+    cell_nodes: dict[tuple[int, int], list[str]] = {}
+    for nid, n in graph.nodes.items():
+        key = _grid_cell_xy(n.x_m, n.y_m, cell_m)
+        cell_nodes.setdefault(key, []).append(nid)
+
+    parent = {n: n for n in graph.nodes}
+    for nid in graph.nodes:
+        na = graph.nodes[nid]
+        ix, iy = _grid_cell_xy(na.x_m, na.y_m, cell_m)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for oid in cell_nodes.get((ix + dx, iy + dy), []):
+                    if oid <= nid:
+                        continue
+                    nb = graph.nodes[oid]
+                    if _dist((na.x_m, na.y_m), (nb.x_m, nb.y_m)) <= epsilon_m:
+                        _uf_union(parent, nid, oid)
+
     clusters: dict[str, list[str]] = {}
-    for n in nids:
+    for n in graph.nodes:
         r = _uf_find(parent, n)
         clusters.setdefault(r, []).append(n)
     snap_clusters = 0
@@ -410,26 +571,64 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
 
 
 def split_one_intersection(graph: RoadGraph, synth_counter: list[int]) -> bool:
-    edges_list = list(graph.edges.values())
-    for i in range(len(edges_list)):
-        e1 = edges_list[i]
-        for e2 in edges_list[i + 1 :]:
-            pl1 = e1.polyline_xy_m
-            pl2 = e2.polyline_xy_m
-            if len(pl1) < 2 or len(pl2) < 2:
+    edge_ids_sorted = sorted(graph.edges.keys())
+    rank = {eid: i for i, eid in enumerate(edge_ids_sorted)}
+
+    cell_m = _split_grid_cell_m(graph)
+    for _ in range(5):
+        cell_map = _index_edge_segments_by_cell(graph, cell_m)
+        max_occ = max((len(v) for v in cell_map.values()), default=0)
+        if max_occ <= _SPLIT_CELL_DENSE_THRESHOLD:
+            break
+        cell_m *= 0.5
+
+    seen_pairs: set[tuple[str, int, str, int]] = set()
+    cand: list[tuple[int, int, int, int, str, str]] = []
+    for _cell, refs in cell_map.items():
+        loc: set[tuple[str, int]] = set()
+        uniq: list[tuple[str, int]] = []
+        for r in refs:
+            if r in loc:
                 continue
-            for seg_i in range(len(pl1) - 1):
-                a, b = pl1[seg_i], pl1[seg_i + 1]
-                for seg_j in range(len(pl2) - 1):
-                    c, d = pl2[seg_j], pl2[seg_j + 1]
-                    pt = segment_intersection_interior(a, b, c, d)
-                    if pt is None:
-                        continue
-                    if _near_any_vertex(pt, pl1) or _near_any_vertex(pt, pl2):
-                        continue
-                    _split_edge_at(graph, e1.id, pt, synth_counter)
-                    _split_edge_at(graph, e2.id, pt, synth_counter)
-                    return True
+            loc.add(r)
+            uniq.append(r)
+        L = uniq
+        for ii in range(len(L)):
+            for jj in range(ii + 1, len(L)):
+                e1, s1 = L[ii]
+                e2, s2 = L[jj]
+                if e1 == e2:
+                    continue
+                if e1 > e2:
+                    e1, s1, e2, s2 = e2, s2, e1, s1
+                pk = (e1, s1, e2, s2)
+                if pk in seen_pairs:
+                    continue
+                seen_pairs.add(pk)
+                cand.append((rank[e1], rank[e2], s1, s2, e1, e2))
+    cand.sort()
+
+    for _r1, _r2, seg_i, seg_j, e1_id, e2_id in cand:
+        e1 = graph.edges.get(e1_id)
+        e2 = graph.edges.get(e2_id)
+        if e1 is None or e2 is None:
+            continue
+        pl1 = e1.polyline_xy_m
+        pl2 = e2.polyline_xy_m
+        if len(pl1) < 2 or len(pl2) < 2:
+            continue
+        if seg_i >= len(pl1) - 1 or seg_j >= len(pl2) - 1:
+            continue
+        a, b = pl1[seg_i], pl1[seg_i + 1]
+        c, d = pl2[seg_j], pl2[seg_j + 1]
+        pt = segment_intersection_interior(a, b, c, d)
+        if pt is None:
+            continue
+        if _near_any_vertex(pt, pl1) or _near_any_vertex(pt, pl2):
+            continue
+        _split_edge_at(graph, e1.id, pt, synth_counter)
+        _split_edge_at(graph, e2.id, pt, synth_counter)
+        return True
     return False
 
 
@@ -541,27 +740,26 @@ def run_intersection_splits(graph: RoadGraph) -> dict[str, Any]:
     }
 
 
-def _node_degrees(graph: RoadGraph) -> dict[str, int]:
-    deg: dict[str, int] = {nid: 0 for nid in graph.nodes}
+def _incident_edges_by_node(graph: RoadGraph) -> dict[str, list[InternalEdge]]:
+    inc: dict[str, list[InternalEdge]] = {nid: [] for nid in graph.nodes}
     for e in graph.edges.values():
-        if e.u in deg:
-            deg[e.u] += 1
-        if e.v in deg:
-            deg[e.v] += 1
-    return deg
+        if e.u in inc:
+            inc[e.u].append(e)
+        if e.v in inc:
+            inc[e.v].append(e)
+    return inc
 
 
-def _two_incident_edges(graph: RoadGraph, nid: str) -> tuple[InternalEdge, InternalEdge] | None:
-    found: list[InternalEdge] = []
-    for e in graph.edges.values():
-        if e.u == nid or e.v == nid:
-            found.append(e)
-            if len(found) == 2:
-                return found[0], found[1]
-    return None
+def _node_degrees_from_incident(inc: dict[str, list[InternalEdge]]) -> dict[str, int]:
+    return {nid: len(lst) for nid, lst in inc.items()}
 
 
-def classify_vertex_role(graph: RoadGraph, nid: str, deg: dict[str, int]) -> Literal["inline", "junction"]:
+def classify_vertex_role(
+    graph: RoadGraph,
+    nid: str,
+    deg: dict[str, int],
+    incident: dict[str, list[InternalEdge]],
+) -> Literal["inline", "junction"]:
     n = graph.nodes[nid]
     synthetic = len(n.source_osm_node_ids) == 0
     d = deg.get(nid, 0)
@@ -573,10 +771,10 @@ def classify_vertex_role(graph: RoadGraph, nid: str, deg: dict[str, int]) -> Lit
         return "junction"
     if len(n.source_osm_node_ids) > 1:
         return "junction"
-    pair = _two_incident_edges(graph, nid)
-    if pair is None:
+    pair = incident.get(nid)
+    if pair is None or len(pair) != 2:
         return "junction"
-    e1, e2 = pair
+    e1, e2 = pair[0], pair[1]
     if e1.osm_way_id != e2.osm_way_id:
         return "junction"
     return "inline"
@@ -588,12 +786,13 @@ def graph_to_geojson_fc(
     lat0: float,
     options: GraphBuildOptions,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    deg = _node_degrees(graph)
+    incident = _incident_edges_by_node(graph)
+    deg = _node_degrees_from_incident(incident)
 
     roles: dict[str, str] = {}
     lonlat_by_nid: dict[str, tuple[float, float]] = {}
     for nid in graph.nodes:
-        roles[nid] = classify_vertex_role(graph, nid, deg)
+        roles[nid] = classify_vertex_role(graph, nid, deg, incident)
         lon, lat = xy_m_to_lon_lat(lon0, lat0, graph.nodes[nid].x_m, graph.nodes[nid].y_m)
         lonlat_by_nid[nid] = (lon, lat)
 
