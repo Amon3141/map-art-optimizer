@@ -22,11 +22,11 @@ class BBoxBody(BaseModel):
 
 
 class GraphBuildOptionsBody(BaseModel):
-    deduplicate_geometry: bool = False
     connect_osm_node_ids: bool = False
     snap_endpoints: bool = False
     snap_epsilon_m: float = Field(5.0, ge=0.05, le=500.0)
     split_intersections: bool = False
+    remove_redundant_chain_vertices: bool = False
 
 
 class GraphPreviewBody(BaseModel):
@@ -104,11 +104,11 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
 
     lon0, lat0 = bbox_center_lon_lat(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
     opts = GraphBuildOptions(
-        deduplicate_geometry=body.options.deduplicate_geometry,
         connect_osm_node_ids=body.options.connect_osm_node_ids,
         snap_endpoints=body.options.snap_endpoints,
         snap_epsilon_m=body.options.snap_epsilon_m,
         split_intersections=body.options.split_intersections,
+        remove_redundant_chain_vertices=body.options.remove_redundant_chain_vertices,
     )
     result = build_graph_from_geojson(fc, lon0, lat0, opts)
     nodes_fc, edges_fc = graph_to_geojson_fc(result.graph, lon0, lat0, opts)
@@ -128,7 +128,5 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
         "graph_geojson": {
             "nodes": nodes_fc,
             "edges": edges_fc,
-            "dedupe_removed_edges": result.dedupe_removed_edges_geojson,
-            "dedupe_removed_vertices": result.dedupe_removed_vertices_geojson,
         },
     }

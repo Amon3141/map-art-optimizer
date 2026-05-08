@@ -1,18 +1,13 @@
 export type GraphBuildOptionsPayload = {
-  deduplicate_geometry: boolean
   connect_osm_node_ids: boolean
   snap_endpoints: boolean
   snap_epsilon_m: number
   split_intersections: boolean
+  remove_redundant_chain_vertices: boolean
 }
 
 /** API の step_metrics と整合 */
 export type GraphStepMetrics = {
-  deduplicate?: {
-    way_vertices_before?: number
-    way_vertices_after?: number
-    removed_duplicate_vertices?: number
-  }
   connect_osm?: {
     osm_id_groups_merged?: number
     graph_vertices_removed_by_merge?: number
@@ -26,6 +21,12 @@ export type GraphStepMetrics = {
     epsilon_m?: number
     snap_clusters?: number
     vertices_merged_by_snap?: number
+  }
+  prune_chains?: {
+    vertices_removed?: number
+    edges_before?: number
+    edges_after?: number
+    angle_accum_threshold_deg?: number
   }
 }
 
@@ -42,17 +43,15 @@ export type GraphPreviewResponse = {
   graph_geojson: {
     nodes: GeoJSON.FeatureCollection
     edges: GeoJSON.FeatureCollection
-    dedupe_removed_edges?: GeoJSON.FeatureCollection
-    dedupe_removed_vertices?: GeoJSON.FeatureCollection
   }
 }
 
 export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
   return {
-    deduplicate_geometry: false,
     connect_osm_node_ids: false,
     snap_endpoints: false,
     snap_epsilon_m: 5,
     split_intersections: false,
+    remove_redundant_chain_vertices: false,
   }
 }

@@ -183,18 +183,6 @@ export function DebugSidebar({
               ) : null}
               <ul className="flex flex-col gap-3 text-sm text-stone-800">
                 <GraphOptionBlock
-                  title="重複・冗長ジオメトリの除去"
-                  checked={graphOptions.deduplicate_geometry}
-                  onToggle={(c) => toggleOpt('deduplicate_geometry', c)}
-                  result={
-                    <DedupeMetrics
-                      m={graphPreview?.step_metrics}
-                      graphLoading={graphLoading}
-                      hasRoadData={hasRoadData}
-                    />
-                  }
-                />
-                <GraphOptionBlock
                   title="同じ OSM node id の頂点をつなぐ"
                   checked={graphOptions.connect_osm_node_ids}
                   onToggle={(c) => toggleOpt('connect_osm_node_ids', c)}
@@ -248,6 +236,18 @@ export function DebugSidebar({
                         className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
                       />
                     </label>
+                  }
+                />
+                <GraphOptionBlock
+                  title="不要な中間ノードを削除（直線に近い折れのみ）"
+                  checked={graphOptions.remove_redundant_chain_vertices}
+                  onToggle={(c) => toggleOpt('remove_redundant_chain_vertices', c)}
+                  result={
+                    <PruneChainsMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
                   }
                 />
               </ul>
@@ -379,7 +379,7 @@ function GraphOptionBlock({
   )
 }
 
-function DedupeMetrics({
+function PruneChainsMetrics({
   m,
   graphLoading,
   hasRoadData,
@@ -391,7 +391,7 @@ function DedupeMetrics({
   if (!hasRoadData) {
     return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
   }
-  const d = m?.deduplicate
+  const d = m?.prune_chains
   if (d == null) {
     return (
       <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
@@ -400,14 +400,16 @@ function DedupeMetrics({
   return (
     <div className="space-y-1">
       <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
-        <li>冗長セグメントを折り畳むために除去した頂点: {d.removed_duplicate_vertices ?? '—'}</li>
+        <li>除去した頂点: {d.vertices_removed ?? '—'}</li>
         <li>
-          各 way の折れ点数: {d.way_vertices_before ?? '—'} → {d.way_vertices_after ?? '—'}
+          エッジ数: {d.edges_before ?? '—'} → {d.edges_after ?? '—'}
+        </li>
+        <li>
+          累積角の閾値: {d.angle_accum_threshold_deg ?? '—'}°（符号付き折れの積み上げ）
         </li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        除去された辺は<strong className="font-medium text-stone-700">点線</strong>、関連する頂点は
-        <strong className="font-medium text-stone-700">半透明の丸</strong>でマップに重ね表示されます。
+        ON のとき API は簡略化<strong className="font-medium text-stone-700">後</strong>のグラフだけ返すため、マップの線・ノードも結果のみ表示されます。
       </p>
     </div>
   )

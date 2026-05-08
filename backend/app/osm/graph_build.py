@@ -2,17 +2,17 @@
 OSM way 折れ線から平面グラフへの変換パイプライン。
 
 処理順（既定）:
-1. 重複ジオメトリ除去（オプション）
-2. ネイティブトポロジ（way 内の連続頂点間エッジ）
-3. OSM node id による接続（オプション）
-4. 道路交差の幾何 split（オプション）
-5. 距離ベース snap（オプション）
+1. ネイティブトポロジ（way 内の連続頂点間エッジ）
+2. OSM node id による接続（オプション）
+3. 道路交差の幾何 split（オプション）
+4. 距離ベース snap（オプション）
+5. 不要な中間ノード削除（オプション・上記の後のみ）
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 import numpy as np
@@ -25,11 +25,11 @@ from .projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
 @dataclass
 class GraphBuildOptions:
-    deduplicate_geometry: bool = False
     connect_osm_node_ids: bool = False
     snap_endpoints: bool = False
     snap_epsilon_m: float = 5.0
     split_intersections: bool = False
+    remove_redundant_chain_vertices: bool = False
 
 
 @dataclass
@@ -48,12 +48,6 @@ class GraphBuildResult:
     explanation_lines: list[str]
     stats: dict[str, Any]
     step_metrics: dict[str, Any]
-    dedupe_removed_edges_geojson: dict[str, Any] = field(
-        default_factory=lambda: {"type": "FeatureCollection", "features": []}
-    )
-    dedupe_removed_vertices_geojson: dict[str, Any] = field(
-        default_factory=lambda: {"type": "FeatureCollection", "features": []}
-    )
 
 
 # --- geometry primitives (meters) ---
@@ -62,6 +56,10 @@ PARALLEL_EPS = 1e-12
 MAX_SPLIT_ITER = 2000
 
 PILE_LONLAT_DECIMALS = 5
+
+# チェーン簡略化: 符号付き折れ角の累積の絶対値が約 15°（この定数）を超えた頂点をサンプルとして残す。
+_PRUNE_ACCUM_THRESHOLD_RAD = math.radians(15.0)
+_PRUNE_LEN_EPS_SQ = 1e-18
 
 
 def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -158,97 +156,6 @@ def parse_way_features(geojson_fc: dict[str, Any]) -> list[WayPolyline]:
             continue
         out.append(WayPolyline(osm_way_id=wid, highway=highway, coords_lonlat=ll, osm_node_ids=nids))
     return out
-
-
-def dedupe_geometry_ways(ways: list[WayPolyline]) -> list[WayPolyline]:
-    """連続する同一座標の除去、および連続する同一 OSM node id の折り畳み。"""
-    cleaned: list[WayPolyline] = []
-    for w in ways:
-        c_list: list[tuple[float, float]] = []
-        n_list: list[int] = []
-        for i, (lon, lat) in enumerate(w.coords_lonlat):
-            nid = w.osm_node_ids[i]
-            if c_list and abs(c_list[-1][0] - lon) < 1e-9 and abs(c_list[-1][1] - lat) < 1e-9:
-                continue
-            if n_list and n_list[-1] == nid and c_list:
-                continue
-            c_list.append((lon, lat))
-            n_list.append(nid)
-        if len(c_list) >= 2:
-            cleaned.append(
-                WayPolyline(
-                    osm_way_id=w.osm_way_id,
-                    highway=w.highway,
-                    coords_lonlat=c_list,
-                    osm_node_ids=n_list,
-                )
-            )
-    return cleaned
-
-
-def dedupe_removed_geometry_geojson(ways: list[WayPolyline]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """
-    dedupe_geometry_ways と同じ規則で「折り畳まれた」セグメントと除去された頂点を GeoJSON にする。
-    オリジナル折れ線上で clean_idx[i+1] != clean_idx[i] + 1 のセグメントを除去ジオメトリとみなす。
-    """
-    edge_feats: list[dict[str, Any]] = []
-    vert_feats: list[dict[str, Any]] = []
-    eps = 1e-9
-    for w in ways:
-        coords = w.coords_lonlat
-        nids = w.osm_node_ids
-        n = len(coords)
-        if n < 2:
-            continue
-        c_list: list[tuple[float, float]] = []
-        n_list: list[int] = []
-        clean_pos: list[int] = []
-        skipped: list[bool] = []
-        for i, (lon, lat) in enumerate(coords):
-            nid = nids[i]
-            dup_coord = bool(
-                c_list and abs(c_list[-1][0] - lon) < eps and abs(c_list[-1][1] - lat) < eps
-            )
-            dup_nid = bool(n_list and n_list[-1] == nid and c_list)
-            if dup_coord or dup_nid:
-                skipped.append(True)
-                clean_pos.append(len(c_list) - 1)
-                continue
-            skipped.append(False)
-            c_list.append((lon, lat))
-            n_list.append(nid)
-            clean_pos.append(len(c_list) - 1)
-        for i in range(n - 1):
-            ci = clean_pos[i]
-            cj = clean_pos[i + 1]
-            if cj != ci + 1:
-                p0 = coords[i]
-                p1 = coords[i + 1]
-                if abs(p0[0] - p1[0]) > 1e-12 or abs(p0[1] - p1[1]) > 1e-12:
-                    edge_feats.append(
-                        {
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "LineString",
-                                "coordinates": [[p0[0], p0[1]], [p1[0], p1[1]]],
-                            },
-                            "properties": {"osm_way_id": w.osm_way_id},
-                        }
-                    )
-        for i in range(n):
-            if skipped[i]:
-                lon, lat = coords[i]
-                vert_feats.append(
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                        "properties": {"osm_way_id": w.osm_way_id, "osm_node_id": nids[i]},
-                    }
-                )
-    return (
-        {"type": "FeatureCollection", "features": edge_feats},
-        {"type": "FeatureCollection", "features": vert_feats},
-    )
 
 
 def build_native_graph(
@@ -695,6 +602,291 @@ def _node_degrees_from_incident(inc: dict[str, list[InternalEdge]]) -> dict[str,
     return {nid: len(lst) for nid, lst in inc.items()}
 
 
+def _other_vertex(e: InternalEdge, nid: str) -> str:
+    return e.v if e.u == nid else e.u
+
+
+def _edge_between_uv(graph: RoadGraph, u: str, v: str) -> InternalEdge | None:
+    for e in graph.edges.values():
+        if (e.u == u and e.v == v) or (e.u == v and e.v == u):
+            return e
+    return None
+
+
+def _edges_between_uv_all(graph: RoadGraph, u: str, v: str) -> list[InternalEdge]:
+    """Same undirected pair (u,v) の全辺（重複がある場合に備える）。"""
+    out: list[InternalEdge] = []
+    for e in graph.edges.values():
+        if (e.u == u and e.v == v) or (e.u == v and e.v == u):
+            out.append(e)
+    return out
+
+
+def _prune_vertex_protected(n: InternalNode, d: int) -> bool:
+    if d != 2:
+        return True
+    if not n.source_osm_node_ids:
+        return True
+    if n.merged_from_osm_id or n.merged_from_snap:
+        return True
+    if n.is_way_polyline_endpoint:
+        return True
+    return False
+
+
+def _prune_vertex_eligible(n: InternalNode, d: int, es: list[InternalEdge]) -> bool:
+    if _prune_vertex_protected(n, d):
+        return False
+    if len(es) != 2:
+        return False
+    w1, w2 = es[0].osm_way_id, es[1].osm_way_id
+    return w1 is not None and w1 == w2
+
+
+def _signed_turn_at_vertex_rad(
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    cx: float,
+    cy: float,
+) -> float:
+    """符号付き折れ角（進行方向 P[i-1]→P[i]→P[i+1]）。退化時は 0。"""
+    ux, uy = bx - ax, by - ay
+    vx, vy = cx - bx, cy - by
+    cu = ux * ux + uy * uy
+    cv = vx * vx + vy * vy
+    if cu < _PRUNE_LEN_EPS_SQ or cv < _PRUNE_LEN_EPS_SQ:
+        return 0.0
+    return math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+
+
+def _prune_accum_reduce_signed_mod(accum: float, threshold_rad: float) -> float:
+    """|accum| から threshold の整数倍を符号方向に沿って差し引く（累積のモジュロ）。"""
+    if abs(accum) < threshold_rad - 1e-15:
+        return accum
+    q = math.floor(abs(accum) / threshold_rad + 1e-12)
+    return accum - math.copysign(q * threshold_rad, accum)
+
+
+def _prune_bfs_component(
+    start: str,
+    eligible: dict[str, bool],
+    inc: dict[str, list[InternalEdge]],
+) -> set[str]:
+    from collections import deque
+
+    comp: set[str] = set()
+    dq = deque([start])
+    comp.add(start)
+    while dq:
+        cur = dq.popleft()
+        for e in inc[cur]:
+            o = _other_vertex(e, cur)
+            if eligible.get(o) and o not in comp:
+                comp.add(o)
+                dq.append(o)
+    return comp
+
+
+def _prune_chain_ordered_endpoints(
+    comp: set[str],
+    inc: dict[str, list[InternalEdge]],
+    eligible: dict[str, bool],
+) -> list[str] | None:
+    """[frozen_a, …prunable…, frozen_b] or None (pure prunable cycle — skip)."""
+
+    def pr_nbrs(nid: str) -> list[str]:
+        return [_other_vertex(e, nid) for e in inc[nid] if eligible.get(_other_vertex(e, nid), False)]
+
+    endpoints = [nid for nid in comp if len(pr_nbrs(nid)) == 1]
+
+    if len(comp) == 1:
+        v = next(iter(comp))
+        frozen = sorted(
+            (_other_vertex(e, v) for e in inc[v] if not eligible.get(_other_vertex(e, v), False)),
+            key=str,
+        )
+        if len(frozen) != 2:
+            return None
+        return [frozen[0], v, frozen[1]]
+
+    if not endpoints:
+        return None
+
+    e0 = min(endpoints, key=str)
+    nbr_all = [_other_vertex(e, e0) for e in inc[e0]]
+    frozen_start = sorted(
+        (x for x in nbr_all if not eligible.get(x, False)),
+        key=str,
+    )
+    if not frozen_start:
+        return None
+    f0 = frozen_start[0]
+    pr_next = [x for x in nbr_all if eligible.get(x, False)]
+    if len(pr_next) != 1:
+        return None
+
+    order: list[str] = [f0, e0]
+    prev, cur = f0, e0
+    while True:
+        nxt_cand = [_other_vertex(e, cur) for e in inc[cur] if _other_vertex(e, cur) != prev]
+        if len(nxt_cand) != 1:
+            return None
+        nxt = nxt_cand[0]
+        if not eligible.get(nxt, False):
+            order.append(nxt)
+            return order
+        order.append(nxt)
+        prev, cur = cur, nxt
+
+
+def _prune_simplify_keep_indices(
+    order: list[str],
+    graph: RoadGraph,
+    eligible: dict[str, bool],
+    threshold_rad: float = _PRUNE_ACCUM_THRESHOLD_RAD,
+) -> list[int]:
+    """元ポリライン上の符号付き折れ角を累積し、|累積| が閾値を超えた頂点を残す（1 パス）。"""
+    n = len(order)
+    if n < 2:
+        return [0] if n else []
+    if n == 2:
+        return [0, 1]
+
+    def xy(nid: str) -> tuple[float, float]:
+        node = graph.nodes[nid]
+        return (node.x_m, node.y_m)
+
+    keep_ix: list[int] = [0]
+    accum = 0.0
+    last_i = n - 1
+    for i in range(1, last_i):
+        if not eligible.get(order[i], False):
+            if keep_ix[-1] != i:
+                keep_ix.append(i)
+            accum = 0.0
+            continue
+        ax, ay = xy(order[i - 1])
+        bx, by = xy(order[i])
+        cx, cy = xy(order[i + 1])
+        accum += _signed_turn_at_vertex_rad(ax, ay, bx, by, cx, cy)
+        if abs(accum) >= threshold_rad - 1e-15:
+            if keep_ix[-1] != i:
+                keep_ix.append(i)
+            accum = _prune_accum_reduce_signed_mod(accum, threshold_rad)
+    if keep_ix[-1] != last_i:
+        keep_ix.append(last_i)
+    return keep_ix
+
+
+def _prune_apply_order(
+    graph: RoadGraph,
+    order: list[str],
+    keep_ix: list[int],
+    eligible: dict[str, bool],
+    eid_counter: list[int],
+) -> int:
+    """Returns number of prunable vertices removed."""
+    keep_ids = {order[i] for i in keep_ix}
+    removed = 0
+    for k in range(len(keep_ix) - 1):
+        lo, hi = keep_ix[k], keep_ix[k + 1]
+        if hi - lo < 2:
+            continue
+        u0, v0 = order[lo], order[hi]
+        edges_del: list[str] = []
+        wid: int | None = None
+        hw: str | None = None
+        for t in range(lo, hi):
+            a, b = order[t], order[t + 1]
+            segment_edges = _edges_between_uv_all(graph, a, b)
+            if not segment_edges:
+                return removed
+            for e in segment_edges:
+                edges_del.append(e.id)
+                if wid is None:
+                    wid = e.osm_way_id
+                    hw = e.highway
+        nu = graph.nodes[u0]
+        nv = graph.nodes[v0]
+        # 潰した区間は幾何的にほぼ一直線なので、表示・トポロジは端点間の 2 点折れ線に統一する
+        pl = [(nu.x_m, nu.y_m), (nv.x_m, nv.y_m)]
+        for eid in edges_del:
+            del graph.edges[eid]
+        eid_counter[0] += 1
+        new_id = f"prune:{eid_counter[0]}:{u0}:{v0}"
+        graph.edges[new_id] = InternalEdge(
+            id=new_id,
+            u=u0,
+            v=v0,
+            polyline_xy_m=pl,
+            osm_way_id=wid,
+            highway=hw,
+        )
+
+    for nid in order:
+        if eligible.get(nid, False) and nid not in keep_ids and nid in graph.nodes:
+            del graph.nodes[nid]
+            removed += 1
+    return removed
+
+
+def _prune_remove_edges_with_missing_endpoints(graph: RoadGraph) -> int:
+    """削除済み頂点を参照している辺を除去。削除した本数を返す。"""
+    bad = [eid for eid, e in graph.edges.items() if e.u not in graph.nodes or e.v not in graph.nodes]
+    for eid in bad:
+        del graph.edges[eid]
+    return len(bad)
+
+
+def prune_redundant_chain_vertices(graph: RoadGraph) -> dict[str, Any]:
+    """同一 way 上の次数 2 かつ保護なしの頂点を、符号付き折れ角の累積に基づき簡略化してマージする。"""
+    vertices_removed = 0
+    edges_before = len(graph.edges)
+    eid_counter = [0]
+    blocked: set[str] = set()
+
+    while True:
+        inc = _incident_edges_by_node(graph)
+        deg = _node_degrees_from_incident(inc)
+        eligible: dict[str, bool] = {}
+        for nid, n in graph.nodes.items():
+            if nid in blocked:
+                eligible[nid] = False
+                continue
+            eligible[nid] = _prune_vertex_eligible(n, deg.get(nid, 0), inc.get(nid, []))
+
+        start = next((nid for nid, ok in eligible.items() if ok), None)
+        if start is None:
+            break
+
+        comp = _prune_bfs_component(start, eligible, inc)
+        order = _prune_chain_ordered_endpoints(comp, inc, eligible)
+        if order is None or len(order) < 3:
+            blocked |= comp
+            continue
+
+        keep_ix = _prune_simplify_keep_indices(order, graph, eligible)
+        any_merge = any(keep_ix[k + 1] - keep_ix[k] >= 2 for k in range(len(keep_ix) - 1))
+        if not any_merge:
+            blocked |= comp
+            continue
+
+        vertices_removed += _prune_apply_order(graph, order, keep_ix, eligible, eid_counter)
+        _prune_remove_edges_with_missing_endpoints(graph)
+
+    _prune_remove_edges_with_missing_endpoints(graph)
+
+    th_deg = round(math.degrees(_PRUNE_ACCUM_THRESHOLD_RAD), 9)
+    return {
+        "vertices_removed": vertices_removed,
+        "edges_before": edges_before,
+        "edges_after": len(graph.edges),
+        "angle_accum_threshold_deg": th_deg,
+    }
+
+
 def classify_vertex_role(
     graph: RoadGraph,
     nid: str,
@@ -804,19 +996,6 @@ def build_graph_from_geojson(
 ) -> GraphBuildResult:
     step_metrics: dict[str, Any] = {}
     ways = parse_way_features(geojson_fc)
-    dedupe_rm_edges: dict[str, Any] = {"type": "FeatureCollection", "features": []}
-    dedupe_rm_verts: dict[str, Any] = {"type": "FeatureCollection", "features": []}
-
-    if options.deduplicate_geometry:
-        dedupe_rm_edges, dedupe_rm_verts = dedupe_removed_geometry_geojson(ways)
-        vb = sum(len(w.osm_node_ids) for w in ways)
-        ways = dedupe_geometry_ways(ways)
-        va = sum(len(w.osm_node_ids) for w in ways)
-        step_metrics["deduplicate"] = {
-            "way_vertices_before": vb,
-            "way_vertices_after": va,
-            "removed_duplicate_vertices": vb - va,
-        }
 
     def proj(lon: float, lat: float) -> tuple[float, float]:
         return lon_lat_to_xy_m(lon0, lat0, lon, lat)
@@ -835,6 +1014,9 @@ def build_graph_from_geojson(
     if options.snap_endpoints:
         step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
 
+    if options.remove_redundant_chain_vertices:
+        step_metrics["prune_chains"] = prune_redundant_chain_vertices(graph)
+
     synth = sum(1 for n in graph.nodes.values() if len(n.source_osm_node_ids) == 0)
     stats = {
         "node_count": len(graph.nodes),
@@ -850,6 +1032,4 @@ def build_graph_from_geojson(
         explanation_lines=[],
         stats=stats,
         step_metrics=step_metrics,
-        dedupe_removed_edges_geojson=dedupe_rm_edges,
-        dedupe_removed_vertices_geojson=dedupe_rm_verts,
     )

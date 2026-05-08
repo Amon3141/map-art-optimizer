@@ -17,10 +17,6 @@ const OSM_SRC = 'debug-osm-overlay'
 const OSM_LINE = 'debug-osm-overlay-line'
 const G_EDGES_SRC = 'debug-graph-edges'
 const G_EDGES_LINE = 'debug-graph-edges-line'
-const G_DEDUPE_RM_EDGES_SRC = 'debug-graph-dedupe-rm-edges'
-const G_DEDUPE_RM_EDGES = 'debug-graph-dedupe-rm-edges-line'
-const G_DEDUPE_RM_VERTS_SRC = 'debug-graph-dedupe-rm-verts'
-const G_DEDUPE_RM_VERTS = 'debug-graph-dedupe-rm-verts-circle'
 const G_NODES_SRC = 'debug-graph-nodes'
 const G_NODES_LAYER = 'debug-graph-nodes-circle'
 const G_PILE_LABEL = 'debug-graph-pile-label'
@@ -31,8 +27,6 @@ const GRAPH_LAYER_IDS = [
   G_JUNCTION_LABEL,
   G_PILE_LABEL,
   G_NODES_LAYER,
-  G_DEDUPE_RM_VERTS,
-  G_DEDUPE_RM_EDGES,
   G_EDGES_LINE,
 ] as const
 
@@ -41,8 +35,6 @@ export type DebugMapViewMode = 'osm' | 'graph'
 export type DebugGraphGeoJson = {
   nodes: GeoJSON.FeatureCollection
   edges: GeoJSON.FeatureCollection
-  dedupe_removed_edges?: GeoJSON.FeatureCollection
-  dedupe_removed_vertices?: GeoJSON.FeatureCollection
 }
 
 export type DebugMapPanelProps = {
@@ -87,8 +79,6 @@ function removeGraphLayers(map: MapLibreMap) {
   }
   if (map.getSource(G_NODES_SRC)) map.removeSource(G_NODES_SRC)
   if (map.getSource(G_EDGES_SRC)) map.removeSource(G_EDGES_SRC)
-  if (map.getSource(G_DEDUPE_RM_VERTS_SRC)) map.removeSource(G_DEDUPE_RM_VERTS_SRC)
-  if (map.getSource(G_DEDUPE_RM_EDGES_SRC)) map.removeSource(G_DEDUPE_RM_EDGES_SRC)
 }
 
 function fitCollectionBounds(map: MapLibreMap, ...collections: GeoJSON.FeatureCollection[]) {
@@ -288,46 +278,6 @@ export function DebugMapPanel({
       },
       graphBefore,
     )
-
-    const insertBeforeOsm = map.getLayer(OSM_LINE) ? OSM_LINE : undefined
-    const dre = gg.dedupe_removed_edges
-    const drv = gg.dedupe_removed_vertices
-    if (dre && dre.features.length > 0) {
-      map.addSource(G_DEDUPE_RM_EDGES_SRC, { type: 'geojson', data: dre })
-      map.addLayer(
-        {
-          id: G_DEDUPE_RM_EDGES,
-          type: 'line',
-          source: G_DEDUPE_RM_EDGES_SRC,
-          paint: {
-            'line-color': '#78716c',
-            'line-width': 2,
-            'line-opacity': 0.82,
-            'line-dasharray': [2, 2],
-          },
-        },
-        insertBeforeOsm,
-      )
-    }
-    if (drv && drv.features.length > 0) {
-      map.addSource(G_DEDUPE_RM_VERTS_SRC, { type: 'geojson', data: drv })
-      map.addLayer(
-        {
-          id: G_DEDUPE_RM_VERTS,
-          type: 'circle',
-          source: G_DEDUPE_RM_VERTS_SRC,
-          paint: {
-            'circle-radius': 5,
-            'circle-color': '#57534e',
-            'circle-opacity': 0.5,
-            'circle-stroke-width': 1,
-            'circle-stroke-color': '#faf8f4',
-            'circle-stroke-opacity': 0.45,
-          },
-        },
-        insertBeforeOsm,
-      )
-    }
 
     map.addSource(G_NODES_SRC, { type: 'geojson', data: gg.nodes })
 

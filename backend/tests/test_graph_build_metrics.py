@@ -3,38 +3,10 @@
 import math
 
 from app.osm.graph_build import GraphBuildOptions, build_graph_from_geojson, graph_to_geojson_fc
-from app.osm.projection import EARTH_RADIUS_M
+from app.osm.projection import EARTH_RADIUS_M, xy_m_to_lon_lat
 
 
-def test_step_metrics_deduplicate_only():
-    fc = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0, 0], [0.002, 0]]},
-                "properties": {
-                    "osm_way_id": 1,
-                    "highway": "residential",
-                    "osm_node_ids": [10, 10, 11],
-                },
-            }
-        ],
-    }
-    opts = GraphBuildOptions(deduplicate_geometry=True)
-    r = build_graph_from_geojson(fc, 0.001, 0.0, opts)
-    assert r.step_metrics.get("deduplicate") is not None
-    dd = r.step_metrics["deduplicate"]
-    assert dd["way_vertices_before"] == 3
-    assert dd["way_vertices_after"] == 2
-    assert dd["removed_duplicate_vertices"] == 1
-    rm_e = r.dedupe_removed_edges_geojson["features"]
-    rm_v = r.dedupe_removed_vertices_geojson["features"]
-    assert len(rm_v) == 1
-    assert rm_v[0]["geometry"]["type"] == "Point"
-
-
-def test_dedupe_removed_geometry_overlay_dup_nid_non_degenerate_segment():
+def test_prune_collinear_chain_reduces_graph():
     fc = {
         "type": "FeatureCollection",
         "features": [
@@ -42,23 +14,127 @@ def test_dedupe_removed_geometry_overlay_dup_nid_non_degenerate_segment():
                 "type": "Feature",
                 "geometry": {
                     "type": "LineString",
-                    "coordinates": [[0, 0], [0.001, 0], [0.002, 0]],
+                    "coordinates": [[0, 0], [0.001, 0], [0.002, 0], [0.003, 0], [0.004, 0]],
                 },
                 "properties": {
                     "osm_way_id": 1,
                     "highway": "residential",
-                    "osm_node_ids": [10, 10, 11],
+                    "osm_node_ids": [10, 11, 12, 13, 14],
                 },
             }
         ],
     }
-    opts = GraphBuildOptions(deduplicate_geometry=True)
-    r = build_graph_from_geojson(fc, 0.001, 0.0, opts)
-    rm_e = r.dedupe_removed_edges_geojson["features"]
-    rm_v = r.dedupe_removed_vertices_geojson["features"]
-    assert len(rm_v) == 1
-    assert len(rm_e) == 1
-    assert rm_e[0]["geometry"]["type"] == "LineString"
+    r0 = build_graph_from_geojson(fc, 0.002, 0.0, GraphBuildOptions())
+    r1 = build_graph_from_geojson(fc, 0.002, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=True))
+    assert r0.stats["node_count"] == 5
+    assert r0.stats["edge_count"] == 4
+    assert r1.stats["node_count"] == 2
+    assert r1.stats["edge_count"] == 1
+    pc = r1.step_metrics.get("prune_chains") or {}
+    assert pc.get("vertices_removed", 0) >= 1
+    only_e = next(iter(r1.graph.edges.values()))
+    assert len(only_e.polyline_xy_m) == 2
+
+
+def test_prune_preserves_sharp_turn():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.001, 0], [0.001, 0.001]]},
+                "properties": {
+                    "osm_way_id": 1,
+                    "highway": "residential",
+                    "osm_node_ids": [10, 11, 12],
+                },
+            }
+        ],
+    }
+    r0 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphBuildOptions())
+    r1 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=True))
+    assert r0.stats["node_count"] == 3
+    assert r1.stats["node_count"] == 3
+    assert r1.stats["edge_count"] == 2
+
+
+def test_prune_preserves_gentle_arc():
+    """各折れは小さいが符号が同方向に積み上がり、弦一本に潰れないこと。"""
+    lon0, lat0 = 139.0, 36.0
+    leg_m = 45.0
+    delta = math.radians(3.5)
+    n_legs = 18
+    pts_xy: list[tuple[float, float]] = [(0.0, 0.0)]
+    hx, hy = 1.0, 0.0
+    x, y = 0.0, 0.0
+    for _ in range(n_legs):
+        x += hx * leg_m
+        y += hy * leg_m
+        pts_xy.append((x, y))
+        c, s = math.cos(delta), math.sin(delta)
+        hx, hy = hx * c - hy * s, hx * s + hy * c
+    coords = [[lon, lat] for lon, lat in (xy_m_to_lon_lat(lon0, lat0, px, py) for px, py in pts_xy)]
+    nids = list(range(5000, 5000 + len(coords)))
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "osm_way_id": 1,
+                    "highway": "residential",
+                    "osm_node_ids": nids,
+                },
+            }
+        ],
+    }
+    r0 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions())
+    r1 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices=True))
+    assert r1.stats["node_count"] < r0.stats["node_count"]
+    assert r1.stats["node_count"] > 2
+    assert r1.stats["edge_count"] > 1
+    pc = r1.step_metrics.get("prune_chains") or {}
+    assert pc.get("angle_accum_threshold_deg") == 15.0
+
+
+def test_prune_signed_cancellation_collapses_zigzag():
+    """符号が交互に打ち消される折れでは累積が閾値に届かず、一直線と同様に潰せること。"""
+    lon0, lat0 = 139.0, 36.0
+    leg_m = 35.0
+    turn = math.radians(12.0)
+    n_legs = 24
+    pts_xy: list[tuple[float, float]] = [(0.0, 0.0)]
+    hx, hy = 1.0, 0.0
+    x, y = 0.0, 0.0
+    sign = 1.0
+    for _ in range(n_legs):
+        x += hx * leg_m
+        y += hy * leg_m
+        pts_xy.append((x, y))
+        d = sign * turn
+        c, s = math.cos(d), math.sin(d)
+        hx, hy = hx * c - hy * s, hx * s + hy * c
+        sign *= -1.0
+    coords = [[lon, lat] for lon, lat in (xy_m_to_lon_lat(lon0, lat0, px, py) for px, py in pts_xy)]
+    nids = list(range(6000, 6000 + len(coords)))
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "osm_way_id": 1,
+                    "highway": "residential",
+                    "osm_node_ids": nids,
+                },
+            }
+        ],
+    }
+    r1 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices=True))
+    assert r1.stats["node_count"] == 2
+    assert r1.stats["edge_count"] == 1
 
 
 def test_vertex_role_and_pile_in_geojson():
@@ -229,10 +305,12 @@ def test_all_graph_options_enabled_crossing_fixture():
         split_intersections=True,
         snap_endpoints=True,
         snap_epsilon_m=5.0,
+        remove_redundant_chain_vertices=True,
     )
     r = build_graph_from_geojson(fc, 0.0001, 0.0, opts)
     assert r.step_metrics.get("connect_osm") is not None
     assert (r.step_metrics.get("split") or {}).get("intersection_splits_applied", 0) >= 1
     assert r.step_metrics.get("snap") is not None
+    assert r.step_metrics.get("prune_chains") is not None
     assert r.stats["node_count"] >= 1
     assert r.stats["edge_count"] >= 1
