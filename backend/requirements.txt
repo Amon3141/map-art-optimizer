@@ -10,6 +10,7 @@ httptools==0.7.1
 httpx==0.28.1
 idna==3.13
 iniconfig==2.3.0
+numpy==2.4.4
 packaging==26.2
 pluggy==1.6.0
 pydantic==2.13.4
@@ -17,6 +18,7 @@ pydantic_core==2.46.4
 Pygments==2.20.0
 pytest==9.0.3
 python-dotenv==1.2.2
+shapely==2.1.2
 PyYAML==6.0.3
 starlette==1.0.0
 typing-inspection==0.4.2

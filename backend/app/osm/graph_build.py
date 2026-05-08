@@ -15,6 +15,10 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
+import numpy as np
+from shapely import STRtree
+from shapely.geometry import LineString, Point
+
 from .graph_model import InternalEdge, InternalNode, RoadGraph
 from .projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
@@ -58,12 +62,6 @@ PARALLEL_EPS = 1e-12
 MAX_SPLIT_ITER = 2000
 
 PILE_LONLAT_DECIMALS = 5
-
-# 交差探索グリッド: bbox 短辺をこの分割数で割ったセル（下限あり）
-_SPLIT_GRID_DIVISIONS = 64
-_SPLIT_CELL_MIN_M = 2.0
-# セル内候補が多すぎるときのフォールバック（同一セル内のみ全対全）
-_SPLIT_CELL_DENSE_THRESHOLD = 256
 
 
 def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -115,79 +113,9 @@ def nearest_point_on_segment(
     return (a[0] + t * vx, a[1] + t * vy), t
 
 
-# --- uniform spatial grid (H0-e: preprocess.md) ---
-# snap: cell_m = snap_epsilon_m（ε 以内の点対は同一セルまたは8近傍に収まる）
-# split: cell_m = max(bbox_short_side / N, floor_m) で長辺は複数セルに登録
-
-
-def _grid_cell_xy(x: float, y: float, cell_m: float) -> tuple[int, int]:
-    return (math.floor(x / cell_m), math.floor(y / cell_m))
-
-
-def _segment_aabb(
-    p0: tuple[float, float], p1: tuple[float, float], pad: float = 0.0
-) -> tuple[float, float, float, float]:
-    x0, y0 = p0
-    x1, y1 = p1
-    xmin = min(x0, x1) - pad
-    xmax = max(x0, x1) + pad
-    ymin = min(y0, y1) - pad
-    ymax = max(y0, y1) + pad
-    return xmin, xmax, ymin, ymax
-
-
-def _iter_cell_rect(
-    xmin: float, xmax: float, ymin: float, ymax: float, cell_m: float
-) -> list[tuple[int, int]]:
-    if cell_m <= 0:
-        return []
-    ix0 = math.floor(xmin / cell_m)
-    ix1 = math.floor(xmax / cell_m)
-    iy0 = math.floor(ymin / cell_m)
-    iy1 = math.floor(ymax / cell_m)
-    out: list[tuple[int, int]] = []
-    for ix in range(ix0, ix1 + 1):
-        for iy in range(iy0, iy1 + 1):
-            out.append((ix, iy))
-    return out
-
-
-def _cells_for_segment(
-    a: tuple[float, float], b: tuple[float, float], cell_m: float
-) -> list[tuple[int, int]]:
-    xmin, xmax, ymin, ymax = _segment_aabb(a, b)
-    return _iter_cell_rect(xmin, xmax, ymin, ymax, cell_m)
-
-
-def _index_edge_segments_by_cell(
-    graph: RoadGraph, cell_m: float
-) -> dict[tuple[int, int], list[tuple[str, int]]]:
-    """各セルに、その bbox と交わる (edge_id, seg_i) を列挙。"""
-    cell_map: dict[tuple[int, int], list[tuple[str, int]]] = {}
-    for eid, e in graph.edges.items():
-        pl = e.polyline_xy_m
-        if len(pl) < 2:
-            continue
-        for seg_i in range(len(pl) - 1):
-            a, b = pl[seg_i], pl[seg_i + 1]
-            for key in _cells_for_segment(a, b, cell_m):
-                cell_map.setdefault(key, []).append((eid, seg_i))
-    return cell_map
-
-
-def _split_grid_cell_m(graph: RoadGraph) -> float:
-    xs: list[float] = []
-    ys: list[float] = []
-    for e in graph.edges.values():
-        for px, py in e.polyline_xy_m:
-            xs.append(px)
-            ys.append(py)
-    if not xs:
-        return _SPLIT_CELL_MIN_M
-    span_x = max(xs) - min(xs)
-    span_y = max(ys) - min(ys)
-    short_side = max(min(span_x, span_y), _SPLIT_CELL_MIN_M)
-    return max(short_side / _SPLIT_GRID_DIVISIONS, _SPLIT_CELL_MIN_M)
+# --- spatial index (H0-e: preprocess.md): Shapely STRtree ---
+# Snap: index O(n log n); each node queries ε-disk neighbors via dwithin → O(log n + k).
+# Split: index O(S log S) per iteration (graph mutates → rebuild); batched bbox queries.
 
 
 # --- GeoJSON parsing ---
@@ -370,57 +298,6 @@ def _merge_source_ids(lists: list[list[int]]) -> list[int]:
     return sorted(s)
 
 
-def collapse_nodes(
-    graph: RoadGraph,
-    cluster: list[str],
-    *,
-    merge_kind: Literal["osm_id", "snap"] | None = None,
-) -> int:
-    """Returns number of nodes removed from graph (0 if no collapse)."""
-    if len(cluster) < 2:
-        return 0
-    canonical = min(cluster)
-    xs = sum(graph.nodes[k].x_m for k in cluster) / len(cluster)
-    ys = sum(graph.nodes[k].y_m for k in cluster) / len(cluster)
-    src = _merge_source_ids([graph.nodes[k].source_osm_node_ids for k in cluster])
-    ep_any = any(graph.nodes[k].is_way_polyline_endpoint for k in cluster)
-    snap_any = merge_kind == "snap" or any(graph.nodes[k].merged_from_snap for k in cluster)
-    osm_merge_any = merge_kind == "osm_id" or any(graph.nodes[k].merged_from_osm_id for k in cluster)
-    others = {n for n in cluster if n != canonical}
-    graph.nodes[canonical] = InternalNode(
-        id=canonical,
-        x_m=xs,
-        y_m=ys,
-        source_osm_node_ids=src,
-        is_way_polyline_endpoint=ep_any,
-        merged_from_snap=snap_any,
-        merged_from_osm_id=osm_merge_any,
-    )
-    for o in others:
-        del graph.nodes[o]
-    remap = {k: canonical for k in cluster}
-    new_edges: dict[str, InternalEdge] = {}
-    for eid, e in graph.edges.items():
-        u = remap.get(e.u, e.u)
-        v = remap.get(e.v, e.v)
-        if u == v:
-            continue
-        pl = list(e.polyline_xy_m)
-        if pl:
-            pl[0] = (graph.nodes[u].x_m, graph.nodes[u].y_m)
-            pl[-1] = (graph.nodes[v].x_m, graph.nodes[v].y_m)
-        new_edges[eid] = InternalEdge(
-            id=eid,
-            u=u,
-            v=v,
-            polyline_xy_m=pl,
-            osm_way_id=e.osm_way_id,
-            highway=e.highway,
-        )
-    graph.edges = new_edges
-    return len(others)
-
-
 def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
     """
     同一 OSM node id を共有するグラフ頂点を union-find でまとめ、一括で remap する。
@@ -531,38 +408,97 @@ def _uf_union(parent: dict[str, str], a: str, b: str) -> None:
 
 
 def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
-    """ε 近傍の頂点を union。セルサイズ = ε（同一・隣接セルに候補が収まる）。"""
-    cell_m = max(epsilon_m, 1e-6)
-    cell_nodes: dict[tuple[int, int], list[str]] = {}
-    for nid, n in graph.nodes.items():
-        key = _grid_cell_xy(n.x_m, n.y_m, cell_m)
-        cell_nodes.setdefault(key, []).append(nid)
+    """ε 近傍の頂点を union。点の STRtree + dwithin(ε) で候補列挙し、oid>nid のみ union。"""
+    eps = max(epsilon_m, 1e-6)
+    nids = list(graph.nodes.keys())
+    pts = [Point(graph.nodes[i].x_m, graph.nodes[i].y_m) for i in nids]
+    tree = STRtree(pts)
 
     parent = {n: n for n in graph.nodes}
-    for nid in graph.nodes:
+    for nid in nids:
         na = graph.nodes[nid]
-        ix, iy = _grid_cell_xy(na.x_m, na.y_m, cell_m)
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for oid in cell_nodes.get((ix + dx, iy + dy), []):
-                    if oid <= nid:
-                        continue
-                    nb = graph.nodes[oid]
-                    if _dist((na.x_m, na.y_m), (nb.x_m, nb.y_m)) <= epsilon_m:
-                        _uf_union(parent, nid, oid)
+        q = Point(na.x_m, na.y_m)
+        hits = tree.query(q, predicate="dwithin", distance=eps)
+        for hj in np.atleast_1d(np.asarray(hits)):
+            j = int(hj)
+            oid = nids[j]
+            if oid <= nid:
+                continue
+            nb = graph.nodes[oid]
+            if _dist((na.x_m, na.y_m), (nb.x_m, nb.y_m)) <= epsilon_m:
+                _uf_union(parent, nid, oid)
 
     clusters: dict[str, list[str]] = {}
     for n in graph.nodes:
         r = _uf_find(parent, n)
         clusters.setdefault(r, []).append(n)
+
+    rem: dict[str, str] = {}
+    merged_canonical: dict[str, InternalNode] = {}
     snap_clusters = 0
     vertices_merged = 0
-    for _r, members in clusters.items():
+    for _root, members in clusters.items():
+        canonical = min(members)
+        for k in members:
+            rem[k] = canonical
         if len(members) < 2:
             continue
         snap_clusters += 1
-        removed = collapse_nodes(graph, sorted(members), merge_kind="snap")
-        vertices_merged += removed
+        vertices_merged += len(members) - 1
+        xs = sum(graph.nodes[k].x_m for k in members) / len(members)
+        ys = sum(graph.nodes[k].y_m for k in members) / len(members)
+        src = _merge_source_ids([graph.nodes[k].source_osm_node_ids for k in members])
+        ep_any = any(graph.nodes[k].is_way_polyline_endpoint for k in members)
+        osm_merge_any = any(graph.nodes[k].merged_from_osm_id for k in members)
+        merged_canonical[canonical] = InternalNode(
+            id=canonical,
+            x_m=xs,
+            y_m=ys,
+            source_osm_node_ids=src,
+            is_way_polyline_endpoint=ep_any,
+            merged_from_snap=True,
+            merged_from_osm_id=osm_merge_any,
+        )
+
+    final_nodes: dict[str, InternalNode] = {}
+    for nid, node in graph.nodes.items():
+        if rem[nid] != nid:
+            continue
+        if nid in merged_canonical:
+            final_nodes[nid] = merged_canonical[nid]
+        else:
+            final_nodes[nid] = InternalNode(
+                id=nid,
+                x_m=node.x_m,
+                y_m=node.y_m,
+                source_osm_node_ids=list(node.source_osm_node_ids),
+                is_way_polyline_endpoint=node.is_way_polyline_endpoint,
+                merged_from_snap=node.merged_from_snap,
+                merged_from_osm_id=node.merged_from_osm_id,
+            )
+
+    new_edges: dict[str, InternalEdge] = {}
+    for eid, e in graph.edges.items():
+        u = rem[e.u]
+        v = rem[e.v]
+        if u == v:
+            continue
+        pl = list(e.polyline_xy_m)
+        if pl:
+            nu = final_nodes[u]
+            nv = final_nodes[v]
+            pl[0] = (nu.x_m, nu.y_m)
+            pl[-1] = (nv.x_m, nv.y_m)
+        new_edges[eid] = InternalEdge(
+            id=eid,
+            u=u,
+            v=v,
+            polyline_xy_m=pl,
+            osm_way_id=e.osm_way_id,
+            highway=e.highway,
+        )
+    graph.nodes = final_nodes
+    graph.edges = new_edges
     return {
         "epsilon_m": epsilon_m,
         "snap_clusters": snap_clusters,
@@ -574,38 +510,43 @@ def split_one_intersection(graph: RoadGraph, synth_counter: list[int]) -> bool:
     edge_ids_sorted = sorted(graph.edges.keys())
     rank = {eid: i for i, eid in enumerate(edge_ids_sorted)}
 
-    cell_m = _split_grid_cell_m(graph)
-    for _ in range(5):
-        cell_map = _index_edge_segments_by_cell(graph, cell_m)
-        max_occ = max((len(v) for v in cell_map.values()), default=0)
-        if max_occ <= _SPLIT_CELL_DENSE_THRESHOLD:
-            break
-        cell_m *= 0.5
+    refs: list[tuple[str, int]] = []
+    geoms: list[LineString] = []
+    for eid in edge_ids_sorted:
+        e = graph.edges.get(eid)
+        if e is None:
+            continue
+        pl = e.polyline_xy_m
+        if len(pl) < 2:
+            continue
+        for seg_i in range(len(pl) - 1):
+            a, b = pl[seg_i], pl[seg_i + 1]
+            geoms.append(LineString([a, b]))
+            refs.append((eid, seg_i))
 
+    if len(geoms) < 2:
+        return False
+
+    tree = STRtree(geoms)
+    raw = tree.query(np.asarray(geoms, dtype=object))
     seen_pairs: set[tuple[str, int, str, int]] = set()
     cand: list[tuple[int, int, int, int, str, str]] = []
-    for _cell, refs in cell_map.items():
-        loc: set[tuple[str, int]] = set()
-        uniq: list[tuple[str, int]] = []
-        for r in refs:
-            if r in loc:
+    if raw.ndim == 2 and raw.shape[0] == 2:
+        for k in range(raw.shape[1]):
+            i, j = int(raw[0, k]), int(raw[1, k])
+            if i >= j:
                 continue
-            loc.add(r)
-            uniq.append(r)
-        L = uniq
-        for ii in range(len(L)):
-            for jj in range(ii + 1, len(L)):
-                e1, s1 = L[ii]
-                e2, s2 = L[jj]
-                if e1 == e2:
-                    continue
-                if e1 > e2:
-                    e1, s1, e2, s2 = e2, s2, e1, s1
-                pk = (e1, s1, e2, s2)
-                if pk in seen_pairs:
-                    continue
-                seen_pairs.add(pk)
-                cand.append((rank[e1], rank[e2], s1, s2, e1, e2))
+            e1, s1 = refs[i]
+            e2, s2 = refs[j]
+            if e1 == e2:
+                continue
+            if e1 > e2:
+                e1, s1, e2, s2 = e2, s2, e1, s1
+            pk = (e1, s1, e2, s2)
+            if pk in seen_pairs:
+                continue
+            seen_pairs.add(pk)
+            cand.append((rank[e1], rank[e2], s1, s2, e1, e2))
     cand.sort()
 
     for _r1, _r2, seg_i, seg_j, e1_id, e2_id in cand:
