@@ -4,7 +4,6 @@ export type GraphBuildOptionsPayload = {
   snap_epsilon_m: number
   split_intersections: boolean
   remove_redundant_chain_vertices: boolean
-  /** チェーン簡略化: 符号付き折れ角の累積の絶対値がこの度以上の頂点を残す */
   prune_chain_accum_angle_deg: number
 }
 

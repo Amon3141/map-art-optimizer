@@ -207,7 +207,7 @@ export function DebugSidebar({
                   }
                 />
                 <GraphOptionBlock
-                  title="距離が近い頂点をまとめる（ε 以内）"
+                  title="距離が近い頂点をまとめる"
                   checked={graphOptions.snap_endpoints}
                   onToggle={(c) => toggleOpt('snap_endpoints', c)}
                   result={

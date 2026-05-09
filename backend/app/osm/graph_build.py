@@ -33,7 +33,6 @@ class GraphBuildOptions:
     snap_epsilon_m: float = 3.0
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
-    # 符号付き折れ角の累積の絶対値がこの値（度）以上で頂点を残す（チェーン簡略化）
     prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 
 
@@ -112,11 +111,6 @@ def nearest_point_on_segment(
     t = ((_sub(q, a)[0]) * vx + (_sub(q, a)[1]) * vy) / len2
     t = max(0.0, min(1.0, t))
     return (a[0] + t * vx, a[1] + t * vy), t
-
-
-# --- spatial index (H0-e: preprocess.md): Shapely STRtree ---
-# Snap: index O(n log n); each node queries ε-disk neighbors via dwithin → O(log n + k).
-# Split: index O(S log S) per iteration (graph mutates → rebuild); batched bbox queries.
 
 
 # --- GeoJSON parsing ---
