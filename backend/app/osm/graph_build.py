@@ -4,9 +4,10 @@ OSM way 折れ線から平面グラフへの変換パイプライン。
 処理順（既定）:
 1. ネイティブトポロジ（way 内の連続頂点間エッジ）
 2. OSM node id による接続（オプション）
-3. 道路交差の幾何 split（オプション）
-4. 距離ベース snap（オプション）
-5. 不要な中間ノード削除（オプション・上記の後のみ）
+3. 距離ベース snap（オプション）
+4. 重複・並行道路のマージ（オプション）
+5. 道路交差の幾何 split（オプション）
+6. 不要な中間ノード削除（オプション・上記の後のみ）
 """
 
 from __future__ import annotations
@@ -24,6 +25,11 @@ from .projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
 
 DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG = 15.0
+DEFAULT_ROAD_MERGE_DISTANCE_M = 14.0
+DEFAULT_ROAD_MERGE_ANGLE_DEG = 22.0
+DEFAULT_ROAD_MERGE_MIN_OVERLAP_M = 8.0
+DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO = 0.25
+DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M = 2.0
 
 
 @dataclass
@@ -31,6 +37,12 @@ class GraphBuildOptions:
     connect_osm_node_ids: bool = False
     snap_endpoints: bool = False
     snap_epsilon_m: float = 3.0
+    merge_duplicate_roads: bool = False
+    road_merge_distance_m: float = DEFAULT_ROAD_MERGE_DISTANCE_M
+    road_merge_angle_deg: float = DEFAULT_ROAD_MERGE_ANGLE_DEG
+    road_merge_min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M
+    road_merge_min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO
+    road_merge_anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
     prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
@@ -190,6 +202,7 @@ def build_native_graph(
                 polyline_xy_m=[pu, pv],
                 osm_way_id=wid,
                 highway=w.highway,
+                merged_osm_way_ids=[wid],
             )
     return RoadGraph(nodes=nodes, edges=edges)
 
@@ -242,6 +255,7 @@ def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
         src = _merge_source_ids([graph.nodes[k].source_osm_node_ids for k in members])
         ep_any = any(graph.nodes[k].is_way_polyline_endpoint for k in members)
         snap_any = any(graph.nodes[k].merged_from_snap for k in members)
+        road_merge_any = any(graph.nodes[k].merged_from_road_merge for k in members)
         osm_merge_any = True
         merged_canonical[canonical] = InternalNode(
             id=canonical,
@@ -251,6 +265,8 @@ def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
             is_way_polyline_endpoint=ep_any,
             merged_from_snap=snap_any,
             merged_from_osm_id=osm_merge_any,
+            merged_from_road_merge=road_merge_any,
+            synthetic_reason=None,
         )
 
     final_nodes: dict[str, InternalNode] = {}
@@ -268,6 +284,8 @@ def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
                 is_way_polyline_endpoint=node.is_way_polyline_endpoint,
                 merged_from_snap=node.merged_from_snap,
                 merged_from_osm_id=node.merged_from_osm_id,
+                merged_from_road_merge=node.merged_from_road_merge,
+                synthetic_reason=node.synthetic_reason,
             )
 
     new_edges: dict[str, InternalEdge] = {}
@@ -289,6 +307,7 @@ def merge_by_osm_node_id(graph: RoadGraph) -> dict[str, Any]:
             polyline_xy_m=pl,
             osm_way_id=e.osm_way_id,
             highway=e.highway,
+            merged_osm_way_ids=list(e.merged_osm_way_ids),
         )
     graph.nodes = final_nodes
     graph.edges = new_edges
@@ -370,6 +389,7 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
         src = _merge_source_ids([graph.nodes[k].source_osm_node_ids for k in members])
         ep_any = any(graph.nodes[k].is_way_polyline_endpoint for k in members)
         osm_merge_any = any(graph.nodes[k].merged_from_osm_id for k in members)
+        road_merge_any = any(graph.nodes[k].merged_from_road_merge for k in members)
         merged_canonical[canonical] = InternalNode(
             id=canonical,
             x_m=xs,
@@ -378,6 +398,8 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
             is_way_polyline_endpoint=ep_any,
             merged_from_snap=True,
             merged_from_osm_id=osm_merge_any,
+            merged_from_road_merge=road_merge_any,
+            synthetic_reason=None,
         )
 
     final_nodes: dict[str, InternalNode] = {}
@@ -395,6 +417,8 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
                 is_way_polyline_endpoint=node.is_way_polyline_endpoint,
                 merged_from_snap=node.merged_from_snap,
                 merged_from_osm_id=node.merged_from_osm_id,
+                merged_from_road_merge=node.merged_from_road_merge,
+                synthetic_reason=node.synthetic_reason,
             )
 
     new_edges: dict[str, InternalEdge] = {}
@@ -416,6 +440,7 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
             polyline_xy_m=pl,
             osm_way_id=e.osm_way_id,
             highway=e.highway,
+            merged_osm_way_ids=list(e.merged_osm_way_ids),
         )
     graph.nodes = final_nodes
     graph.edges = new_edges
@@ -423,6 +448,547 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
         "epsilon_m": epsilon_m,
         "snap_clusters": snap_clusters,
         "vertices_merged_by_snap": vertices_merged,
+    }
+
+
+@dataclass
+class _RoadMergeCandidate:
+    a: str
+    b: str
+    score: float
+    distance_m: float
+    angle_deg: float
+    overlap_m: float
+    len_a_m: float
+    len_b_m: float
+
+
+@dataclass
+class _DirectedRoadMerge:
+    source: str
+    target: str
+    score: float
+
+
+def _edge_way_ids(e: InternalEdge) -> list[int]:
+    ids = list(e.merged_osm_way_ids)
+    if e.osm_way_id is not None:
+        ids.append(e.osm_way_id)
+    return sorted(set(ids))
+
+
+def _merge_edge_osm_way_ids(edges: list[InternalEdge]) -> list[int]:
+    out: set[int] = set()
+    for e in edges:
+        out.update(_edge_way_ids(e))
+    return sorted(out)
+
+
+def _edge_endpoints_xy(graph: RoadGraph, e: InternalEdge) -> tuple[tuple[float, float], tuple[float, float]]:
+    nu = graph.nodes[e.u]
+    nv = graph.nodes[e.v]
+    return (nu.x_m, nu.y_m), (nv.x_m, nv.y_m)
+
+
+def _edge_length_m(graph: RoadGraph, e: InternalEdge) -> float:
+    a, b = _edge_endpoints_xy(graph, e)
+    return _dist(a, b)
+
+
+def _parallel_overlap_m(
+    a0: tuple[float, float],
+    a1: tuple[float, float],
+    b0: tuple[float, float],
+    b1: tuple[float, float],
+) -> float:
+    ax, ay = a1[0] - a0[0], a1[1] - a0[1]
+    la = math.hypot(ax, ay)
+    if la < 1e-9:
+        return 0.0
+    ux, uy = ax / la, ay / la
+    p0 = (b0[0] - a0[0]) * ux + (b0[1] - a0[1]) * uy
+    p1 = (b1[0] - a0[0]) * ux + (b1[1] - a0[1]) * uy
+    lo, hi = sorted((p0, p1))
+    return max(0.0, min(la, hi) - max(0.0, lo))
+
+
+def _point_segment_distance(
+    q: tuple[float, float],
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> float:
+    p, _t = nearest_point_on_segment(q, a, b)
+    return _dist(q, p)
+
+
+def _road_merge_relaxed_angle_limit_deg(
+    base_angle_deg: float,
+    distance_m: float,
+    max_distance_m: float,
+    overlap_m: float,
+    required_overlap_m: float,
+    endpoint_near_m: float,
+) -> float:
+    """近くで十分重なる候補は、端点付近で発散していても少し広めに見る。"""
+    limit = base_angle_deg
+    if distance_m <= max_distance_m and overlap_m >= required_overlap_m:
+        limit = max(limit, base_angle_deg + 10.0)
+    if endpoint_near_m <= max_distance_m * 1.25 and overlap_m >= required_overlap_m * 0.75:
+        limit = max(limit, base_angle_deg + 18.0)
+    return min(limit, 45.0)
+
+
+def _road_merge_pair_metric(
+    graph: RoadGraph,
+    e1: InternalEdge,
+    e2: InternalEdge,
+    max_distance_m: float,
+    max_angle_deg: float,
+    min_overlap_m: float,
+    min_overlap_ratio: float,
+) -> _RoadMergeCandidate | None:
+    if e1.osm_way_id is not None and e1.osm_way_id == e2.osm_way_id:
+        return None
+    a0, a1 = _edge_endpoints_xy(graph, e1)
+    b0, b1 = _edge_endpoints_xy(graph, e2)
+    ax, ay = a1[0] - a0[0], a1[1] - a0[1]
+    bx, by = b1[0] - b0[0], b1[1] - b0[1]
+    la = math.hypot(ax, ay)
+    lb = math.hypot(bx, by)
+    if la < 1e-6 or lb < 1e-6:
+        return None
+    distance_m = LineString([a0, a1]).distance(LineString([b0, b1]))
+    if distance_m > max_distance_m:
+        return None
+    overlap_ab = _parallel_overlap_m(a0, a1, b0, b1)
+    overlap_ba = _parallel_overlap_m(b0, b1, a0, a1)
+    overlap_m = min(overlap_ab, overlap_ba)
+    required_overlap = max(min_overlap_m, min_overlap_ratio * min(la, lb))
+    if overlap_m < required_overlap:
+        return None
+    dot = ax * bx + ay * by
+    cross = ax * by - ay * bx
+    angle = abs(math.atan2(cross, dot))
+    angle = min(angle, math.pi - angle)
+    angle_deg = math.degrees(angle)
+    endpoint_near_m = min(
+        _point_segment_distance(a0, b0, b1),
+        _point_segment_distance(a1, b0, b1),
+        _point_segment_distance(b0, a0, a1),
+        _point_segment_distance(b1, a0, a1),
+    )
+    angle_limit = _road_merge_relaxed_angle_limit_deg(
+        max_angle_deg, distance_m, max_distance_m, overlap_m, required_overlap, endpoint_near_m
+    )
+    if angle_deg > angle_limit:
+        return None
+    score = overlap_m - distance_m * 3.0 - angle_deg * 0.5
+    return _RoadMergeCandidate(
+        a=e1.id,
+        b=e2.id,
+        score=score,
+        distance_m=distance_m,
+        angle_deg=angle_deg,
+        overlap_m=overlap_m,
+        len_a_m=la,
+        len_b_m=lb,
+    )
+
+
+def _road_merge_candidates(
+    graph: RoadGraph,
+    max_distance_m: float,
+    max_angle_deg: float,
+    min_overlap_m: float,
+    min_overlap_ratio: float,
+) -> list[_RoadMergeCandidate]:
+    edge_ids = sorted(graph.edges)
+    geoms: list[LineString] = []
+    refs: list[str] = []
+    for eid in edge_ids:
+        e = graph.edges[eid]
+        a, b = _edge_endpoints_xy(graph, e)
+        if _dist(a, b) < 1e-6:
+            continue
+        geoms.append(LineString([a, b]))
+        refs.append(eid)
+    if len(geoms) < 2:
+        return []
+    tree = STRtree(geoms)
+    raw = tree.query(np.asarray(geoms, dtype=object), predicate="dwithin", distance=max_distance_m)
+    seen: set[tuple[str, str]] = set()
+    out: list[_RoadMergeCandidate] = []
+    if raw.ndim == 2 and raw.shape[0] == 2:
+        for k in range(raw.shape[1]):
+            i, j = int(raw[0, k]), int(raw[1, k])
+            if i >= j:
+                continue
+            e1_id, e2_id = refs[i], refs[j]
+            key = (e1_id, e2_id) if e1_id < e2_id else (e2_id, e1_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            e1 = graph.edges.get(e1_id)
+            e2 = graph.edges.get(e2_id)
+            if e1 is None or e2 is None:
+                continue
+            metric = _road_merge_pair_metric(
+                graph, e1, e2, max_distance_m, max_angle_deg, min_overlap_m, min_overlap_ratio
+            )
+            if metric is not None:
+                out.append(metric)
+    out.sort(key=lambda c: (-c.score, c.a, c.b))
+    return out
+
+
+def _initial_directed_road_merges(
+    graph: RoadGraph,
+    candidates: list[_RoadMergeCandidate],
+) -> list[_DirectedRoadMerge]:
+    pair_counts: dict[str, int] = {}
+    for c in candidates:
+        pair_counts[c.a] = pair_counts.get(c.a, 0) + 1
+        pair_counts[c.b] = pair_counts.get(c.b, 0) + 1
+
+    directed: list[_DirectedRoadMerge] = []
+    for c in candidates:
+        ca, cb = pair_counts.get(c.a, 0), pair_counts.get(c.b, 0)
+        a_is_hub = ca >= 3
+        b_is_hub = cb >= 3
+        if a_is_hub and not b_is_hub:
+            source, target = c.b, c.a
+        elif b_is_hub and not a_is_hub:
+            source, target = c.a, c.b
+        elif c.len_a_m > c.len_b_m:
+            source, target = c.b, c.a
+        elif c.len_b_m > c.len_a_m:
+            source, target = c.a, c.b
+        else:
+            # Stable tie-break: keep lexicographically smaller edge as representative.
+            source, target = (c.b, c.a) if c.a < c.b else (c.a, c.b)
+        directed.append(_DirectedRoadMerge(source=source, target=target, score=c.score))
+    directed.sort(key=lambda e: (e.source, -e.score, e.target))
+    return directed
+
+
+def _road_merge_outdegree(edges: list[_DirectedRoadMerge]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for e in edges:
+        out[e.source] = out.get(e.source, 0) + 1
+        out.setdefault(e.target, out.get(e.target, 0))
+    return out
+
+
+def _repair_road_merge_directions(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
+    current = list(edges)
+    repaired = 0
+    changed = True
+    while changed:
+        changed = False
+        out = _road_merge_outdegree(current)
+        offenders = {src for src, deg in out.items() if deg >= 2}
+        reverse_keys = {
+            (e.source, e.target)
+            for e in current
+            if e.source in offenders and out.get(e.target, 0) == 0
+        }
+        if not reverse_keys:
+            break
+        next_edges: list[_DirectedRoadMerge] = []
+        for e in sorted(current, key=lambda x: (x.source, -x.score, x.target)):
+            if (e.source, e.target) in reverse_keys:
+                next_edges.append(_DirectedRoadMerge(source=e.target, target=e.source, score=e.score))
+                repaired += 1
+                changed = True
+            else:
+                next_edges.append(e)
+        current = next_edges
+    current.sort(key=lambda e: (e.source, -e.score, e.target))
+    return current, repaired
+
+
+def _prune_road_merge_outdegree(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
+    by_source: dict[str, list[_DirectedRoadMerge]] = {}
+    for e in edges:
+        by_source.setdefault(e.source, []).append(e)
+    kept: list[_DirectedRoadMerge] = []
+    removed = 0
+    for src in sorted(by_source):
+        choices = sorted(by_source[src], key=lambda e: (-e.score, e.target))
+        kept.append(choices[0])
+        removed += max(0, len(choices) - 1)
+    kept.sort(key=lambda e: (e.source, e.target))
+    return kept, removed
+
+
+def _road_merge_topological_order(edges: list[_DirectedRoadMerge]) -> list[str] | None:
+    nodes: set[str] = set()
+    outgoing: dict[str, list[str]] = {}
+    indeg: dict[str, int] = {}
+    for e in edges:
+        nodes.add(e.source)
+        nodes.add(e.target)
+        outgoing.setdefault(e.source, []).append(e.target)
+        indeg[e.target] = indeg.get(e.target, 0) + 1
+        indeg.setdefault(e.source, indeg.get(e.source, 0))
+    ready = sorted(n for n in nodes if indeg.get(n, 0) == 0)
+    order: list[str] = []
+    while ready:
+        n = ready.pop(0)
+        order.append(n)
+        for m in sorted(outgoing.get(n, [])):
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                ready.append(m)
+                ready.sort()
+    if len(order) != len(nodes):
+        return None
+    return order
+
+
+def _break_road_merge_cycles(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
+    current = list(edges)
+    removed = 0
+    while _road_merge_topological_order(current) is None and current:
+        nodes_in_cycles = {e.source for e in current} | {e.target for e in current}
+        candidates = [e for e in current if e.source in nodes_in_cycles and e.target in nodes_in_cycles]
+        drop = min(candidates or current, key=lambda e: (e.score, e.source, e.target))
+        current.remove(drop)
+        removed += 1
+    current.sort(key=lambda e: (e.source, e.target))
+    return current, removed
+
+
+def _resolve_road_merge_target(src: str, out: dict[str, str]) -> str:
+    seen: set[str] = set()
+    cur = src
+    while cur in out and cur not in seen:
+        seen.add(cur)
+        cur = out[cur]
+    return cur
+
+
+def _nearest_point_on_polyline(
+    q: tuple[float, float],
+    poly: list[tuple[float, float]],
+) -> tuple[tuple[float, float], float, float]:
+    best_pt = poly[0]
+    best_d = 1e18
+    best_m = 0.0
+    acc = 0.0
+    for i in range(len(poly) - 1):
+        a, b = poly[i], poly[i + 1]
+        proj, t = nearest_point_on_segment(q, a, b)
+        d = _dist(q, proj)
+        seg_len = _dist(a, b)
+        if d < best_d:
+            best_pt = proj
+            best_d = d
+            best_m = acc + t * seg_len
+        acc += seg_len
+    return best_pt, best_d, best_m
+
+
+def _road_merge_anchor_for_node(
+    graph: RoadGraph,
+    target_edge: InternalEdge,
+    source_nid: str,
+    anchors: list[tuple[float, str]],
+    anchor_delta_m: float,
+    synth_counter: list[int],
+) -> tuple[str, bool]:
+    source_node = graph.nodes[source_nid]
+    q = (source_node.x_m, source_node.y_m)
+    h, _dist_to_line, measure = _nearest_point_on_polyline(q, target_edge.polyline_xy_m)
+
+    for _m, nid in anchors:
+        n = graph.nodes[nid]
+        if _dist(h, (n.x_m, n.y_m)) <= anchor_delta_m:
+            return nid, False
+
+    synth_counter[0] += 1
+    nid = f"roadmerge:{synth_counter[0]}"
+    while nid in graph.nodes:
+        synth_counter[0] += 1
+        nid = f"roadmerge:{synth_counter[0]}"
+    graph.nodes[nid] = InternalNode(
+        id=nid,
+        x_m=h[0],
+        y_m=h[1],
+        source_osm_node_ids=[],
+        is_way_polyline_endpoint=False,
+        merged_from_snap=False,
+        merged_from_osm_id=False,
+        merged_from_road_merge=True,
+        synthetic_reason="road_merge",
+    )
+    anchors.append((measure, nid))
+    return nid, True
+
+
+def _resnap_edge_endpoint_polylines(graph: RoadGraph, e: InternalEdge) -> None:
+    if not e.polyline_xy_m or e.u not in graph.nodes or e.v not in graph.nodes:
+        return
+    nu = graph.nodes[e.u]
+    nv = graph.nodes[e.v]
+    pl = list(e.polyline_xy_m)
+    pl[0] = (nu.x_m, nu.y_m)
+    pl[-1] = (nv.x_m, nv.y_m)
+    e.polyline_xy_m = pl
+
+
+def _apply_road_merge_batch(
+    graph: RoadGraph,
+    target_id: str,
+    source_ids: list[str],
+    anchor_delta_m: float,
+    batch_index: int,
+    synth_counter: list[int],
+) -> tuple[int, int, int]:
+    target = graph.edges.get(target_id)
+    if target is None:
+        return (0, 0, 0)
+    sources = [graph.edges[s] for s in source_ids if s in graph.edges and s != target_id]
+    if not sources:
+        return (0, 0, 0)
+
+    target_len = sum(_dist(target.polyline_xy_m[i], target.polyline_xy_m[i + 1]) for i in range(len(target.polyline_xy_m) - 1))
+    anchors: list[tuple[float, str]] = [(0.0, target.u), (target_len, target.v)]
+    source_edge_ids = {e.id for e in sources}
+    source_node_ids: set[str] = set()
+    anchor_for_source_node: dict[str, str] = {}
+    anchors_created = 0
+    for src in sources:
+        source_node_ids.add(src.u)
+        source_node_ids.add(src.v)
+        for nid in (src.u, src.v):
+            anchor, created = _road_merge_anchor_for_node(
+                graph, target, nid, anchors, anchor_delta_m, synth_counter
+            )
+            anchor_for_source_node[nid] = anchor
+            if created:
+                anchors_created += 1
+
+    incident_remapped = 0
+    delete_edges = set(source_edge_ids)
+    for eid, e in list(graph.edges.items()):
+        if eid in delete_edges or eid == target_id:
+            continue
+        changed = False
+        if e.u in anchor_for_source_node:
+            e.u = anchor_for_source_node[e.u]
+            changed = True
+        if e.v in anchor_for_source_node:
+            e.v = anchor_for_source_node[e.v]
+            changed = True
+        if changed:
+            if e.u == e.v:
+                delete_edges.add(eid)
+            else:
+                _resnap_edge_endpoint_polylines(graph, e)
+                incident_remapped += 1
+
+    provenance = _merge_edge_osm_way_ids([target] + sources)
+    for eid in delete_edges:
+        graph.edges.pop(eid, None)
+    graph.edges.pop(target_id, None)
+
+    anchors_sorted: list[tuple[float, str]] = []
+    seen_anchor_ids: set[str] = set()
+    for measure, nid in sorted(anchors, key=lambda x: (x[0], x[1])):
+        if nid in seen_anchor_ids:
+            continue
+        if nid not in graph.nodes:
+            continue
+        seen_anchor_ids.add(nid)
+        anchors_sorted.append((measure, nid))
+
+    for i in range(len(anchors_sorted) - 1):
+        u = anchors_sorted[i][1]
+        v = anchors_sorted[i + 1][1]
+        if u == v:
+            continue
+        nu = graph.nodes[u]
+        nv = graph.nodes[v]
+        eid = f"roadmerge:{batch_index}:{i}:{target_id}"
+        graph.edges[eid] = InternalEdge(
+            id=eid,
+            u=u,
+            v=v,
+            polyline_xy_m=[(nu.x_m, nu.y_m), (nv.x_m, nv.y_m)],
+            osm_way_id=target.osm_way_id,
+            highway=target.highway,
+            merged_osm_way_ids=provenance,
+        )
+
+    inc = _incident_edges_by_node(graph)
+    for nid in source_node_ids:
+        if nid in graph.nodes and not inc.get(nid):
+            del graph.nodes[nid]
+    return (len(sources), anchors_created, incident_remapped)
+
+
+def merge_duplicate_roads(
+    graph: RoadGraph,
+    max_distance_m: float = DEFAULT_ROAD_MERGE_DISTANCE_M,
+    max_angle_deg: float = DEFAULT_ROAD_MERGE_ANGLE_DEG,
+    min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
+    min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+    anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
+) -> dict[str, Any]:
+    candidates = _road_merge_candidates(
+        graph,
+        max_distance_m=max_distance_m,
+        max_angle_deg=max_angle_deg,
+        min_overlap_m=min_overlap_m,
+        min_overlap_ratio=min_overlap_ratio,
+    )
+    directed = _initial_directed_road_merges(graph, candidates)
+    directed, direction_repaired = _repair_road_merge_directions(directed)
+    directed, outdegree_pruned = _prune_road_merge_outdegree(directed)
+    directed, cycle_edges_removed = _break_road_merge_cycles(directed)
+    topo = _road_merge_topological_order(directed) or []
+    out = {e.source: e.target for e in directed}
+
+    batches: dict[str, list[str]] = {}
+    for src in reversed(topo):
+        if src not in out:
+            continue
+        target = _resolve_road_merge_target(src, out)
+        if target == src:
+            continue
+        batches.setdefault(target, []).append(src)
+
+    synth_counter = [0]
+    merges_applied = 0
+    anchors_created = 0
+    incident_edges_remapped = 0
+    source_edges_removed = 0
+    for batch_index, target in enumerate(sorted(batches)):
+        removed, anchors, remapped = _apply_road_merge_batch(
+            graph, target, batches[target], anchor_delta_m, batch_index, synth_counter
+        )
+        if removed:
+            merges_applied += 1
+            source_edges_removed += removed
+            anchors_created += anchors
+            incident_edges_remapped += remapped
+
+    return {
+        "candidate_pairs": len(candidates),
+        "directed_edges": len(directed),
+        "direction_repaired_edges": direction_repaired,
+        "outdegree_pruned_edges": outdegree_pruned,
+        "cycle_edges_removed": cycle_edges_removed,
+        "merge_batches_applied": merges_applied,
+        "source_edges_removed": source_edges_removed,
+        "anchors_created": anchors_created,
+        "incident_edges_remapped": incident_edges_remapped,
+        "anchor_delta_m": anchor_delta_m,
+        "distance_m": max_distance_m,
+        "angle_deg": max_angle_deg,
+        "min_overlap_m": min_overlap_m,
+        "min_overlap_ratio": min_overlap_ratio,
     }
 
 
@@ -540,6 +1106,8 @@ def _split_edge_at(
         is_way_polyline_endpoint=False,
         merged_from_snap=False,
         merged_from_osm_id=False,
+        merged_from_road_merge=False,
+        synthetic_reason="intersection",
     )
     ins_at = seg_idx + 1
     pl_new = list(pl)
@@ -561,6 +1129,7 @@ def _split_edge_at(
         polyline_xy_m=_resnap_poly_to_nodes(graph, u0, new_nid, pl_left),
         osm_way_id=e.osm_way_id,
         highway=e.highway,
+        merged_osm_way_ids=list(e.merged_osm_way_ids),
     )
     graph.edges[e_right] = InternalEdge(
         id=e_right,
@@ -569,6 +1138,7 @@ def _split_edge_at(
         polyline_xy_m=_resnap_poly_to_nodes(graph, new_nid, v0, pl_right),
         osm_way_id=e.osm_way_id,
         highway=e.highway,
+        merged_osm_way_ids=list(e.merged_osm_way_ids),
     )
 
 
@@ -809,6 +1379,7 @@ def _prune_apply_order(
             continue
         u0, v0 = order[lo], order[hi]
         edges_del: list[str] = []
+        collapse_edges: list[InternalEdge] = []
         wid: int | None = None
         hw: str | None = None
         for t in range(lo, hi):
@@ -818,6 +1389,7 @@ def _prune_apply_order(
                 return removed
             for e in segment_edges:
                 edges_del.append(e.id)
+                collapse_edges.append(e)
                 if wid is None:
                     wid = e.osm_way_id
                     hw = e.highway
@@ -836,6 +1408,7 @@ def _prune_apply_order(
             polyline_xy_m=pl,
             osm_way_id=wid,
             highway=hw,
+            merged_osm_way_ids=_merge_edge_osm_way_ids(collapse_edges),
         )
 
     for nid in order:
@@ -957,6 +1530,7 @@ def graph_to_geojson_fc(
         role = roles[nid]
         highlight_osm_merge = bool(options.connect_osm_node_ids and n.merged_from_osm_id)
         highlight_snap_merge = bool(options.snap_endpoints and n.merged_from_snap)
+        highlight_road_merge = bool(options.merge_duplicate_roads and n.merged_from_road_merge)
 
         node_feats.append(
             {
@@ -971,6 +1545,8 @@ def graph_to_geojson_fc(
                     "pile_count": pile_count,
                     "highlight_osm_merge": highlight_osm_merge,
                     "highlight_snap_merge": highlight_snap_merge,
+                    "highlight_road_merge": highlight_road_merge,
+                    "synthetic_reason": n.synthetic_reason,
                 },
             }
         )
@@ -990,6 +1566,7 @@ def graph_to_geojson_fc(
                 "properties": {
                     "internal_edge_id": eid,
                     "osm_way_id": e.osm_way_id,
+                    "merged_osm_way_ids": e.merged_osm_way_ids,
                     "highway": e.highway,
                     "u": e.u,
                     "v": e.v,
@@ -1022,11 +1599,21 @@ def build_graph_from_geojson(
             1 for n in graph.nodes.values() if n.merged_from_osm_id
         )
 
-    if options.split_intersections:
-        step_metrics["split"] = run_intersection_splits(graph)
-
     if options.snap_endpoints:
         step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
+
+    if options.merge_duplicate_roads:
+        step_metrics["road_merge"] = merge_duplicate_roads(
+            graph,
+            max_distance_m=options.road_merge_distance_m,
+            max_angle_deg=options.road_merge_angle_deg,
+            min_overlap_m=options.road_merge_min_overlap_m,
+            min_overlap_ratio=options.road_merge_min_overlap_ratio,
+            anchor_delta_m=options.road_merge_anchor_delta_m,
+        )
+
+    if options.split_intersections:
+        step_metrics["split"] = run_intersection_splits(graph)
 
     if options.remove_redundant_chain_vertices:
         step_metrics["prune_chains"] = prune_redundant_chain_vertices(
@@ -1034,10 +1621,12 @@ def build_graph_from_geojson(
         )
 
     synth = sum(1 for n in graph.nodes.values() if len(n.source_osm_node_ids) == 0)
+    road_merge_synth = sum(1 for n in graph.nodes.values() if n.synthetic_reason == "road_merge")
     stats = {
         "node_count": len(graph.nodes),
         "edge_count": len(graph.edges),
         "synthetic_node_count": synth,
+        "road_merge_synthetic_node_count": road_merge_synth,
         "way_input_count": len(ways),
     }
 

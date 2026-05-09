@@ -5,7 +5,7 @@ import {
   type DebugHighwayExcludeSelection,
   type DebugHighwayExcludeType,
 } from '../lib/debugHighwayExclude'
-import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
+import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_ROAD_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
 import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
 import type { DebugMapViewMode } from './DebugMapPanel'
 import { DebugWayList } from './DebugWayList'
@@ -76,7 +76,17 @@ export function DebugSidebar({
   )
 
   const toggleOpt = (key: keyof GraphBuildOptionsPayload, checked: boolean) => {
-    if (key === 'snap_epsilon_m' || key === 'prune_chain_accum_angle_deg') return
+    if (
+      key === 'snap_epsilon_m' ||
+      key === 'road_merge_distance_m' ||
+      key === 'road_merge_angle_deg' ||
+      key === 'road_merge_min_overlap_m' ||
+      key === 'road_merge_min_overlap_ratio' ||
+      key === 'road_merge_anchor_delta_m' ||
+      key === 'prune_chain_accum_angle_deg'
+    ) {
+      return
+    }
     onGraphOptionsChange({ ...graphOptions, [key]: checked })
   }
 
@@ -208,18 +218,6 @@ export function DebugSidebar({
                   }
                 />
                 <GraphOptionBlock
-                  title="道路の交差で線を分割する"
-                  checked={graphOptions.split_intersections}
-                  onToggle={(c) => toggleOpt('split_intersections', c)}
-                  result={
-                    <SplitMetrics
-                      m={graphPreview?.step_metrics}
-                      graphLoading={graphLoading}
-                      hasRoadData={hasRoadData}
-                    />
-                  }
-                />
-                <GraphOptionBlock
                   title="距離が近い頂点をまとめる"
                   checked={graphOptions.snap_endpoints}
                   onToggle={(c) => toggleOpt('snap_endpoints', c)}
@@ -249,6 +247,81 @@ export function DebugSidebar({
                         className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
                       />
                     </label>
+                  }
+                />
+                <GraphOptionBlock
+                  title="重複・並行道路を代表線へマージ"
+                  checked={graphOptions.merge_duplicate_roads}
+                  onToggle={(c) => toggleOpt('merge_duplicate_roads', c)}
+                  result={
+                    <RoadMergeMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
+                  }
+                  footer={
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-stone-600">
+                      <NumberOptionInput
+                        label="距離 m"
+                        disabled={!graphOptions.merge_duplicate_roads}
+                        value={graphOptions.road_merge_distance_m}
+                        min={0.5}
+                        max={100}
+                        step={0.5}
+                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_distance_m: v })}
+                      />
+                      <NumberOptionInput
+                        label="角度 °"
+                        disabled={!graphOptions.merge_duplicate_roads}
+                        value={graphOptions.road_merge_angle_deg}
+                        min={0.5}
+                        max={45}
+                        step={0.5}
+                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_angle_deg: v })}
+                      />
+                      <NumberOptionInput
+                        label="重なり m"
+                        disabled={!graphOptions.merge_duplicate_roads}
+                        value={graphOptions.road_merge_min_overlap_m}
+                        min={0}
+                        max={500}
+                        step={1}
+                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_m: v })}
+                      />
+                      <NumberOptionInput
+                        label="重なり率"
+                        disabled={!graphOptions.merge_duplicate_roads}
+                        value={graphOptions.road_merge_min_overlap_ratio}
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        onChange={(v) =>
+                          onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_ratio: v })
+                        }
+                      />
+                      <NumberOptionInput
+                        label="anchor δ m"
+                        disabled={!graphOptions.merge_duplicate_roads}
+                        value={graphOptions.road_merge_anchor_delta_m}
+                        min={0.05}
+                        max={50}
+                        step={0.5}
+                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_anchor_delta_m: v })}
+                      />
+                    </div>
+                  }
+                />
+                <GraphOptionBlock
+                  title="道路の交差で線を分割する"
+                  checked={graphOptions.split_intersections}
+                  onToggle={(c) => toggleOpt('split_intersections', c)}
+                  result={
+                    <SplitMetrics
+                      m={graphPreview?.step_metrics}
+                      graphLoading={graphLoading}
+                      hasRoadData={hasRoadData}
+                    />
                   }
                 />
                 <GraphOptionBlock
@@ -413,6 +486,40 @@ function GraphOptionBlock({
   )
 }
 
+function NumberOptionInput({
+  label,
+  disabled,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string
+  disabled: boolean
+  value: number
+  min: number
+  max: number
+  step: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="truncate text-[10px]">{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) || value)}
+        className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
+      />
+    </label>
+  )
+}
+
 function PruneChainsMetrics({
   m,
   graphLoading,
@@ -441,6 +548,47 @@ function PruneChainsMetrics({
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
         マップには簡略化<strong className="font-medium text-stone-700">後</strong>のグラフが表示されています。
+      </p>
+    </div>
+  )
+}
+
+function RoadMergeMetrics({
+  m,
+  graphLoading,
+  hasRoadData,
+}: {
+  m: GraphStepMetrics | undefined
+  graphLoading: boolean
+  hasRoadData: boolean
+}) {
+  if (!hasRoadData) {
+    return <p className="text-[11px] text-stone-400">道路データを取得すると表示されます</p>
+  }
+  const d = m?.road_merge
+  if (d == null) {
+    return (
+      <p className="text-[11px] text-stone-400">{graphLoading ? '計算中…' : '再計算後に表示されます'}</p>
+    )
+  }
+  return (
+    <div className="space-y-1">
+      <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
+        <li>候補ペア: {d.candidate_pairs ?? '—'}</li>
+        <li>採用 directed edge: {d.directed_edges ?? '—'}</li>
+        <li>向き反転: {d.direction_repaired_edges ?? '—'}</li>
+        <li>outdegree 削除: {d.outdegree_pruned_edges ?? '—'}</li>
+        <li>cycle 削除: {d.cycle_edges_removed ?? '—'}</li>
+        <li>削除した source edge: {d.source_edges_removed ?? '—'}</li>
+        <li>追加 anchor: {d.anchors_created ?? '—'}</li>
+        <li>付け替えた incident edge: {d.incident_edges_remapped ?? '—'}</li>
+      </ul>
+      <p className="text-[10px] leading-snug text-stone-500">
+        マップの
+        <strong className="font-medium" style={{ color: HIGHLIGHT_ROAD_MERGE }}>
+          紫のノード
+        </strong>
+        が、road merge で代表線上に追加された anchor です。
       </p>
     </div>
   )

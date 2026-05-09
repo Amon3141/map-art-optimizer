@@ -11,7 +11,7 @@ import {
   DEFAULT_MAP_ZOOM,
   applyDebugBasemapVisibility,
 } from '../lib/debugMapBasemap'
-import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
+import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_ROAD_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
 
 const OSM_SRC = 'debug-osm-overlay'
 const OSM_LINE = 'debug-osm-overlay-line'
@@ -303,6 +303,8 @@ export function DebugMapPanel({
             'case',
             ['==', ['get', 'highlight_snap_merge'], true],
             HIGHLIGHT_SNAP_MERGE,
+            ['==', ['get', 'highlight_road_merge'], true],
+            HIGHLIGHT_ROAD_MERGE,
             ['==', ['get', 'highlight_osm_merge'], true],
             HIGHLIGHT_OSM_MERGE,
             ['==', ['get', 'synthetic'], true],
