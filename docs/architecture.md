@@ -36,7 +36,7 @@ map-draw-optimizer/
 
 ## OSM ベクタデータ
 
-ブラウザから Overpass を直接叩くと **CORS** で失敗しやすいため、**FastAPI が Overpass にプロキシ**する。デバッグ用に件数上限を付与。
+ブラウザから Overpass を直接叩くと **CORS** で失敗しやすいため、**FastAPI が Overpass にプロキシ**する。デバッグ用に件数上限を付与する。**デバッグページ**では、取得した全 `highway=*` way に対し、**表示用の highway 値除外**をフロント側で行う（API 側では絞り込まない）。
 
 ## 手書きストロークの簡略化
 

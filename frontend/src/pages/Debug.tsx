@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DebugSidebar, type DebugPanelMode } from '../debug/components/DebugSidebar'
 import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugMapPanel'
 import { fitMapToLineString } from '../debug/lib/fitMapToWay'
@@ -11,10 +11,11 @@ import {
 import { wayIdFromProps } from '../debug/components/DebugWayList'
 import { apiUrl } from '../lib/api'
 import {
-  DEBUG_ROAD_TYPE_VALUES,
-  defaultDebugRoadTypeSelection,
-  type DebugRoadType,
-} from '../debug/lib/debugRoadTypes'
+  defaultDebugHighwayExcludeSelection,
+  filterFeatureCollectionByExcludedHighways,
+  type DebugHighwayExcludeSelection,
+  type DebugHighwayExcludeType,
+} from '../debug/lib/debugHighwayExclude'
 
 /** デバッグ用: Overpass → OSM GeoJSON → 平面グラフの可視化 */
 export function DebugPage() {
@@ -23,11 +24,13 @@ export function DebugPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [textDump, setTextDump] = useState('')
-  const [geojson, setGeojson] = useState<GeoJSON.FeatureCollection | null>(null)
+  const [waysFcRaw, setWaysFcRaw] = useState<GeoJSON.FeatureCollection | null>(null)
+  const [highwayExclude, setHighwayExclude] = useState<DebugHighwayExcludeSelection>(() =>
+    defaultDebugHighwayExcludeSelection(),
+  )
   const [panelMode, setPanelMode] = useState<DebugPanelMode>('ui')
   const [selectedWayId, setSelectedWayId] = useState<number | string | null>(null)
-  const [roadTypeInclude, setRoadTypeInclude] = useState(() => defaultDebugRoadTypeSelection())
-  const [roadTypeFilterOpen, setRoadTypeFilterOpen] = useState(false)
+  const [roadFilterOpen, setRoadFilterOpen] = useState(false)
   const [mapViewMode, setMapViewMode] = useState<DebugMapViewMode>('osm')
   const [graphOptions, setGraphOptions] = useState<GraphBuildOptionsPayload>(() =>
     defaultGraphBuildOptions(),
@@ -41,6 +44,11 @@ export function DebugPage() {
   const onMapReady = useCallback((map: MapLibreMap) => {
     mapRef.current = map
   }, [])
+
+  const geojson = useMemo(() => {
+    if (!waysFcRaw) return null
+    return filterFeatureCollectionByExcludedHighways(waysFcRaw, highwayExclude)
+  }, [waysFcRaw, highwayExclude])
 
   const features = geojson?.features ?? []
 
@@ -60,9 +68,6 @@ export function DebugPage() {
     },
     [features],
   )
-
-  const selectedRoadTypes = DEBUG_ROAD_TYPE_VALUES.filter((t) => roadTypeInclude[t])
-  const canFetchWays = selectedRoadTypes.length > 0
 
   const fetchGraphPreview = useCallback(
     async (signal?: AbortSignal) => {
@@ -135,10 +140,6 @@ export function DebugPage() {
       setError('地図の準備ができていません。')
       return
     }
-    if (!canFetchWays) {
-      setError('取得する道路種別を1つ以上選んでください。')
-      return
-    }
     const b = map.getBounds()
     const minLon = b.getWest()
     const minLat = b.getSouth()
@@ -153,11 +154,7 @@ export function DebugPage() {
         min_lon: String(minLon),
         max_lat: String(maxLat),
         max_lon: String(maxLon),
-        limit: '1000',
       })
-      for (const t of selectedRoadTypes) {
-        q.append('road_type', t)
-      }
       const res = await fetch(apiUrl(`/api/debug/ways?${q.toString()}`))
       if (!res.ok) {
         const t = await res.text()
@@ -168,7 +165,7 @@ export function DebugPage() {
         raw_preview: string
       }
       setTextDump(data.raw_preview)
-      setGeojson(data.geojson)
+      setWaysFcRaw(data.geojson)
       setSelectedWayId(null)
       setGraphPreview(null)
       setGraphError(null)
@@ -180,8 +177,8 @@ export function DebugPage() {
     }
   }
 
-  const onRoadTypeChecked = (value: DebugRoadType, checked: boolean) => {
-    setRoadTypeInclude((prev) => ({ ...prev, [value]: checked }))
+  const onHighwayExcludeChecked = (value: DebugHighwayExcludeType, checked: boolean) => {
+    setHighwayExclude((prev) => ({ ...prev, [value]: checked }))
   }
 
   return (
@@ -191,15 +188,15 @@ export function DebugPage() {
         error={error}
         textDump={textDump}
         geojson={geojson}
+        waysFetchedCount={waysFcRaw?.features?.length ?? null}
+        highwayExclude={highwayExclude}
+        onHighwayExcludeChecked={onHighwayExcludeChecked}
+        roadFilterOpen={roadFilterOpen}
+        onRoadFilterOpenChange={setRoadFilterOpen}
         panelMode={panelMode}
         onPanelModeChange={setPanelMode}
         selectedWayId={selectedWayId}
         onSelectWay={handleSelectWay}
-        roadTypeInclude={roadTypeInclude}
-        roadTypeFilterOpen={roadTypeFilterOpen}
-        onRoadTypeFilterOpenChange={setRoadTypeFilterOpen}
-        onRoadTypeChecked={onRoadTypeChecked}
-        canFetchWays={canFetchWays}
         onFetchWays={fetchWays}
         mapViewMode={mapViewMode}
         onMapViewModeChange={setMapViewMode}

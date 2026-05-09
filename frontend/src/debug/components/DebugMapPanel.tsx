@@ -22,6 +22,9 @@ const G_NODES_LAYER = 'debug-graph-nodes-circle'
 const G_PILE_LABEL = 'debug-graph-pile-label'
 const G_JUNCTION_LABEL = 'debug-graph-junction-label'
 
+/** マップ上テキストを表示する最小ズーム */
+const GRAPH_NODE_LABELS_MIN_ZOOM = 17
+
 /** visibility 切り替え・削除用（スタイル内の上→下の順と一致させる） */
 const GRAPH_LAYER_IDS = [
   G_JUNCTION_LABEL,
@@ -318,6 +321,7 @@ export function DebugMapPanel({
         id: G_PILE_LABEL,
         type: 'symbol',
         source: G_NODES_SRC,
+        minzoom: GRAPH_NODE_LABELS_MIN_ZOOM,
         filter: ['>', ['get', 'pile_count'], 1],
         layout: {
           'text-field': ['to-string', ['get', 'pile_count']],
@@ -338,6 +342,7 @@ export function DebugMapPanel({
         id: G_JUNCTION_LABEL,
         type: 'symbol',
         source: G_NODES_SRC,
+        minzoom: GRAPH_NODE_LABELS_MIN_ZOOM,
         filter: ['==', ['get', 'vertex_role'], 'junction'],
         layout: {
           'text-field': ['get', 'internal_node_id'],

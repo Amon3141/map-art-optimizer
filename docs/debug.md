@@ -15,12 +15,12 @@
 | ------ | ---- |
 | [frontend/src/pages/Debug.tsx](../frontend/src/pages/Debug.tsx) | ページのレイアウトと状態・イベントの配線のみ（[HomePage.tsx](../frontend/src/pages/HomePage.tsx) と同様に薄く保つ）。 |
 | [frontend/src/debug/components/](../frontend/src/debug/components/) | デバッグ専用の React コンポーネント。 |
-| [frontend/src/debug/lib/](../frontend/src/debug/lib/) | デバッグ専用のユーティリティ・定数（例: 道路種別フィルタ、地図フィット）。 |
+| [frontend/src/debug/lib/](../frontend/src/debug/lib/) | デバッグ専用のユーティリティ・定数（例: [`debugHighwayExclude.ts`](../frontend/src/debug/lib/debugHighwayExclude.ts) の highway 表示除外、地図フィット）。 |
 
 ### 命名
 
 - **`src/debug/components/`** のコンポーネントは **`Debug` で始まる名前**に統一する（例: `DebugSidebar`, `DebugWayList`）。
-- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う（クエリパラメータは `road_type`、エンドポイントは `/api/debug/ways`）。
+- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う。`GET /api/debug/ways` は **bbox のみ**（クエリは緯度経度）で、Overpass から **その範囲の `highway` タグ付き way を全件**取得する。**特定の highway 値の除外**はデバッグ UI が **クライアント側**で GeoJSON をフィルタする（本番パイプラインとは別）。
 - コンポーネントではないヘルパーは **`src/debug/lib/`** に置き、ファイル名で用途を示す（例: `fitMapToWay.ts`）。
 
 ### ホームからの導線
@@ -32,7 +32,7 @@
 
 | 置き場 | 役割 |
 | ------ | ---- |
-| [backend/app/debug/](../backend/app/debug/) | **`/api/debug` 配下のルート**と、**そのレスポンスにしか使わない**処理のみ（例: テキストプレビュー用の要約、`/api/debug/ways` 用の道路種別ホワイトリスト）。 |
+| [backend/app/debug/](../backend/app/debug/) | **`/api/debug` 配下のルート**と、**そのレスポンスにしか使わない**処理のみ（例: テキストプレビュー用の要約、way 件数上限チェック）。 |
 | [backend/app/osm/](../backend/app/osm/) | OSM 由来データの **本番前処理でも使う変換**（例: Overpass の way 要素 → GeoJSON FeatureCollection）。 |
 | [backend/app/overpass/](../backend/app/overpass/) | Overpass API への問い合わせなど **プロダクト全体で共有しうるクライアント処理**。 |
 

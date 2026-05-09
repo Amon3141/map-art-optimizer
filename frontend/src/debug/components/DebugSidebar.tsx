@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { DEBUG_ROAD_TYPE_VALUES, type DebugRoadType } from '../lib/debugRoadTypes'
+import {
+  DEBUG_HIGHWAY_EXCLUDE_OPTIONS,
+  type DebugHighwayExcludeSelection,
+  type DebugHighwayExcludeType,
+} from '../lib/debugHighwayExclude'
 import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
 import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
 import type { DebugMapViewMode } from './DebugMapPanel'
@@ -15,15 +19,15 @@ export type DebugSidebarProps = {
   error: string | null
   textDump: string
   geojson: GeoJSON.FeatureCollection | null
+  waysFetchedCount: number | null
+  highwayExclude: DebugHighwayExcludeSelection
+  onHighwayExcludeChecked: (value: DebugHighwayExcludeType, checked: boolean) => void
+  roadFilterOpen: boolean
+  onRoadFilterOpenChange: (open: boolean) => void
   panelMode: DebugPanelMode
   onPanelModeChange: (mode: DebugPanelMode) => void
   selectedWayId: number | string | null
   onSelectWay: (id: number | string | null) => void
-  roadTypeInclude: Record<DebugRoadType, boolean>
-  roadTypeFilterOpen: boolean
-  onRoadTypeFilterOpenChange: (open: boolean) => void
-  onRoadTypeChecked: (value: DebugRoadType, checked: boolean) => void
-  canFetchWays: boolean
   onFetchWays: () => void
   mapViewMode: DebugMapViewMode
   onMapViewModeChange: (mode: DebugMapViewMode) => void
@@ -39,15 +43,15 @@ export function DebugSidebar({
   error,
   textDump,
   geojson,
+  waysFetchedCount,
+  highwayExclude,
+  onHighwayExcludeChecked,
+  roadFilterOpen,
+  onRoadFilterOpenChange,
   panelMode,
   onPanelModeChange,
   selectedWayId,
   onSelectWay,
-  roadTypeInclude,
-  roadTypeFilterOpen,
-  onRoadTypeFilterOpenChange,
-  onRoadTypeChecked,
-  canFetchWays,
   onFetchWays,
   mapViewMode,
   onMapViewModeChange,
@@ -60,6 +64,10 @@ export function DebugSidebar({
   const features = geojson?.features ?? []
   const fetchedWayCount = geojson != null ? features.length : null
   const hasRoadData = features.length > 0
+  const fetchCountLabel =
+    waysFetchedCount != null && fetchedWayCount != null
+      ? `表示 ${fetchedWayCount} / 取得 ${waysFetchedCount}`
+      : null
 
   const emptyPlaceholder = (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -109,22 +117,22 @@ export function DebugSidebar({
         <div
           className="rounded-xl border border-stone-200/90 bg-white/80 p-3 shadow-sm"
           role="group"
-          aria-labelledby="debug-road-type-filter-heading"
+          aria-labelledby="debug-highway-exclude-heading"
         >
           <button
             type="button"
-            id="debug-road-type-filter-heading"
-            onClick={() => onRoadTypeFilterOpenChange(!roadTypeFilterOpen)}
-            aria-expanded={roadTypeFilterOpen}
+            id="debug-highway-exclude-heading"
+            onClick={() => onRoadFilterOpenChange(!roadFilterOpen)}
+            aria-expanded={roadFilterOpen}
             className={[
               'flex w-full cursor-pointer items-center gap-1.5 rounded-md text-left text-xs font-medium leading-snug text-stone-600 outline-none ring-[#4a6f8a]/30 hover:text-stone-800 focus-visible:ring-2',
-              roadTypeFilterOpen ? 'mb-2.5' : 'mb-0',
+              roadFilterOpen ? 'mb-2.5' : 'mb-0',
             ].join(' ')}
           >
             <svg
               className={[
                 'size-4 shrink-0 text-stone-500 transition-transform duration-200 ease-out',
-                roadTypeFilterOpen ? 'rotate-90' : 'rotate-0',
+                roadFilterOpen ? 'rotate-90' : 'rotate-0',
               ].join(' ')}
               viewBox="0 0 20 20"
               fill="currentColor"
@@ -136,33 +144,38 @@ export function DebugSidebar({
                 clipRule="evenodd"
               />
             </svg>
-            <span>道路種別（OSM の highway=* 値）</span>
+            <span>除外する highway=* 値</span>
           </button>
-          {roadTypeFilterOpen ? (
-            <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {DEBUG_ROAD_TYPE_VALUES.map((value) => (
-                <li key={value}>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-800">
-                    <input
-                      type="checkbox"
-                      className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
-                      checked={roadTypeInclude[value]}
-                      onChange={(e) => onRoadTypeChecked(value, e.target.checked)}
-                    />
-                    <span className="font-mono text-[13px]">{value}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
+          {roadFilterOpen ? (
+            <div className="flex flex-col gap-2.5">
+              <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {DEBUG_HIGHWAY_EXCLUDE_OPTIONS.map((value) => (
+                  <li key={value}>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-800">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
+                        checked={highwayExclude[value]}
+                        onChange={(e) => onHighwayExcludeChecked(value, e.target.checked)}
+                      />
+                      <span className="font-mono text-[13px]">{value}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {fetchCountLabel ? (
+                <p className="text-[11px] font-medium text-stone-600">{fetchCountLabel}</p>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <button
           type="button"
-          disabled={loading || !canFetchWays}
+          disabled={loading}
           className="rounded-xl bg-[#4a6f8a] px-4 py-2.5 text-sm font-medium text-white shadow-sm disabled:opacity-50"
           onClick={onFetchWays}
         >
-          {loading ? '取得中…' : '表示範囲で道路 way を取得（最大1000）'}
+          {loading ? '取得中…' : '表示範囲で道路 way を取得'}
         </button>
       </div>
 

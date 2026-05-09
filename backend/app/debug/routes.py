@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -14,9 +14,11 @@ from ..osm.graph_build import (
 from ..osm.projection import bbox_center_lon_lat
 from ..overpass.client import fetch_interpreter
 from .preview import ways_raw_preview
-from .road_type_allowlist import DEBUG_ROAD_TYPE_ALLOWLIST
 
 router = APIRouter()
+
+# Overpass 応答の way 件数の上限（メモリ・応答サイズの安全弁。通常は bbox を絞れば十分小さい）
+DEBUG_OVERPASS_MAX_WAYS = 250_000
 
 
 class BBoxBody(BaseModel):
@@ -48,39 +50,16 @@ class GraphPreviewBody(BaseModel):
 
 @router.get("/ways")
 async def debug_ways(
-    road_type: Annotated[
-        list[str],
-        Query(
-            min_length=1,
-            description="含める道路種別（OSM の highway=* の値）",
-        ),
-    ],
     min_lat: float = Query(..., description="South edge (WGS84)"),
     min_lon: float = Query(..., description="West edge"),
     max_lat: float = Query(..., description="North edge"),
     max_lon: float = Query(..., description="East edge"),
-    limit: int = Query(1000, ge=1, le=2000),
 ) -> dict[str, Any]:
     if min_lat >= max_lat or min_lon >= max_lon:
         raise HTTPException(status_code=400, detail="Invalid bbox")
 
-    selected: list[str] = []
-    seen: set[str] = set()
-    for rt in road_type:
-        if rt not in DEBUG_ROAD_TYPE_ALLOWLIST:
-            raise HTTPException(
-                status_code=400,
-                detail=f"許可されていない道路種別です: {rt!r}",
-            )
-        if rt not in seen:
-            seen.add(rt)
-            selected.append(rt)
-
-    # south,west,north,east — way を bbox で絞り、ノード参照を取得して頂点ごとの OSM node id を復元する
-    way_lines = "\n".join(
-        f'  way["highway"="{h}"]({min_lat},{min_lon},{max_lat},{max_lon});'
-        for h in selected
-    )
+    # south,west,north,east — bbox 内の highway タグ付き way をすべて（クライアント側で種別フィルタ）
+    way_lines = f'  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});'
     query = f"""[out:json][timeout:25];
 (
 {way_lines}
@@ -97,8 +76,16 @@ out skel qt;
     elements = data.get("elements") or []
     ways = [e for e in elements if e.get("type") == "way"]
     ways_sorted = sorted(ways, key=lambda w: int(w.get("id") or 0))
-    geojson = overpass_elements_to_geojson(elements, limit_ways=limit)
-    raw_preview = ways_raw_preview(ways_sorted[:limit])
+    if len(ways_sorted) > DEBUG_OVERPASS_MAX_WAYS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"この範囲の way が多すぎます（{len(ways_sorted)} 件、上限 {DEBUG_OVERPASS_MAX_WAYS}）。"
+                " 地図をズームして範囲を狭くしてください。"
+            ),
+        )
+    geojson = overpass_elements_to_geojson(elements, limit_ways=None)
+    raw_preview = ways_raw_preview(ways_sorted)
 
     return {"geojson": geojson, "raw_preview": raw_preview, "count": len(geojson.get("features") or [])}
 
