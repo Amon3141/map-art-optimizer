@@ -23,13 +23,18 @@ from .graph_model import InternalEdge, InternalNode, RoadGraph
 from .projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
 
+DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG = 15.0
+
+
 @dataclass
 class GraphBuildOptions:
     connect_osm_node_ids: bool = False
     snap_endpoints: bool = False
-    snap_epsilon_m: float = 5.0
+    snap_epsilon_m: float = 3.0
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
+    # 符号付き折れ角の累積の絶対値がこの値（度）以上で頂点を残す（チェーン簡略化）
+    prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 
 
 @dataclass
@@ -57,8 +62,6 @@ MAX_SPLIT_ITER = 2000
 
 PILE_LONLAT_DECIMALS = 5
 
-# チェーン簡略化: 符号付き折れ角の累積の絶対値が約 15°（この定数）を超えた頂点をサンプルとして残す。
-_PRUNE_ACCUM_THRESHOLD_RAD = math.radians(15.0)
 _PRUNE_LEN_EPS_SQ = 1e-18
 
 
@@ -315,11 +318,22 @@ def _uf_union(parent: dict[str, str], a: str, b: str) -> None:
 
 
 def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
-    """ε 近傍の頂点を union。点の STRtree + dwithin(ε) で候補列挙し、oid>nid のみ union。"""
+    """ε 近傍の頂点を union（条件付き）。
+
+    - 同一グラフ辺の両端どうしは結合しない（polyline 上の隣接頂点同士を除外）。
+    - どちらも OSM 折れ線の端点でない頂点同士は結合しない。
+    """
     eps = max(epsilon_m, 1e-6)
     nids = list(graph.nodes.keys())
     pts = [Point(graph.nodes[i].x_m, graph.nodes[i].y_m) for i in nids]
     tree = STRtree(pts)
+
+    direct_edge_pairs: set[tuple[str, str]] = set()
+    for e in graph.edges.values():
+        a, b = e.u, e.v
+        if a > b:
+            a, b = b, a
+        direct_edge_pairs.add((a, b))
 
     parent = {n: n for n in graph.nodes}
     for nid in nids:
@@ -332,6 +346,11 @@ def snap_endpoints(graph: RoadGraph, epsilon_m: float) -> dict[str, Any]:
             if oid <= nid:
                 continue
             nb = graph.nodes[oid]
+            pu = (nid, oid) if nid < oid else (oid, nid)
+            if pu in direct_edge_pairs:
+                continue
+            if not (na.is_way_polyline_endpoint or nb.is_way_polyline_endpoint):
+                continue
             if _dist((na.x_m, na.y_m), (nb.x_m, nb.y_m)) <= epsilon_m:
                 _uf_union(parent, nid, oid)
 
@@ -745,7 +764,7 @@ def _prune_simplify_keep_indices(
     order: list[str],
     graph: RoadGraph,
     eligible: dict[str, bool],
-    threshold_rad: float = _PRUNE_ACCUM_THRESHOLD_RAD,
+    threshold_rad: float,
 ) -> list[int]:
     """元ポリライン上の符号付き折れ角を累積し、|累積| が閾値を超えた頂点を残す（1 パス）。"""
     n = len(order)
@@ -840,10 +859,13 @@ def _prune_remove_edges_with_missing_endpoints(graph: RoadGraph) -> int:
     return len(bad)
 
 
-def prune_redundant_chain_vertices(graph: RoadGraph) -> dict[str, Any]:
+def prune_redundant_chain_vertices(
+    graph: RoadGraph,
+    accum_threshold_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
+) -> dict[str, Any]:
     """同一 way 上の次数 2 かつ保護なしの頂点を、符号付き折れ角の累積に基づき簡略化してマージする。"""
+    threshold_rad = math.radians(accum_threshold_deg)
     vertices_removed = 0
-    edges_before = len(graph.edges)
     eid_counter = [0]
     blocked: set[str] = set()
 
@@ -867,7 +889,7 @@ def prune_redundant_chain_vertices(graph: RoadGraph) -> dict[str, Any]:
             blocked |= comp
             continue
 
-        keep_ix = _prune_simplify_keep_indices(order, graph, eligible)
+        keep_ix = _prune_simplify_keep_indices(order, graph, eligible, threshold_rad)
         any_merge = any(keep_ix[k + 1] - keep_ix[k] >= 2 for k in range(len(keep_ix) - 1))
         if not any_merge:
             blocked |= comp
@@ -878,11 +900,9 @@ def prune_redundant_chain_vertices(graph: RoadGraph) -> dict[str, Any]:
 
     _prune_remove_edges_with_missing_endpoints(graph)
 
-    th_deg = round(math.degrees(_PRUNE_ACCUM_THRESHOLD_RAD), 9)
+    th_deg = round(accum_threshold_deg, 9)
     return {
         "vertices_removed": vertices_removed,
-        "edges_before": edges_before,
-        "edges_after": len(graph.edges),
         "angle_accum_threshold_deg": th_deg,
     }
 
@@ -1015,7 +1035,9 @@ def build_graph_from_geojson(
         step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
 
     if options.remove_redundant_chain_vertices:
-        step_metrics["prune_chains"] = prune_redundant_chain_vertices(graph)
+        step_metrics["prune_chains"] = prune_redundant_chain_vertices(
+            graph, options.prune_chain_accum_angle_deg
+        )
 
     synth = sum(1 for n in graph.nodes.values() if len(n.source_osm_node_ids) == 0)
     stats = {

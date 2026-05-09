@@ -4,6 +4,8 @@ export type GraphBuildOptionsPayload = {
   snap_epsilon_m: number
   split_intersections: boolean
   remove_redundant_chain_vertices: boolean
+  /** チェーン簡略化: 符号付き折れ角の累積の絶対値がこの度以上の頂点を残す */
+  prune_chain_accum_angle_deg: number
 }
 
 /** API の step_metrics と整合 */
@@ -24,8 +26,6 @@ export type GraphStepMetrics = {
   }
   prune_chains?: {
     vertices_removed?: number
-    edges_before?: number
-    edges_after?: number
     angle_accum_threshold_deg?: number
   }
 }
@@ -50,8 +50,9 @@ export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
   return {
     connect_osm_node_ids: false,
     snap_endpoints: false,
-    snap_epsilon_m: 5,
+    snap_epsilon_m: 3,
     split_intersections: false,
     remove_redundant_chain_vertices: false,
+    prune_chain_accum_angle_deg: 15,
   }
 }

@@ -98,6 +98,34 @@ def test_prune_preserves_gentle_arc():
     assert pc.get("angle_accum_threshold_deg") == 15.0
 
 
+def test_prune_chain_accum_threshold_metric_echoes_option():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.001, 0], [0.002, 0]]},
+                "properties": {
+                    "osm_way_id": 1,
+                    "highway": "residential",
+                    "osm_node_ids": [10, 11, 12],
+                },
+            }
+        ],
+    }
+    r = build_graph_from_geojson(
+        fc,
+        0.002,
+        0.0,
+        GraphBuildOptions(
+            remove_redundant_chain_vertices=True,
+            prune_chain_accum_angle_deg=42.5,
+        ),
+    )
+    pc = r.step_metrics.get("prune_chains") or {}
+    assert pc.get("angle_accum_threshold_deg") == 42.5
+
+
 def test_prune_signed_cancellation_collapses_zigzag():
     """符号が交互に打ち消される折れでは累積が閾値に届かず、一直線と同様に潰せること。"""
     lon0, lat0 = 139.0, 36.0
@@ -224,6 +252,59 @@ def test_split_intersection_one_crossing():
     assert r.stats["edge_count"] == 4
     assert r.stats["node_count"] == 6
     assert r.stats["synthetic_node_count"] == 2
+
+
+def test_snap_skips_adjacent_vertices_same_edge_even_if_close():
+    """隣接頂点は同一 InternalEdge の両端なので ε 内でもマージしない。"""
+    dy = (1.0 / EARTH_RADIUS_M) * (180.0 / math.pi)
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0, dy]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [10, 11]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(snap_endpoints=True, snap_epsilon_m=5.0)
+    r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
+    assert r.stats["node_count"] == 2
+    assert r.stats["edge_count"] == 1
+    sn = r.step_metrics.get("snap") or {}
+    assert sn.get("snap_clusters", 0) == 0
+    assert sn.get("vertices_merged_by_snap", 0) == 0
+
+
+def test_snap_skips_interior_interior_even_if_close():
+    """同一 way 上でも、隣接辺でつながらない二つの中間頂点が ε 内でもマージしない。"""
+    one_m = (1.0 / EARTH_RADIUS_M) * (180.0 / math.pi)
+    ten_m = (10.0 / EARTH_RADIUS_M) * (180.0 / math.pi)
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [0, 0],
+                        [ten_m, 0],
+                        [2 * ten_m, 0],
+                        [ten_m + one_m, 0],
+                        [3 * ten_m, 0],
+                    ],
+                },
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [10, 11, 12, 13, 14]},
+            },
+        ],
+    }
+    opts = GraphBuildOptions(snap_endpoints=True, snap_epsilon_m=2.0)
+    r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
+    assert r.stats["node_count"] == 5
+    sn = r.step_metrics.get("snap") or {}
+    assert sn.get("snap_clusters", 0) == 0
+    assert sn.get("vertices_merged_by_snap", 0) == 0
 
 
 def test_snap_endpoints_merge_close_vertices():

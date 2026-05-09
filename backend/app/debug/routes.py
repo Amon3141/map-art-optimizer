@@ -5,7 +5,12 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
-from ..osm.graph_build import GraphBuildOptions, build_graph_from_geojson, graph_to_geojson_fc
+from ..osm.graph_build import (
+    DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
+    GraphBuildOptions,
+    build_graph_from_geojson,
+    graph_to_geojson_fc,
+)
 from ..osm.projection import bbox_center_lon_lat
 from ..overpass.client import fetch_interpreter
 from .preview import ways_raw_preview
@@ -24,9 +29,15 @@ class BBoxBody(BaseModel):
 class GraphBuildOptionsBody(BaseModel):
     connect_osm_node_ids: bool = False
     snap_endpoints: bool = False
-    snap_epsilon_m: float = Field(5.0, ge=0.05, le=500.0)
+    snap_epsilon_m: float = Field(3.0, ge=0.05, le=500.0)
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
+    prune_chain_accum_angle_deg: float = Field(
+        DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
+        ge=0.5,
+        le=179.0,
+        description="チェーン簡略化で累積折れ角の絶対値がこの度以上の頂点を残す",
+    )
 
 
 class GraphPreviewBody(BaseModel):
@@ -103,13 +114,7 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="geojson must be a FeatureCollection")
 
     lon0, lat0 = bbox_center_lon_lat(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
-    opts = GraphBuildOptions(
-        connect_osm_node_ids=body.options.connect_osm_node_ids,
-        snap_endpoints=body.options.snap_endpoints,
-        snap_epsilon_m=body.options.snap_epsilon_m,
-        split_intersections=body.options.split_intersections,
-        remove_redundant_chain_vertices=body.options.remove_redundant_chain_vertices,
-    )
+    opts = GraphBuildOptions(**body.options.model_dump())
     result = build_graph_from_geojson(fc, lon0, lat0, opts)
     nodes_fc, edges_fc = graph_to_geojson_fc(result.graph, lon0, lat0, opts)
     projection_summary = (

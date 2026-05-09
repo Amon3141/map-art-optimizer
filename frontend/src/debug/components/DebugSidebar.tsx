@@ -68,7 +68,7 @@ export function DebugSidebar({
   )
 
   const toggleOpt = (key: keyof GraphBuildOptionsPayload, checked: boolean) => {
-    if (key === 'snap_epsilon_m') return
+    if (key === 'snap_epsilon_m' || key === 'prune_chain_accum_angle_deg') return
     onGraphOptionsChange({ ...graphOptions, [key]: checked })
   }
 
@@ -239,7 +239,7 @@ export function DebugSidebar({
                   }
                 />
                 <GraphOptionBlock
-                  title="不要な中間ノードを削除（直線に近い折れのみ）"
+                  title="不要な中間ノードを削除"
                   checked={graphOptions.remove_redundant_chain_vertices}
                   onToggle={(c) => toggleOpt('remove_redundant_chain_vertices', c)}
                   result={
@@ -248,6 +248,27 @@ export function DebugSidebar({
                       graphLoading={graphLoading}
                       hasRoadData={hasRoadData}
                     />
+                  }
+                  footer={
+                    <label className="mt-1 flex items-center gap-2 text-xs text-stone-600">
+                      <span className="shrink-0">累積角（°）</span>
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={179}
+                        step={0.5}
+                        disabled={!graphOptions.remove_redundant_chain_vertices}
+                        value={graphOptions.prune_chain_accum_angle_deg}
+                        onChange={(e) =>
+                          onGraphOptionsChange({
+                            ...graphOptions,
+                            prune_chain_accum_angle_deg:
+                              Number(e.target.value) || graphOptions.prune_chain_accum_angle_deg,
+                          })
+                        }
+                        className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
+                      />
+                    </label>
                   }
                 />
               </ul>
@@ -400,16 +421,13 @@ function PruneChainsMetrics({
   return (
     <div className="space-y-1">
       <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
-        <li>除去した頂点: {d.vertices_removed ?? '—'}</li>
-        <li>
-          エッジ数: {d.edges_before ?? '—'} → {d.edges_after ?? '—'}
-        </li>
         <li>
           累積角の閾値: {d.angle_accum_threshold_deg ?? '—'}°（符号付き折れの積み上げ）
         </li>
+        <li>除去した頂点: {d.vertices_removed ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        ON のとき API は簡略化<strong className="font-medium text-stone-700">後</strong>のグラフだけ返すため、マップの線・ノードも結果のみ表示されます。
+        マップには簡略化<strong className="font-medium text-stone-700">後</strong>のグラフが表示されています。
       </p>
     </div>
   )
@@ -476,8 +494,8 @@ function SplitMetrics({
         <li>追加した交点頂点: {d.new_vertices_from_split ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        交差で線が分割されて新しく追加された頂点
-        は、マップでは<strong className="font-medium text-rose-700">朱色のノード</strong>として表示されます。
+        マップの<strong className="font-medium text-rose-700">朱色のノード</strong>が、
+        交差で線が分割されて新しく追加された頂点です。
       </p>
     </div>
   )
