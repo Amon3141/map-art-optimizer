@@ -250,8 +250,8 @@ def test_split_intersection_one_crossing():
     sp = r.step_metrics.get("split") or {}
     assert sp.get("intersection_splits_applied", 0) >= 1
     assert r.stats["edge_count"] == 4
-    assert r.stats["node_count"] == 6
-    assert r.stats["synthetic_node_count"] == 2
+    assert r.stats["node_count"] == 5
+    assert r.stats["synthetic_node_count"] == 1
 
 
 def test_snap_skips_adjacent_vertices_same_edge_even_if_close():
@@ -423,8 +423,8 @@ def test_road_merge_remaps_source_junction_to_representative_anchor():
         "type": "FeatureCollection",
         "features": [
             _line_feature_from_xy(lon0, lat0, 1, [(0, 0), (50, 0), (100, 0)], 100),
-            _line_feature_from_xy(lon0, lat0, 2, [(0, 5), (100, 5)], 200),
-            _line_feature_from_xy(lon0, lat0, 3, [(50, 0), (50, -30)], 300),
+            _line_feature_from_xy(lon0, lat0, 2, [(0, 5), (55, 5), (100, 5)], 200),
+            _line_feature_from_xy(lon0, lat0, 3, [(55, 5), (55, 35)], 300),
         ],
     }
     opts = GraphBuildOptions(
@@ -438,21 +438,21 @@ def test_road_merge_remaps_source_junction_to_representative_anchor():
     )
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
-    assert rm.get("candidate_pairs", 0) >= 2
+    assert rm.get("candidate_pairs", 0) >= 1
     assert rm.get("source_edges_removed", 0) >= 2
     assert rm.get("anchors_created", 0) >= 1
 
-    road_merge_nodes = [n for n in r.graph.nodes.values() if n.synthetic_reason == "road_merge"]
+    road_merge_nodes = [n for n in r.graph.nodes.values() if not n.source_osm_node_ids]
     assert len(road_merge_nodes) >= 1
-    assert any(abs(n.x_m - 50.0) < 1.0 and abs(n.y_m - 5.0) < 1.0 for n in road_merge_nodes)
+    assert any(abs(n.x_m - 55.0) < 1.0 and abs(n.y_m) < 1.0 for n in road_merge_nodes)
 
     side_edges = [e for e in r.graph.edges.values() if e.osm_way_id == 3]
     assert len(side_edges) == 1
     side = side_edges[0]
-    assert r.graph.nodes[side.u].synthetic_reason == "road_merge" or r.graph.nodes[side.v].synthetic_reason == "road_merge"
+    assert not r.graph.nodes[side.u].source_osm_node_ids or not r.graph.nodes[side.v].source_osm_node_ids
 
     nodes_fc, _edges_fc = graph_to_geojson_fc(r.graph, r.lon0, r.lat0, opts)
-    assert any(f["properties"].get("highlight_road_merge") for f in nodes_fc["features"])
+    assert any(f["properties"].get("synthetic") for f in nodes_fc["features"])
 
 
 def test_road_merge_repairs_outdegree_before_pruning():
@@ -492,3 +492,19 @@ def test_road_merge_accepts_slightly_diverging_endpoint_candidate():
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("candidate_pairs", 0) >= 1
     assert rm.get("source_edges_removed", 0) >= 1
+
+
+def test_road_merge_detects_segmented_parallel_ways_as_one_candidate():
+    lon0, lat0 = 139.0, 36.0
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            _line_feature_from_xy(lon0, lat0, 1, [(0, 0), (5, 0), (10, 0), (15, 0), (20, 0)], 100),
+            _line_feature_from_xy(lon0, lat0, 2, [(0, 6), (5, 6), (10, 6), (15, 6), (20, 6)], 200),
+        ],
+    }
+    opts = GraphBuildOptions(merge_duplicate_roads=True)
+    r = build_graph_from_geojson(fc, lon0, lat0, opts)
+    rm = r.step_metrics.get("road_merge") or {}
+    assert rm.get("candidate_pairs") == 1
+    assert rm.get("source_edges_removed", 0) >= 3

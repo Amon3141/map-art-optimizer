@@ -11,10 +11,11 @@ import {
   DEFAULT_MAP_ZOOM,
   applyDebugBasemapVisibility,
 } from '../lib/debugMapBasemap'
-import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_ROAD_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
+import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE, HIGHLIGHT_SYNTHETIC } from '../lib/debugHighlightColors'
 
 const OSM_SRC = 'debug-osm-overlay'
 const OSM_LINE = 'debug-osm-overlay-line'
+const OSM_LINE_HIT = 'debug-osm-overlay-line-hit'
 const G_EDGES_SRC = 'debug-graph-edges'
 const G_EDGES_LINE = 'debug-graph-edges-line'
 const G_NODES_SRC = 'debug-graph-nodes'
@@ -25,13 +26,11 @@ const G_JUNCTION_LABEL = 'debug-graph-junction-label'
 /** マップ上テキストを表示する最小ズーム */
 const GRAPH_NODE_LABELS_MIN_ZOOM = 17
 
+/** グラフのノード系レイヤ（visibility をエッジと独立に切り替え） */
+const GRAPH_NODE_LAYER_IDS = [G_JUNCTION_LABEL, G_PILE_LABEL, G_NODES_LAYER] as const
+
 /** visibility 切り替え・削除用（スタイル内の上→下の順と一致させる） */
-const GRAPH_LAYER_IDS = [
-  G_JUNCTION_LABEL,
-  G_PILE_LABEL,
-  G_NODES_LAYER,
-  G_EDGES_LINE,
-] as const
+const GRAPH_LAYER_IDS = [...GRAPH_NODE_LAYER_IDS, G_EDGES_LINE] as const
 
 export type DebugMapViewMode = 'osm' | 'graph'
 
@@ -72,6 +71,7 @@ function injectSelected(
 }
 
 function removeOsmOverlay(map: MapLibreMap) {
+  if (map.getLayer(OSM_LINE_HIT)) map.removeLayer(OSM_LINE_HIT)
   if (map.getLayer(OSM_LINE)) map.removeLayer(OSM_LINE)
   if (map.getSource(OSM_SRC)) map.removeSource(OSM_SRC)
 }
@@ -82,6 +82,24 @@ function removeGraphLayers(map: MapLibreMap) {
   }
   if (map.getSource(G_NODES_SRC)) map.removeSource(G_NODES_SRC)
   if (map.getSource(G_EDGES_SRC)) map.removeSource(G_EDGES_SRC)
+}
+
+function applyGraphLayerVisibility(
+  map: MapLibreMap,
+  viewMode: DebugMapViewMode,
+  showGraphNodes: boolean,
+) {
+  const graphMode = viewMode === 'graph'
+  const edgeVis = graphMode ? 'visible' : 'none'
+  const nodeVis = graphMode && showGraphNodes ? 'visible' : 'none'
+  if (map.getLayer(G_EDGES_LINE)) {
+    map.setLayoutProperty(G_EDGES_LINE, 'visibility', edgeVis)
+  }
+  for (const lid of GRAPH_NODE_LAYER_IDS) {
+    if (map.getLayer(lid)) {
+      map.setLayoutProperty(lid, 'visibility', nodeVis)
+    }
+  }
 }
 
 function fitCollectionBounds(map: MapLibreMap, ...collections: GeoJSON.FeatureCollection[]) {
@@ -159,11 +177,16 @@ export function DebugMapPanel({
   const popupRef = useRef<Popup | null>(null)
   const onMapReadyRef = useRef(onMapReady)
   const basemapModeRef = useRef<BasemapMode>('normal')
+  const viewModeRef = useRef<DebugMapViewMode>('osm')
+  const showGraphNodesRef = useRef(true)
   const [mapReady, setMapReady] = useState(false)
   const [basemapMode, setBasemapMode] = useState<BasemapMode>('normal')
+  const [showGraphNodes, setShowGraphNodes] = useState(true)
 
   onMapReadyRef.current = onMapReady
   basemapModeRef.current = basemapMode
+  viewModeRef.current = viewMode
+  showGraphNodesRef.current = showGraphNodes
 
   useEffect(() => {
     const el = containerRef.current
@@ -241,6 +264,12 @@ export function DebugMapPanel({
         source: OSM_SRC,
         paint: { 'line-color': lineColor, 'line-width': 4, 'line-opacity': 0.88 },
       })
+      map.addLayer({
+        id: OSM_LINE_HIT,
+        type: 'line',
+        source: OSM_SRC,
+        paint: { 'line-width': 16, 'line-opacity': 0 },
+      })
       if (fitOsmOverlayToData) fitCollectionBounds(map, g)
     } else {
       src.setData(data)
@@ -303,12 +332,10 @@ export function DebugMapPanel({
             'case',
             ['==', ['get', 'highlight_snap_merge'], true],
             HIGHLIGHT_SNAP_MERGE,
-            ['==', ['get', 'highlight_road_merge'], true],
-            HIGHLIGHT_ROAD_MERGE,
             ['==', ['get', 'highlight_osm_merge'], true],
             HIGHLIGHT_OSM_MERGE,
             ['==', ['get', 'synthetic'], true],
-            '#e11d48',
+            HIGHLIGHT_SYNTHETIC,
             ['==', ['get', 'vertex_role'], 'inline'],
             '#64748b',
             '#2563eb',
@@ -366,6 +393,8 @@ export function DebugMapPanel({
       fitCollectionBounds(map, gg.edges, gg.nodes)
       lastGraphFitTriggerRef.current = graphFitTrigger
     }
+
+    applyGraphLayerVisibility(map, viewModeRef.current, showGraphNodesRef.current)
   }, [mapReady, graphGeoJson, graphFitTrigger])
 
   useEffect(() => {
@@ -373,17 +402,15 @@ export function DebugMapPanel({
     if (!mapReady || !map) return
 
     const osmVis = viewMode === 'osm' ? 'visible' : 'none'
-    const gVis = viewMode === 'graph' ? 'visible' : 'none'
 
     if (map.getLayer(OSM_LINE)) {
       map.setLayoutProperty(OSM_LINE, 'visibility', osmVis)
     }
-    for (const lid of GRAPH_LAYER_IDS) {
-      if (map.getLayer(lid)) {
-        map.setLayoutProperty(lid, 'visibility', gVis)
-      }
+    if (map.getLayer(OSM_LINE_HIT)) {
+      map.setLayoutProperty(OSM_LINE_HIT, 'visibility', osmVis)
     }
-  }, [mapReady, viewMode])
+    applyGraphLayerVisibility(map, viewMode, showGraphNodes)
+  }, [mapReady, viewMode, showGraphNodes])
 
   useEffect(() => {
     const map = mapRef.current
@@ -391,10 +418,10 @@ export function DebugMapPanel({
       popupRef.current?.remove()
       return
     }
-    if (!map.getLayer(OSM_LINE)) return
+    if (!map.getLayer(OSM_LINE_HIT)) return
 
     const popup = new maplibregl.Popup({
-      closeButton: true,
+      closeButton: false,
       closeOnClick: false,
       maxWidth: '320px',
       className: 'debug-osm-popup',
@@ -427,14 +454,14 @@ export function DebugMapPanel({
       popup.setLngLat(e.lngLat).setHTML(osmPopupHtml(p)).addTo(map)
     }
 
-    map.on('mousemove', OSM_LINE, onMove)
-    map.on('mouseleave', OSM_LINE, onLeave)
-    map.on('click', OSM_LINE, onClick)
+    map.on('mousemove', OSM_LINE_HIT, onMove)
+    map.on('mouseleave', OSM_LINE_HIT, onLeave)
+    map.on('click', OSM_LINE_HIT, onClick)
 
     return () => {
-      map.off('mousemove', OSM_LINE, onMove)
-      map.off('mouseleave', OSM_LINE, onLeave)
-      map.off('click', OSM_LINE, onClick)
+      map.off('mousemove', OSM_LINE_HIT, onMove)
+      map.off('mouseleave', OSM_LINE_HIT, onLeave)
+      map.off('click', OSM_LINE_HIT, onClick)
       popup.remove()
     }
   }, [mapReady, viewMode, osmGeoJson])
@@ -460,8 +487,46 @@ export function DebugMapPanel({
         className="pointer-events-none absolute inset-0 z-1 shadow-[inset_0_4px_40px_0_rgb(62_36_30/0.095),inset_0_0_280px_0_rgb(48_28_24/0.115)]"
         aria-hidden
       />
-      <div className="pointer-events-none absolute left-3 top-3 z-10 sm:left-4 sm:top-4">
-        <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[min(100%,calc(100vw-1.5rem))] flex-wrap items-stretch gap-3 sm:left-4 sm:top-4">
+        <div className="pointer-events-auto shrink-0">
+          <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
+        </div>
+        {viewMode === 'graph' ? (
+          <div
+            className="pointer-events-auto inline-flex w-fit shrink-0 flex-nowrap items-stretch gap-0 rounded-full border border-dashed border-stone-400 bg-[#fdfbf7]/95 p-0.5 shadow-sm backdrop-blur-[2px]"
+            role="radiogroup"
+            aria-label="グラフノードの表示"
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!showGraphNodes}
+              onClick={() => setShowGraphNodes(false)}
+              className={[
+                'min-w-0 shrink rounded-l-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
+                !showGraphNodes
+                  ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
+                  : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
+              ].join(' ')}
+            >
+              ノードなし
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={showGraphNodes}
+              onClick={() => setShowGraphNodes(true)}
+              className={[
+                'min-w-0 shrink rounded-r-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
+                showGraphNodes
+                  ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
+                  : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
+              ].join(' ')}
+            >
+              ノードあり
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

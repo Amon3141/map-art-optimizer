@@ -73,13 +73,13 @@ export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
     snap_endpoints: false,
     snap_epsilon_m: 3,
     merge_duplicate_roads: false,
-    road_merge_distance_m: 14,
+    road_merge_distance_m: 20,
     road_merge_angle_deg: 22,
-    road_merge_min_overlap_m: 8,
+    road_merge_min_overlap_m: 100,
     road_merge_min_overlap_ratio: 0.25,
     road_merge_anchor_delta_m: 2,
     split_intersections: false,
     remove_redundant_chain_vertices: false,
-    prune_chain_accum_angle_deg: 15,
+    prune_chain_accum_angle_deg: 10,
   }
 }

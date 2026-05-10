@@ -5,7 +5,7 @@ import {
   type DebugHighwayExcludeSelection,
   type DebugHighwayExcludeType,
 } from '../lib/debugHighwayExclude'
-import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_ROAD_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
+import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
 import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
 import type { DebugMapViewMode } from './DebugMapPanel'
 import { DebugWayList } from './DebugWayList'
@@ -584,11 +584,8 @@ function RoadMergeMetrics({
         <li>付け替えた incident edge: {d.incident_edges_remapped ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        マップの
-        <strong className="font-medium" style={{ color: HIGHLIGHT_ROAD_MERGE }}>
-          紫のノード
-        </strong>
-        が、road merge で代表線上に追加された anchor です。
+        「追加 anchor」は代表線上に新設した頂点の本数です。synthetic ノードは交差分割由来と区別せず、
+        <code className="rounded bg-stone-200/80 px-0.5">source_osm_node_ids</code> が空の頂点としてマップ上も同じ扱いです。
       </p>
     </div>
   )

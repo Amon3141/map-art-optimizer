@@ -17,10 +17,6 @@ class InternalNode:
     merged_from_snap: bool = False
     """同一 OSM node id の複数グラフ頂点をマージした代表頂点。"""
     merged_from_osm_id: bool = False
-    """道路マージで代表線上に作った anchor 頂点。"""
-    merged_from_road_merge: bool = False
-    """synthetic 頂点の由来（intersection / road_merge など）。"""
-    synthetic_reason: str | None = None
 
 
 @dataclass
