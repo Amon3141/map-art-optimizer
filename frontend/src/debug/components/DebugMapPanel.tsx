@@ -12,6 +12,7 @@ import {
   applyDebugBasemapVisibility,
 } from '../lib/debugMapBasemap'
 import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE, HIGHLIGHT_SYNTHETIC } from '../lib/debugHighlightColors'
+import { injectOsmOverlaySelection } from '../lib/debugOsmOverlay'
 
 const OSM_SRC = 'debug-osm-overlay'
 const OSM_LINE = 'debug-osm-overlay-line'
@@ -51,23 +52,6 @@ export type DebugMapPanelProps = {
   /** 値が変わったときだけグラフ表示に合わせてフィット（オプション変更のみの更新では増やさない） */
   graphFitTrigger?: number
   onMapReady?: (map: MapLibreMap) => void
-}
-
-function injectSelected(
-  g: GeoJSON.FeatureCollection,
-  selectedId: number | string | null | undefined,
-): GeoJSON.FeatureCollection {
-  const key = selectedId != null ? String(selectedId) : null
-  return {
-    ...g,
-    features: g.features.map((f) => ({
-      ...f,
-      properties: {
-        ...f.properties,
-        _selected: key != null && String(f.properties?.osm_way_id) === key ? 1 : 0,
-      },
-    })),
-  }
 }
 
 function removeOsmOverlay(map: MapLibreMap) {
@@ -247,7 +231,7 @@ export function DebugMapPanel({
       return
     }
 
-    const data = injectSelected(g, overlaySelectedId)
+    const data = injectOsmOverlaySelection(g, overlaySelectedId)
     const lineColor: maplibregl.ExpressionSpecification = [
       'case',
       ['==', ['get', '_selected'], 1],
@@ -467,66 +451,68 @@ export function DebugMapPanel({
   }, [mapReady, viewMode, osmGeoJson])
 
   return (
-    <div className={`relative min-h-0 w-full min-w-0 flex-1 ${className}`}>
-      <style>{`
-        .debug-osm-popup .maplibregl-popup-content {
-          padding: 10px 12px;
-          border-radius: 10px;
-          font-size: 12px;
-          max-height: 260px;
-          overflow-y: auto;
-        }
-        .dbg-pop .t { font-weight: 600; color: #292524; margin-bottom: 4px; }
-        .dbg-pop .hw { font-family: ui-monospace, monospace; font-size: 11px; color: #57534e; margin-bottom: 6px; }
-        .dbg-pop .ep { font-size: 11px; color: #44403c; margin-bottom: 8px; line-height: 1.4; }
-        .dbg-pop .tags { font-size: 10px; color: #57534e; font-family: ui-monospace, monospace; }
-        .dbg-pop .k { color: #78716c; }
-      `}</style>
-      <div ref={containerRef} className="absolute inset-0" />
-      <div
-        className="pointer-events-none absolute inset-0 z-1 shadow-[inset_0_4px_40px_0_rgb(62_36_30/0.095),inset_0_0_280px_0_rgb(48_28_24/0.115)]"
-        aria-hidden
-      />
-      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[min(100%,calc(100vw-1.5rem))] flex-wrap items-stretch gap-3 sm:left-4 sm:top-4">
-        <div className="pointer-events-auto shrink-0">
-          <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
-        </div>
-        {viewMode === 'graph' ? (
-          <div
-            className="pointer-events-auto inline-flex w-fit shrink-0 flex-nowrap items-stretch gap-0 rounded-full border border-dashed border-stone-400 bg-[#fdfbf7]/95 p-0.5 shadow-sm backdrop-blur-[2px]"
-            role="radiogroup"
-            aria-label="グラフノードの表示"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!showGraphNodes}
-              onClick={() => setShowGraphNodes(false)}
-              className={[
-                'min-w-0 shrink rounded-l-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
-                !showGraphNodes
-                  ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
-                  : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
-              ].join(' ')}
-            >
-              ノードなし
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={showGraphNodes}
-              onClick={() => setShowGraphNodes(true)}
-              className={[
-                'min-w-0 shrink rounded-r-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
-                showGraphNodes
-                  ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
-                  : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
-              ].join(' ')}
-            >
-              ノードあり
-            </button>
+    <div className={`flex min-h-0 w-full min-w-0 flex-1 flex-col ${className}`}>
+      <div className="relative min-h-0 w-full min-w-0 flex-1">
+        <style>{`
+          .debug-osm-popup .maplibregl-popup-content {
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            max-height: 260px;
+            overflow-y: auto;
+          }
+          .dbg-pop .t { font-weight: 600; color: #292524; margin-bottom: 4px; }
+          .dbg-pop .hw { font-family: ui-monospace, monospace; font-size: 11px; color: #57534e; margin-bottom: 6px; }
+          .dbg-pop .ep { font-size: 11px; color: #44403c; margin-bottom: 8px; line-height: 1.4; }
+          .dbg-pop .tags { font-size: 10px; color: #57534e; font-family: ui-monospace, monospace; }
+          .dbg-pop .k { color: #78716c; }
+        `}</style>
+        <div ref={containerRef} className="absolute inset-0" />
+        <div
+          className="pointer-events-none absolute inset-0 z-1 shadow-[inset_0_4px_40px_0_rgb(62_36_30/0.095),inset_0_0_280px_0_rgb(48_28_24/0.115)]"
+          aria-hidden
+        />
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[min(100%,calc(100vw-1.5rem))] flex-wrap items-stretch gap-3 sm:left-4 sm:top-4">
+          <div className="pointer-events-auto shrink-0">
+            <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
           </div>
-        ) : null}
+          {viewMode === 'graph' ? (
+            <div
+              className="pointer-events-auto inline-flex w-fit shrink-0 flex-nowrap items-stretch gap-0 rounded-full border border-dashed border-stone-400 bg-[#fdfbf7]/95 p-0.5 shadow-sm backdrop-blur-[2px]"
+              role="radiogroup"
+              aria-label="グラフノードの表示"
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!showGraphNodes}
+                onClick={() => setShowGraphNodes(false)}
+                className={[
+                  'min-w-0 shrink rounded-l-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
+                  !showGraphNodes
+                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
+                    : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
+                ].join(' ')}
+              >
+                ノードなし
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={showGraphNodes}
+                onClick={() => setShowGraphNodes(true)}
+                className={[
+                  'min-w-0 shrink rounded-r-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
+                  showGraphNodes
+                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
+                    : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
+                ].join(' ')}
+              >
+                ノードあり
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )

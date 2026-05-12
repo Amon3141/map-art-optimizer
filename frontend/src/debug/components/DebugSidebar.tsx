@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  DEBUG_HIGHWAY_EXCLUDE_OPTIONS,
-  type DebugHighwayExcludeSelection,
-  type DebugHighwayExcludeType,
-} from '../lib/debugHighwayExclude'
-import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE } from '../lib/debugHighlightColors'
+  DEBUG_HIGHWAY_TAG_OPTIONS,
+  type DebugHighwayIncludeSelection,
+  type DebugHighwayTag,
+} from '../lib/debugHighwayInclude'
+import {
+  HIGHLIGHT_OSM_MERGE,
+  HIGHLIGHT_SNAP_MERGE,
+  HIGHLIGHT_SYNTHETIC,
+} from '../lib/debugHighlightColors'
 import type { GraphBuildOptionsPayload, GraphPreviewResponse, GraphStepMetrics } from '../lib/graphPreview'
 import type { DebugMapViewMode } from './DebugMapPanel'
 import { DebugWayList } from './DebugWayList'
@@ -20,8 +24,8 @@ export type DebugSidebarProps = {
   textDump: string
   geojson: GeoJSON.FeatureCollection | null
   waysFetchedCount: number | null
-  highwayExclude: DebugHighwayExcludeSelection
-  onHighwayExcludeChecked: (value: DebugHighwayExcludeType, checked: boolean) => void
+  highwayInclude: DebugHighwayIncludeSelection
+  onHighwayIncludeChecked: (value: DebugHighwayTag, checked: boolean) => void
   roadFilterOpen: boolean
   onRoadFilterOpenChange: (open: boolean) => void
   panelMode: DebugPanelMode
@@ -44,8 +48,8 @@ export function DebugSidebar({
   textDump,
   geojson,
   waysFetchedCount,
-  highwayExclude,
-  onHighwayExcludeChecked,
+  highwayInclude,
+  onHighwayIncludeChecked,
   roadFilterOpen,
   onRoadFilterOpenChange,
   panelMode,
@@ -82,7 +86,6 @@ export function DebugSidebar({
       key === 'road_merge_angle_deg' ||
       key === 'road_merge_min_overlap_m' ||
       key === 'road_merge_min_overlap_ratio' ||
-      key === 'road_merge_anchor_delta_m' ||
       key === 'prune_chain_accum_angle_deg'
     ) {
       return
@@ -127,11 +130,11 @@ export function DebugSidebar({
         <div
           className="rounded-xl border border-stone-200/90 bg-white/80 p-3 shadow-sm"
           role="group"
-          aria-labelledby="debug-highway-exclude-heading"
+          aria-labelledby="debug-highway-include-heading"
         >
           <button
             type="button"
-            id="debug-highway-exclude-heading"
+            id="debug-highway-include-heading"
             onClick={() => onRoadFilterOpenChange(!roadFilterOpen)}
             aria-expanded={roadFilterOpen}
             className={[
@@ -154,19 +157,19 @@ export function DebugSidebar({
                 clipRule="evenodd"
               />
             </svg>
-            <span>除外する highway=* 値</span>
+            <span>含める highway=* 値</span>
           </button>
           {roadFilterOpen ? (
             <div className="flex flex-col gap-2.5">
               <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                {DEBUG_HIGHWAY_EXCLUDE_OPTIONS.map((value) => (
+                {DEBUG_HIGHWAY_TAG_OPTIONS.map((value) => (
                   <li key={value}>
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-800">
                       <input
                         type="checkbox"
                         className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
-                        checked={highwayExclude[value]}
-                        onChange={(e) => onHighwayExcludeChecked(value, e.target.checked)}
+                        checked={highwayInclude[value]}
+                        onChange={(e) => onHighwayIncludeChecked(value, e.target.checked)}
                       />
                       <span className="font-mono text-[13px]">{value}</span>
                     </label>
@@ -299,15 +302,6 @@ export function DebugSidebar({
                         onChange={(v) =>
                           onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_ratio: v })
                         }
-                      />
-                      <NumberOptionInput
-                        label="anchor δ m"
-                        disabled={!graphOptions.merge_duplicate_roads}
-                        value={graphOptions.road_merge_anchor_delta_m}
-                        min={0.05}
-                        max={50}
-                        step={0.5}
-                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_anchor_delta_m: v })}
                       />
                     </div>
                   }
@@ -574,18 +568,12 @@ function RoadMergeMetrics({
   return (
     <div className="space-y-1">
       <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
-        <li>候補ペア: {d.candidate_pairs ?? '—'}</li>
-        <li>採用 directed edge: {d.directed_edges ?? '—'}</li>
-        <li>向き反転: {d.direction_repaired_edges ?? '—'}</li>
-        <li>outdegree 削除: {d.outdegree_pruned_edges ?? '—'}</li>
-        <li>cycle 削除: {d.cycle_edges_removed ?? '—'}</li>
-        <li>削除した source edge: {d.source_edges_removed ?? '—'}</li>
-        <li>追加 anchor: {d.anchors_created ?? '—'}</li>
-        <li>付け替えた incident edge: {d.incident_edges_remapped ?? '—'}</li>
+        <li>マージ成分数: {d.merge_components ?? '—'}</li>
+        <li>適用バッチ: {d.merge_batches_applied ?? '—'}</li>
+        <li>スキップ成分: {d.skipped_merge_components ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        「追加 anchor」は代表線上に新設した頂点の本数です。synthetic ノードは交差分割由来と区別せず、
-        <code className="rounded bg-stone-200/80 px-0.5">source_osm_node_ids</code> が空の頂点としてマップ上も同じ扱いです。
+        マップにはマージ適用<strong className="font-medium text-stone-700">後</strong>のグラフが表示されています。
       </p>
     </div>
   )
@@ -652,8 +640,11 @@ function SplitMetrics({
         <li>追加した交点頂点: {d.new_vertices_from_split ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        マップの<strong className="font-medium text-rose-700">朱色のノード</strong>が、
-        交差で線が分割されて新しく追加された頂点です。
+        交差分割で追加された頂点も synthetic のため、マップでは他と同様
+        <strong className="font-medium" style={{ color: HIGHLIGHT_SYNTHETIC }}>
+          紫のノード
+        </strong>
+        で表示されます。
       </p>
     </div>
   )

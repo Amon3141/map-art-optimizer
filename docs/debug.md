@@ -15,12 +15,12 @@
 | ------ | ---- |
 | [frontend/src/pages/Debug.tsx](../frontend/src/pages/Debug.tsx) | ページのレイアウトと状態・イベントの配線のみ（[HomePage.tsx](../frontend/src/pages/HomePage.tsx) と同様に薄く保つ）。 |
 | [frontend/src/debug/components/](../frontend/src/debug/components/) | デバッグ専用の React コンポーネント。 |
-| [frontend/src/debug/lib/](../frontend/src/debug/lib/) | デバッグ専用のユーティリティ・定数（例: [`debugHighwayExclude.ts`](../frontend/src/debug/lib/debugHighwayExclude.ts) の highway 表示除外、地図フィット）。 |
+| [frontend/src/debug/lib/](../frontend/src/debug/lib/) | デバッグ専用のユーティリティ・定数（例: [`debugHighwayInclude.ts`](../frontend/src/debug/lib/debugHighwayInclude.ts) の highway 表示フィルタ、地図フィット）。 |
 
 ### 命名
 
 - **`src/debug/components/`** のコンポーネントは **`Debug` で始まる名前**に統一する（例: `DebugSidebar`, `DebugWayList`）。
-- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う。`GET /api/debug/ways` は **bbox のみ**（クエリは緯度経度）で、Overpass から **その範囲の `highway` タグ付き way を全件**取得する。**特定の highway 値の除外**はデバッグ UI が **クライアント側**で GeoJSON をフィルタする（本番パイプラインとは別）。
+- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う。`GET /api/debug/ways` は **bbox のみ**（クエリは緯度経度）で、Overpass から **その範囲の `highway` タグ付き way を全件**取得する。**どの highway 値を表示に含めるか**はデバッグ UI が **クライアント側**で GeoJSON をフィルタする（本番パイプラインとは別）。
 - コンポーネントではないヘルパーは **`src/debug/lib/`** に置き、ファイル名で用途を示す（例: `fitMapToWay.ts`）。
 
 ### ホームからの導線

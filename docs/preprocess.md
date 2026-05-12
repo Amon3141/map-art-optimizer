@@ -106,13 +106,13 @@ OSM では同じ道路・近い車線・部分的に重なる way が複数定�
 
 方針は **representative corridor collapse**。`node id merge -> epsilon snap` の後、`intersection split` の前に、近接・並行する **overlap 区間**だけを代表線へ畳み込む。way 全体を無条件に削除するのではなく、マージ候補になった折れ線部分だけを対象にし、対象外の同一 way 区間は残す。
 
-- 候補検出: edge segment を STRtree に入れ、距離・角度・射影 interval の overlap で candidate pair を絞る。
-- 向き付け: candidate pair を `source -> target` の有向辺として扱う。候補ペア数が片方だけ `>= 3` の場合は、その折れ線を代表側にし、両方 `>= 3` または両方 `<= 2` の場合は長い方を代表側にする。
-- 制約: 各 source は複数 target に同時マージできないため、merge graph は `outdegree <= 1` を満たす必要がある。違反時は、まず outdegree 0 の target への edge を反転して制約回避を試し、それでも残る場合だけ merge score 最良の edge を残す。
-- 適用順: cycle を score 最低 edge の削除で落として DAG にし、topological sort の逆順で処理する。`w3 -> w2 -> w1` のような chain は、代表追跡により実質 `w3 -> w1` へ圧縮して適用する。
+- 候補検出: edge segment を STRtree に入れ、距離・角度・射影 interval の overlap で辺–辺ペアを絞る。短いセグメント同士は way 全体の重なり長で集約し、閾値を満たす way ペアに属する辺–辺も候補に含める（集約セグメントの最大角度は `road_merge_angle_deg` 近傍に上限あり）。
+- 角度: 本マージに入る辺–辺ペアの列挙では端部向けの角度緩和を使う場合があるが、**way ペアの集約**と **union-find で実際に結ぶ辺**では chord 角度を `road_merge_angle_deg`（＋微小許容）で締め、垂直に近い脇道が幹線の並列成分へ伝播しないようにする。
+- 代表線と付け替え: primary 全セグメントは **一本のチェーンとして並べられる場合のみ**代表 polyline に統合する。チェーン不能な成分はマージをスキップする。単一代表辺に畳むのは **他 way の辺のみ**とし、ソース端点の代表線への距離が `road_merge_max_anchor_offset_m`（0 なら `max(2×距離閾値, 50m)` 自動）を超える場合もその成分をスキップする。
+- 結合: 共有ノードで交角が大きいペア（T 字等）は除外し、それ以外を **union-find** で連結成分にまとめる。各成分では、代表とする OSM way（成分内の総延長が最大の way）のチェーンへ、他 way の辺を一括で畳み込む。
 - 接続引き継ぎ: 削除対象部分の node を代表線上の最近傍点 `H` へ射影し、半径 `road_merge_anchor_delta_m` 内の既存 node / road-merge anchor があれば再利用する。なければ `road_merge` 由来の synthetic node を作り、削除対象 node に incident な外部 edge をその anchor へ付け替える。
 
-road-merge synthetic node は intersection split 由来の synthetic node と区別して可視化する。
+デバッグの `/api/debug/graph-preview` GeoJSON では、`source_osm_node_ids` が空の synthetic 頂点は、生成経路（road merge / intersection split 等）を問わず同一スタイルで描画する。
 
 ---
 
@@ -176,7 +176,7 @@ FastAPI の **`/api/debug/graph-preview`** から呼ばれる、OSM GeoJSON → 
 | **ε スナップ**（距離が近い頂点をまとめる・UI 表記はそのまま） | 各頂点を **Point** として STRtree に登録し、`dwithin(ε)` で近傍候補を列挙。**`oid > nid`** のときだけ union-find を検討（重複ペア回避）。**結合するのは次を両立するときのみ**: (1) 二点が **どちらか一方でも OSM 折れ線の端点**である、(2) 二点が **同一グラフ辺の両端ではない**（隣接セグメントの端点同士・同一直線上の近接のみを除外）。中間頂点同士は結合しない。更新は **OSM id マージと同型**：成分ごとに代表頂点・属性集約を決め、`rem` で端点を **一括 remap** し、**辺集合は 1 回スキャン**。空間索引まわりの計算量はおおよそ **O(n log n)** とクエリ **O(log n + k)**（k = ε 内の近傍点数）、グラフ側は **O(n + E)**。 |
 | **交差 split** | 全エッジの折れ線をセグメントに分解し、各セグメントを **LineString** として STRtree に登録。**軸平行 bbox の重なり**（木の既定クエリ）で候補ペアを列挙し、`edge_id` の sort rank と `(e1,s1,e2,s2)` で安定ソートしたうえで、厳密な内部交差は既存の `segment_intersection_interior`。交点が見つかるたびにグラフが更新されるため、索引は **反復ごとに再構築**。セグメント数 S に対し構築はおおよそ **O(S log S)**（実測では way 数・セグメント数が多い bbox でもセル幅チューニングなしでスケール）。 |
 | **OSM node id マージ** | 同一 OSM id にぶら下がるグラフ頂点を **union-find で連結成分化**し、代表頂点（id の辞書順最小等）と属性集約を決めたうえで、**辺集合を 1 回スキャン**して端点を remap（逐次の全辺 dict 再構築ループは廃止）。`step_metrics.connect_osm.osm_id_groups_merged` は **初期グラフで「2 つ以上の頂点に現れた OSM id」の個数**。 |
-| **重複・並行道路マージ**（オプション） | `merge_duplicate_roads` が ON のとき、OSM id マージと ε スナップの後、交差 split の前に実行。STRtree で近接・並行 segment pair を列挙し、有向 merge graph の向き付け・direction repair・outdegree pruning・cycle breaking を通して source edge を代表 edge へ畳み込む。削除側の外部 incident edge は代表線上の既存 node または `road_merge` synthetic anchor へ remap する。 |
+| **重複・並行道路マージ**（オプション） | `merge_duplicate_roads` が ON のとき、OSM id マージと ε スナップの後、交差 split の前に実行。STRtree で近接・並行な **辺–辺**ペアを列挙し、way 単位の重なり長が閾値を満たすペアは短いセグメント同士も候補に残す。共有ノードで交角が大きいペアは除外したうえで **union-find** で成分化し、成分ごとに代表 OSM way 側のチェーンへ他 way の辺を畳み込む。削除側の外部 incident edge は代表線上の既存 node または `road_merge` synthetic anchor へ remap する。 |
 | **不要な中間ノード削除**（オプション） | `remove_redundant_chain_vertices` が ON のとき、road merge と交差 split の **後**に実行。次数 2・同一 `osm_way_id`・保護なしのチェーンを列挙し、**符号付き折れ角の累積の絶対値**が約 15° を超えた頂点を残して辺をマージ（超過分は符号付きモジュロでリセット）。マージ後の各辺のジオメトリは **残した両端点の弦（polyline 2 点）** とし、同一 uv の重複辺はまとめて削除する。`/api/debug/graph-preview` の GeoJSON は **簡略化後の頂点・辺のみ**を返す。 |
 | **GeoJSON 出力** | 頂点の `vertex_role` 等のため、**辺から隣接リストを O(E)** で構築し、次数 2 の頂点で入射辺 2 本を全辺走査しない。 |
 
@@ -211,6 +211,7 @@ H0 は **2 秒優先・最大約 10 秒**の最適化全体バジェットのう
 | 2026-05-08 | §3 B4 **不要な中間ノード削除**（`remove_redundant_chain_vertices`、符号付き折れ角の累積）の仕様と §6.1 の実装メモを追加。 |
 | 2026-05-08 | `graph_build.py` の空間索引を **Shapely STRtree** に変更。H0-e 表・§6.1 を整合更新。 |
 | 2026-05-09 | §6.1 ε スナップを **端点を含むペアかつ同一辺の両端ではない**場合に限定する仕様を追記（実装と整合）。 |
-| 2026-05-09 | B5 **重複・並行道路マージ**を追加。`node id merge -> epsilon snap -> road merge -> intersection split -> chain prune` の順序と有向 merge graph 方針を追記。 |
+| 2026-05-09 | B5 **重複・並行道路マージ**を追加。`node id merge -> epsilon snap -> road merge -> intersection split -> chain prune` の順序を追記。 |
+| 2026-05-11 | B5 / §6.1 を **辺–辺候補 + union-find + 成分ごとの代表 way チェーン**への実装に整合。 |
 
 

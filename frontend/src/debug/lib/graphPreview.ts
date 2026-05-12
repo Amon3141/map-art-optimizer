@@ -8,6 +8,7 @@ export type GraphBuildOptionsPayload = {
   road_merge_min_overlap_m: number
   road_merge_min_overlap_ratio: number
   road_merge_anchor_delta_m: number
+  road_merge_max_anchor_offset_m: number
   split_intersections: boolean
   remove_redundant_chain_vertices: boolean
   prune_chain_accum_angle_deg: number
@@ -31,15 +32,15 @@ export type GraphStepMetrics = {
   }
   road_merge?: {
     candidate_pairs?: number
-    directed_edges?: number
-    direction_repaired_edges?: number
-    outdegree_pruned_edges?: number
-    cycle_edges_removed?: number
+    union_operations?: number
+    merge_components?: number
     merge_batches_applied?: number
+    skipped_merge_components?: number
     source_edges_removed?: number
     anchors_created?: number
     incident_edges_remapped?: number
     anchor_delta_m?: number
+    max_anchor_offset_m?: number
     distance_m?: number
     angle_deg?: number
     min_overlap_m?: number
@@ -78,6 +79,7 @@ export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
     road_merge_min_overlap_m: 100,
     road_merge_min_overlap_ratio: 0.25,
     road_merge_anchor_delta_m: 2,
+    road_merge_max_anchor_offset_m: 0,
     split_intersections: false,
     remove_redundant_chain_vertices: false,
     prune_chain_accum_angle_deg: 10,

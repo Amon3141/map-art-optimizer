@@ -11,11 +11,11 @@ import {
 import { wayIdFromProps } from '../debug/components/DebugWayList'
 import { apiUrl } from '../lib/api'
 import {
-  defaultDebugHighwayExcludeSelection,
-  filterFeatureCollectionByExcludedHighways,
-  type DebugHighwayExcludeSelection,
-  type DebugHighwayExcludeType,
-} from '../debug/lib/debugHighwayExclude'
+  defaultDebugHighwayIncludeSelection,
+  filterFeatureCollectionByIncludedHighways,
+  type DebugHighwayIncludeSelection,
+  type DebugHighwayTag,
+} from '../debug/lib/debugHighwayInclude'
 
 /** デバッグ用: Overpass → OSM GeoJSON → 平面グラフの可視化 */
 export function DebugPage() {
@@ -25,8 +25,8 @@ export function DebugPage() {
   const [error, setError] = useState<string | null>(null)
   const [textDump, setTextDump] = useState('')
   const [waysFcRaw, setWaysFcRaw] = useState<GeoJSON.FeatureCollection | null>(null)
-  const [highwayExclude, setHighwayExclude] = useState<DebugHighwayExcludeSelection>(() =>
-    defaultDebugHighwayExcludeSelection(),
+  const [highwayInclude, setHighwayInclude] = useState<DebugHighwayIncludeSelection>(() =>
+    defaultDebugHighwayIncludeSelection(),
   )
   const [panelMode, setPanelMode] = useState<DebugPanelMode>('ui')
   const [selectedWayId, setSelectedWayId] = useState<number | string | null>(null)
@@ -47,10 +47,10 @@ export function DebugPage() {
 
   const geojson = useMemo(() => {
     if (!waysFcRaw) return null
-    return filterFeatureCollectionByExcludedHighways(waysFcRaw, highwayExclude)
-  }, [waysFcRaw, highwayExclude])
+    return filterFeatureCollectionByIncludedHighways(waysFcRaw, highwayInclude)
+  }, [waysFcRaw, highwayInclude])
 
-  const features = geojson?.features ?? []
+  const features = useMemo(() => geojson?.features ?? [], [geojson])
 
   const handleSelectWay = useCallback(
     (id: number | string | null) => {
@@ -177,8 +177,8 @@ export function DebugPage() {
     }
   }
 
-  const onHighwayExcludeChecked = (value: DebugHighwayExcludeType, checked: boolean) => {
-    setHighwayExclude((prev) => ({ ...prev, [value]: checked }))
+  const onHighwayIncludeChecked = (value: DebugHighwayTag, checked: boolean) => {
+    setHighwayInclude((prev) => ({ ...prev, [value]: checked }))
   }
 
   return (
@@ -189,8 +189,8 @@ export function DebugPage() {
         textDump={textDump}
         geojson={geojson}
         waysFetchedCount={waysFcRaw?.features?.length ?? null}
-        highwayExclude={highwayExclude}
-        onHighwayExcludeChecked={onHighwayExcludeChecked}
+        highwayInclude={highwayInclude}
+        onHighwayIncludeChecked={onHighwayIncludeChecked}
         roadFilterOpen={roadFilterOpen}
         onRoadFilterOpenChange={setRoadFilterOpen}
         panelMode={panelMode}

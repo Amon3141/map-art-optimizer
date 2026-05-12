@@ -439,6 +439,7 @@ def test_road_merge_remaps_source_junction_to_representative_anchor():
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("candidate_pairs", 0) >= 1
+    assert rm.get("merge_components", 0) >= 1
     assert rm.get("source_edges_removed", 0) >= 2
     assert rm.get("anchors_created", 0) >= 1
 
@@ -455,7 +456,7 @@ def test_road_merge_remaps_source_junction_to_representative_anchor():
     assert any(f["properties"].get("synthetic") for f in nodes_fc["features"])
 
 
-def test_road_merge_repairs_outdegree_before_pruning():
+def test_road_merge_unions_three_parallel_ways():
     lon0, lat0 = 139.0, 36.0
     fc = {
         "type": "FeatureCollection",
@@ -474,7 +475,7 @@ def test_road_merge_repairs_outdegree_before_pruning():
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("candidate_pairs", 0) >= 3
-    assert rm.get("direction_repaired_edges", 0) >= 1
+    assert rm.get("union_operations", 0) >= 1
     assert rm.get("source_edges_removed", 0) >= 1
 
 
@@ -506,5 +507,67 @@ def test_road_merge_detects_segmented_parallel_ways_as_one_candidate():
     opts = GraphBuildOptions(merge_duplicate_roads=True)
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
-    assert rm.get("candidate_pairs") == 1
+    assert rm.get("candidate_pairs", 0) >= 1
+    assert rm.get("merge_components", 0) >= 1
     assert rm.get("source_edges_removed", 0) >= 3
+
+
+def test_road_merge_does_not_absorb_perpendicular_stub_way():
+    """垂直の短い脇道は幹線の並列マージ成分に巻き込まれない（角度ゲート）。"""
+    lon0, lat0 = 139.0, 36.0
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            _line_feature_from_xy(lon0, lat0, 1, [(0, 0), (100, 0)], 100),
+            _line_feature_from_xy(lon0, lat0, 2, [(0, 5), (100, 5)], 200),
+            _line_feature_from_xy(lon0, lat0, 3, [(80, 5), (80, 18)], 300),
+        ],
+    }
+    opts = GraphBuildOptions(merge_duplicate_roads=True)
+    r = build_graph_from_geojson(fc, lon0, lat0, opts)
+    rm = r.step_metrics.get("road_merge") or {}
+    assert rm.get("source_edges_removed", 0) >= 1
+    assert any(e.osm_way_id == 3 for e in r.graph.edges.values())
+    stub = [e for e in r.graph.edges.values() if e.osm_way_id == 3]
+    assert len(stub) == 1
+    assert stub[0].merged_osm_way_ids == [3]
+
+
+def test_road_merge_skips_merge_when_max_anchor_offset_tight():
+    lon0, lat0 = 139.0, 36.0
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            _line_feature_from_xy(lon0, lat0, 1, [(0, 0), (100, 0)], 100),
+            _line_feature_from_xy(lon0, lat0, 2, [(0, 8), (100, 8)], 200),
+        ],
+    }
+    opts = GraphBuildOptions(
+        merge_duplicate_roads=True,
+        road_merge_distance_m=15.0,
+        road_merge_max_anchor_offset_m=5.0,
+    )
+    r = build_graph_from_geojson(fc, lon0, lat0, opts)
+    rm = r.step_metrics.get("road_merge") or {}
+    assert rm.get("source_edges_removed", 0) == 0
+    assert rm.get("skipped_merge_components", 0) >= 1
+
+
+def test_road_merge_effective_max_anchor_uses_auto_when_zero():
+    lon0, lat0 = 139.0, 36.0
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            _line_feature_from_xy(lon0, lat0, 1, [(0, 0), (100, 0)], 100),
+            _line_feature_from_xy(lon0, lat0, 2, [(0, 8), (100, 8)], 200),
+        ],
+    }
+    r = build_graph_from_geojson(
+        fc,
+        lon0,
+        lat0,
+        GraphBuildOptions(merge_duplicate_roads=True, road_merge_distance_m=15.0),
+    )
+    rm = r.step_metrics.get("road_merge") or {}
+    assert rm.get("source_edges_removed", 0) >= 1
+    assert rm.get("max_anchor_offset_m", 0) >= 50.0

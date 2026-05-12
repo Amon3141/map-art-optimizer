@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any, Callable, Literal
 
 import numpy as np
@@ -30,6 +31,11 @@ DEFAULT_ROAD_MERGE_ANGLE_DEG = 22.0
 DEFAULT_ROAD_MERGE_MIN_OVERLAP_M = 8.0
 DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO = 0.25
 DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M = 2.0
+# 0 = 実行時に max(2 * road_merge_distance_m, 50) を使う
+DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M = 0.0
+# Union / way 集約:候補の角度緩和より厳しく見る（脇道の伝播を抑える）
+ROAD_MERGE_STRICT_ANGLE_SLACK_DEG = 0.05
+ROAD_MERGE_WAY_PAIR_MAX_ANGLE_EXTRA_DEG = 6.0
 
 
 @dataclass
@@ -43,6 +49,7 @@ class GraphBuildOptions:
     road_merge_min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M
     road_merge_min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO
     road_merge_anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M
+    road_merge_max_anchor_offset_m: float = DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
     prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
@@ -453,13 +460,6 @@ class _RoadMergeCandidate:
     len_b_m: float
 
 
-@dataclass
-class _DirectedRoadMerge:
-    source: str
-    target: str
-    score: float
-
-
 def _edge_way_ids(e: InternalEdge) -> list[int]:
     ids = list(e.merged_osm_way_ids)
     if e.osm_way_id is not None:
@@ -491,25 +491,6 @@ def _road_merge_key(e: InternalEdge) -> str:
     return f"edge:{e.id}"
 
 
-def _road_merge_key_edges(graph: RoadGraph, key: str) -> list[InternalEdge]:
-    if key.startswith("way:"):
-        try:
-            wid = int(key.split(":", 1)[1])
-        except ValueError:
-            return []
-        return sorted((e for e in graph.edges.values() if e.osm_way_id == wid), key=lambda e: e.id)
-    if key.startswith("edge:"):
-        eid = key.split(":", 1)[1]
-        e = graph.edges.get(eid)
-        return [e] if e is not None else []
-    e = graph.edges.get(key)
-    return [e] if e is not None else []
-
-
-def _road_merge_key_length_m(graph: RoadGraph, key: str) -> float:
-    return sum(_edge_length_m(graph, e) for e in _road_merge_key_edges(graph, key))
-
-
 def _parallel_overlap_m(
     a0: tuple[float, float],
     a1: tuple[float, float],
@@ -534,6 +515,23 @@ def _point_segment_distance(
 ) -> float:
     p, _t = nearest_point_on_segment(q, a, b)
     return _dist(q, p)
+
+
+def _acute_angle_deg_between_edge_chords(graph: RoadGraph, e1: InternalEdge, e2: InternalEdge) -> float | None:
+    """Chord u–v 同士の鋭角（度）。union ゲート用（角度緩和なし）。"""
+    a0, a1 = _edge_endpoints_xy(graph, e1)
+    b0, b1 = _edge_endpoints_xy(graph, e2)
+    ax, ay = a1[0] - a0[0], a1[1] - a0[1]
+    bx, by = b1[0] - b0[0], b1[1] - b0[1]
+    la = math.hypot(ax, ay)
+    lb = math.hypot(bx, by)
+    if la < 1e-6 or lb < 1e-6:
+        return None
+    dot = ax * bx + ay * by
+    cross = ax * by - ay * bx
+    ang = abs(math.atan2(cross, dot))
+    ang = min(ang, math.pi - ang)
+    return math.degrees(ang)
 
 
 def _road_merge_relaxed_angle_limit_deg(
@@ -561,6 +559,8 @@ def _road_merge_pair_metric(
     max_angle_deg: float,
     min_overlap_m: float,
     min_overlap_ratio: float,
+    *,
+    angle_relax: bool = True,
 ) -> _RoadMergeCandidate | None:
     if e1.osm_way_id is not None and e1.osm_way_id == e2.osm_way_id:
         return None
@@ -581,20 +581,21 @@ def _road_merge_pair_metric(
     required_overlap = max(min_overlap_m, min_overlap_ratio * min(la, lb))
     if overlap_m < required_overlap:
         return None
-    dot = ax * bx + ay * by
-    cross = ax * by - ay * bx
-    angle = abs(math.atan2(cross, dot))
-    angle = min(angle, math.pi - angle)
-    angle_deg = math.degrees(angle)
+    angle_deg = _acute_angle_deg_between_edge_chords(graph, e1, e2)
+    if angle_deg is None:
+        return None
     endpoint_near_m = min(
         _point_segment_distance(a0, b0, b1),
         _point_segment_distance(a1, b0, b1),
         _point_segment_distance(b0, a0, a1),
         _point_segment_distance(b1, a0, a1),
     )
-    angle_limit = _road_merge_relaxed_angle_limit_deg(
-        max_angle_deg, distance_m, max_distance_m, overlap_m, required_overlap, endpoint_near_m
-    )
+    if angle_relax:
+        angle_limit = _road_merge_relaxed_angle_limit_deg(
+            max_angle_deg, distance_m, max_distance_m, overlap_m, required_overlap, endpoint_near_m
+        )
+    else:
+        angle_limit = max_angle_deg
     if angle_deg > angle_limit:
         return None
     score = overlap_m - distance_m * 3.0 - angle_deg * 0.5
@@ -610,13 +611,73 @@ def _road_merge_pair_metric(
     )
 
 
-def _road_merge_candidates(
+def _edge_unit_vector_outward(graph: RoadGraph, e: InternalEdge, nid: str) -> tuple[float, float] | None:
+    if nid not in (e.u, e.v):
+        return None
+    nu = graph.nodes[e.u]
+    nv = graph.nodes[e.v]
+    if nid == e.u:
+        vx, vy = nv.x_m - nu.x_m, nv.y_m - nu.y_m
+    else:
+        vx, vy = nu.x_m - nv.x_m, nu.y_m - nv.y_m
+    ln = math.hypot(vx, vy)
+    if ln < 1e-9:
+        return None
+    return (vx / ln, vy / ln)
+
+
+def _acute_angle_deg_unit(u1: tuple[float, float], u2: tuple[float, float]) -> float:
+    dot = max(-1.0, min(1.0, u1[0] * u2[0] + u1[1] * u2[1]))
+    ang = math.degrees(math.acos(dot))
+    return min(ang, 180.0 - ang)
+
+
+def _road_merge_pair_ok_at_shared_node(
+    graph: RoadGraph, e1: InternalEdge, e2: InternalEdge, max_angle_deg: float
+) -> bool:
+    """Reject unions where two edges meet at a graph node but head in very different directions (e.g. T)."""
+    shared = {e1.u, e1.v} & {e2.u, e2.v}
+    if not shared:
+        return True
+    for nid in shared:
+        d1 = _edge_unit_vector_outward(graph, e1, nid)
+        d2 = _edge_unit_vector_outward(graph, e2, nid)
+        if d1 is None or d2 is None:
+            return False
+        if _acute_angle_deg_unit(d1, d2) > max_angle_deg + 0.05:
+            return False
+    return True
+
+
+class _RoadMergeUnionFind:
+    def __init__(self, edge_ids: Iterable[str]):
+        self.parent: dict[str, str] = {eid: eid for eid in edge_ids}
+
+    def find(self, x: str) -> str:
+        p = self.parent.get(x, x)
+        if p != x:
+            self.parent[x] = self.find(p)
+        return self.parent[x]
+
+    def union(self, a: str, b: str) -> bool:
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        if ra < rb:
+            self.parent[rb] = ra
+        else:
+            self.parent[ra] = rb
+        return True
+
+
+def _road_merge_eligible_way_key_pairs(
     graph: RoadGraph,
     max_distance_m: float,
     max_angle_deg: float,
     min_overlap_m: float,
     min_overlap_ratio: float,
-) -> list[_RoadMergeCandidate]:
+) -> set[tuple[str, str]]:
+    """Key pairs whose aggregated parallel overlap passes thresholds (short segments need this)."""
     edge_ids = sorted(graph.edges)
     geoms: list[LineString] = []
     refs: list[str] = []
@@ -628,7 +689,7 @@ def _road_merge_candidates(
         geoms.append(LineString([a, b]))
         refs.append(eid)
     if len(geoms) < 2:
-        return []
+        return set()
     tree = STRtree(geoms)
     raw = tree.query(np.asarray(geoms, dtype=object), predicate="dwithin", distance=max_distance_m)
     seen: set[tuple[str, str]] = set()
@@ -651,174 +712,227 @@ def _road_merge_candidates(
             k2 = _road_merge_key(e2)
             if k1 == k2:
                 continue
-            gkey = (k1, k2) if k1 < k2 else (k2, k1)
             metric = _road_merge_pair_metric(
-                graph, e1, e2, max_distance_m, max_angle_deg, 0.0, 0.0
+                graph, e1, e2, max_distance_m, max_angle_deg, 0.0, 0.0, angle_relax=False
             )
-            if metric is not None:
-                agg = grouped.setdefault(
-                    gkey,
-                    {
-                        "score": 0.0,
-                        "distance_m": metric.distance_m,
-                        "angle_deg": 0.0,
-                        "overlap_m": 0.0,
-                    },
-                )
-                agg["score"] += metric.score
-                agg["distance_m"] = min(agg["distance_m"], metric.distance_m)
-                agg["angle_deg"] = max(agg["angle_deg"], metric.angle_deg)
-                agg["overlap_m"] += metric.overlap_m
-    out: list[_RoadMergeCandidate] = []
-    for (a, b), agg in grouped.items():
-        len_a = _road_merge_key_length_m(graph, a)
-        len_b = _road_merge_key_length_m(graph, b)
+            if metric is None:
+                continue
+            gkey = (k1, k2) if k1 < k2 else (k2, k1)
+            agg = grouped.setdefault(
+                gkey,
+                {
+                    "score": 0.0,
+                    "distance_m": metric.distance_m,
+                    "angle_deg": 0.0,
+                    "overlap_m": 0.0,
+                },
+            )
+            agg["score"] += metric.score
+            agg["distance_m"] = min(agg["distance_m"], metric.distance_m)
+            agg["angle_deg"] = max(agg["angle_deg"], metric.angle_deg)
+            agg["overlap_m"] += metric.overlap_m
+    out: set[tuple[str, str]] = set()
+    for (a_key, b_key), agg in grouped.items():
+        len_a = sum(_edge_length_m(graph, e) for e in graph.edges.values() if _road_merge_key(e) == a_key)
+        len_b = sum(_edge_length_m(graph, e) for e in graph.edges.values() if _road_merge_key(e) == b_key)
         if len_a < 1e-6 or len_b < 1e-6:
             continue
         required_overlap = max(min_overlap_m, min_overlap_ratio * min(len_a, len_b))
-        if agg["overlap_m"] < required_overlap:
+        if agg["overlap_m"] >= required_overlap and agg["angle_deg"] <= (
+            max_angle_deg + ROAD_MERGE_WAY_PAIR_MAX_ANGLE_EXTRA_DEG
+        ):
+            out.add((a_key, b_key))
+    return out
+
+
+def _road_merge_edge_pair_candidates(
+    graph: RoadGraph,
+    max_distance_m: float,
+    max_angle_deg: float,
+    min_overlap_m: float,
+    min_overlap_ratio: float,
+) -> list[_RoadMergeCandidate]:
+    """One candidate per undirected edge pair (best score if STRtree reports duplicates).
+
+    Pairs that fail per-segment overlap thresholds can still be kept when their OSM-way
+    aggregate overlap passes (short native segments vs. long corridor).
+    """
+    way_ok = _road_merge_eligible_way_key_pairs(
+        graph,
+        max_distance_m=max_distance_m,
+        max_angle_deg=max_angle_deg,
+        min_overlap_m=min_overlap_m,
+        min_overlap_ratio=min_overlap_ratio,
+    )
+    edge_ids = sorted(graph.edges)
+    geoms: list[LineString] = []
+    refs: list[str] = []
+    for eid in edge_ids:
+        e = graph.edges[eid]
+        a, b = _edge_endpoints_xy(graph, e)
+        if _dist(a, b) < 1e-6:
             continue
-        out.append(
-            _RoadMergeCandidate(
-                a=a,
-                b=b,
-                score=agg["score"],
-                distance_m=agg["distance_m"],
-                angle_deg=agg["angle_deg"],
-                overlap_m=agg["overlap_m"],
-                len_a_m=len_a,
-                len_b_m=len_b,
+        geoms.append(LineString([a, b]))
+        refs.append(eid)
+    if len(geoms) < 2:
+        return []
+    tree = STRtree(geoms)
+    raw = tree.query(np.asarray(geoms, dtype=object), predicate="dwithin", distance=max_distance_m)
+    seen: set[tuple[str, str]] = set()
+    best_by_pair: dict[tuple[str, str], _RoadMergeCandidate] = {}
+    if raw.ndim == 2 and raw.shape[0] == 2:
+        for k in range(raw.shape[1]):
+            i, j = int(raw[0, k]), int(raw[1, k])
+            if i >= j:
+                continue
+            e1_id, e2_id = refs[i], refs[j]
+            key = (e1_id, e2_id) if e1_id < e2_id else (e2_id, e1_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            e1 = graph.edges.get(e1_id)
+            e2 = graph.edges.get(e2_id)
+            if e1 is None or e2 is None:
+                continue
+            if _road_merge_key(e1) == _road_merge_key(e2):
+                continue
+            k1 = _road_merge_key(e1)
+            k2 = _road_merge_key(e2)
+            gkey = (k1, k2) if k1 < k2 else (k2, k1)
+            metric = _road_merge_pair_metric(
+                graph, e1, e2, max_distance_m, max_angle_deg, min_overlap_m, min_overlap_ratio
             )
-        )
+            if metric is None:
+                metric0 = _road_merge_pair_metric(
+                    graph,
+                    e1,
+                    e2,
+                    max_distance_m,
+                    max_angle_deg,
+                    0.0,
+                    0.0,
+                    angle_relax=False,
+                )
+                if metric0 is None or gkey not in way_ok:
+                    continue
+                metric = metric0
+            prev = best_by_pair.get(key)
+            if prev is None or metric.score > prev.score or (
+                abs(metric.score - prev.score) < 1e-9 and (metric.a, metric.b) < (prev.a, prev.b)
+            ):
+                best_by_pair[key] = metric
+    out = list(best_by_pair.values())
     out.sort(key=lambda c: (-c.score, c.a, c.b))
     return out
 
 
-def _initial_directed_road_merges(
+def _road_merge_union_find_from_candidates(
     graph: RoadGraph,
     candidates: list[_RoadMergeCandidate],
-) -> list[_DirectedRoadMerge]:
-    pair_counts: dict[str, int] = {}
+    max_angle_deg: float,
+) -> tuple[_RoadMergeUnionFind, int]:
+    uf = _RoadMergeUnionFind(graph.edges.keys())
+    unions = 0
     for c in candidates:
-        pair_counts[c.a] = pair_counts.get(c.a, 0) + 1
-        pair_counts[c.b] = pair_counts.get(c.b, 0) + 1
-
-    directed: list[_DirectedRoadMerge] = []
-    for c in candidates:
-        ca, cb = pair_counts.get(c.a, 0), pair_counts.get(c.b, 0)
-        a_is_hub = ca >= 3
-        b_is_hub = cb >= 3
-        if a_is_hub and not b_is_hub:
-            source, target = c.b, c.a
-        elif b_is_hub and not a_is_hub:
-            source, target = c.a, c.b
-        elif c.len_a_m > c.len_b_m:
-            source, target = c.b, c.a
-        elif c.len_b_m > c.len_a_m:
-            source, target = c.a, c.b
-        else:
-            # Stable tie-break: keep lexicographically smaller edge as representative.
-            source, target = (c.b, c.a) if c.a < c.b else (c.a, c.b)
-        directed.append(_DirectedRoadMerge(source=source, target=target, score=c.score))
-    directed.sort(key=lambda e: (e.source, -e.score, e.target))
-    return directed
+        e1 = graph.edges.get(c.a)
+        e2 = graph.edges.get(c.b)
+        if e1 is None or e2 is None:
+            continue
+        if not _road_merge_pair_ok_at_shared_node(graph, e1, e2, max_angle_deg):
+            continue
+        chord_deg = _acute_angle_deg_between_edge_chords(graph, e1, e2)
+        if chord_deg is None or chord_deg > max_angle_deg + ROAD_MERGE_STRICT_ANGLE_SLACK_DEG:
+            continue
+        if uf.union(c.a, c.b):
+            unions += 1
+    return uf, unions
 
 
-def _road_merge_outdegree(edges: list[_DirectedRoadMerge]) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for e in edges:
-        out[e.source] = out.get(e.source, 0) + 1
-        out.setdefault(e.target, out.get(e.target, 0))
-    return out
+def _road_merge_union_components(uf: _RoadMergeUnionFind, graph: RoadGraph) -> dict[str, list[str]]:
+    comp: dict[str, list[str]] = {}
+    for eid in sorted(graph.edges.keys()):
+        r = uf.find(eid)
+        comp.setdefault(r, []).append(eid)
+    return comp
 
 
-def _repair_road_merge_directions(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
-    current = list(edges)
-    repaired = 0
-    changed = True
-    while changed:
-        changed = False
-        out = _road_merge_outdegree(current)
-        offenders = {src for src, deg in out.items() if deg >= 2}
-        reverse_keys = {
-            (e.source, e.target)
-            for e in current
-            if e.source in offenders and out.get(e.target, 0) == 0
-        }
-        if not reverse_keys:
-            break
-        next_edges: list[_DirectedRoadMerge] = []
-        for e in sorted(current, key=lambda x: (x.source, -x.score, x.target)):
-            if (e.source, e.target) in reverse_keys:
-                next_edges.append(_DirectedRoadMerge(source=e.target, target=e.source, score=e.score))
-                repaired += 1
-                changed = True
-            else:
-                next_edges.append(e)
-        current = next_edges
-    current.sort(key=lambda e: (e.source, -e.score, e.target))
-    return current, repaired
+def _apply_road_merge_union_component(
+    graph: RoadGraph,
+    comp_edge_ids: list[str],
+    anchor_delta_m: float,
+    batch_index: int,
+    synth_counter: list[int],
+    max_distance_m: float,
+    max_angle_deg: float,
+    min_overlap_m: float,
+    min_overlap_ratio: float,
+    max_anchor_offset_m: float,
+) -> tuple[int, int, int]:
+    edges_in = [graph.edges[eid] for eid in comp_edge_ids if eid in graph.edges]
+    if len(edges_in) < 2:
+        return (0, 0, 0)
 
+    by_wid: dict[int | None, list[InternalEdge]] = {}
+    for e in edges_in:
+        by_wid.setdefault(e.osm_way_id, []).append(e)
 
-def _prune_road_merge_outdegree(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
-    by_source: dict[str, list[_DirectedRoadMerge]] = {}
-    for e in edges:
-        by_source.setdefault(e.source, []).append(e)
-    kept: list[_DirectedRoadMerge] = []
-    removed = 0
-    for src in sorted(by_source):
-        choices = sorted(by_source[src], key=lambda e: (-e.score, e.target))
-        kept.append(choices[0])
-        removed += max(0, len(choices) - 1)
-    kept.sort(key=lambda e: (e.source, e.target))
-    return kept, removed
+    nonnull_wids = [w for w in by_wid if w is not None]
+    if not nonnull_wids:
+        tgt = max(edges_in, key=lambda e: (_edge_length_m(graph, e), e.id))
+        srcs = [e for e in edges_in if e.id != tgt.id]
+        if not srcs:
+            return (0, 0, 0)
+        if not _preflight_source_anchor_distances(graph, tgt, srcs, max_anchor_offset_m):
+            return (0, 0, 0)
+        return _apply_road_merge_edge_batch(
+            graph,
+            tgt.id,
+            sorted(s.id for s in srcs),
+            anchor_delta_m,
+            batch_index,
+            synth_counter,
+            max_anchor_offset_m,
+        )
 
+    primary_wid = max(
+        nonnull_wids,
+        key=lambda w: (sum(_edge_length_m(graph, e) for e in by_wid[w]), -w),
+    )
+    t_edges = sorted(by_wid[primary_wid], key=lambda e: e.id)
+    s_edges = [e for e in edges_in if e.osm_way_id != primary_wid]
+    if not s_edges:
+        return (0, 0, 0)
 
-def _road_merge_topological_order(edges: list[_DirectedRoadMerge]) -> list[str] | None:
-    nodes: set[str] = set()
-    outgoing: dict[str, list[str]] = {}
-    indeg: dict[str, int] = {}
-    for e in edges:
-        nodes.add(e.source)
-        nodes.add(e.target)
-        outgoing.setdefault(e.source, []).append(e.target)
-        indeg[e.target] = indeg.get(e.target, 0) + 1
-        indeg.setdefault(e.source, indeg.get(e.source, 0))
-    ready = sorted(n for n in nodes if indeg.get(n, 0) == 0)
-    order: list[str] = []
-    while ready:
-        n = ready.pop(0)
-        order.append(n)
-        for m in sorted(outgoing.get(n, [])):
-            indeg[m] -= 1
-            if indeg[m] == 0:
-                ready.append(m)
-                ready.sort()
-    if len(order) != len(nodes):
-        return None
-    return order
+    if len(t_edges) >= 2:
+        if _ordered_chain_node_ids(t_edges) is None:
+            return (0, 0, 0)
+        removed, anchors, remapped = _apply_road_merge_chain_batch(
+            graph,
+            t_edges,
+            s_edges,
+            anchor_delta_m,
+            batch_index,
+            synth_counter,
+            max_anchor_offset_m,
+        )
+        return (removed, anchors, remapped)
 
-
-def _break_road_merge_cycles(edges: list[_DirectedRoadMerge]) -> tuple[list[_DirectedRoadMerge], int]:
-    current = list(edges)
-    removed = 0
-    while _road_merge_topological_order(current) is None and current:
-        nodes_in_cycles = {e.source for e in current} | {e.target for e in current}
-        candidates = [e for e in current if e.source in nodes_in_cycles and e.target in nodes_in_cycles]
-        drop = min(candidates or current, key=lambda e: (e.score, e.source, e.target))
-        current.remove(drop)
-        removed += 1
-    current.sort(key=lambda e: (e.source, e.target))
-    return current, removed
-
-
-def _resolve_road_merge_target(src: str, out: dict[str, str]) -> str:
-    seen: set[str] = set()
-    cur = src
-    while cur in out and cur not in seen:
-        seen.add(cur)
-        cur = out[cur]
-    return cur
+    rep = _road_merge_best_primary_target_edge(
+        graph, t_edges, s_edges, min_overlap_m, min_overlap_ratio
+    )
+    if rep is None:
+        return (0, 0, 0)
+    if not _preflight_source_anchor_distances(graph, rep, s_edges, max_anchor_offset_m):
+        return (0, 0, 0)
+    return _apply_road_merge_edge_batch(
+        graph,
+        rep.id,
+        sorted(e.id for e in s_edges),
+        anchor_delta_m,
+        batch_index,
+        synth_counter,
+        max_anchor_offset_m,
+    )
 
 
 def _nearest_point_on_polyline(
@@ -840,6 +954,94 @@ def _nearest_point_on_polyline(
             best_m = acc + t * seg_len
         acc += seg_len
     return best_pt, best_d, best_m
+
+
+def _effective_road_merge_max_anchor_offset_m(max_distance_m: float, configured: float) -> float:
+    if configured > 0.0:
+        return configured
+    return max(2.0 * max_distance_m, 50.0)
+
+
+def _road_merge_source_endpoint_points(graph: RoadGraph, edges: list[InternalEdge]) -> list[tuple[float, float]]:
+    pts: list[tuple[float, float]] = []
+    for e in edges:
+        for nid in (e.u, e.v):
+            n = graph.nodes[nid]
+            pts.append((n.x_m, n.y_m))
+    return pts
+
+
+def _road_merge_source_endpoint_span_m(graph: RoadGraph, edges: list[InternalEdge]) -> float:
+    pts = _road_merge_source_endpoint_points(graph, edges)
+    maxd = 0.0
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            maxd = max(maxd, _dist(pts[i], pts[j]))
+    return maxd
+
+
+def _road_merge_projection_cost_to_target(
+    graph: RoadGraph, target: InternalEdge, source_edges: list[InternalEdge]
+) -> tuple[float, float]:
+    total = 0.0
+    maxd = 0.0
+    for e in source_edges:
+        for nid in (e.u, e.v):
+            q = (graph.nodes[nid].x_m, graph.nodes[nid].y_m)
+            _h, d, _m = _nearest_point_on_polyline(q, target.polyline_xy_m)
+            total += d * d
+            maxd = max(maxd, d)
+    return total, maxd
+
+
+def _road_merge_primary_target_polyline_length_m(target: InternalEdge) -> float:
+    pl = target.polyline_xy_m
+    if len(pl) < 2:
+        return 0.0
+    return sum(_dist(pl[i], pl[i + 1]) for i in range(len(pl) - 1))
+
+
+def _road_merge_best_primary_target_edge(
+    graph: RoadGraph,
+    t_edges: list[InternalEdge],
+    s_edges: list[InternalEdge],
+    min_overlap_m: float,
+    min_overlap_ratio: float,
+) -> InternalEdge | None:
+    if not t_edges or not s_edges:
+        return None
+    span = _road_merge_source_endpoint_span_m(graph, s_edges)
+    min_len = max(min_overlap_m, min_overlap_ratio * span) if span > 1e-6 else min_overlap_m
+    best: InternalEdge | None = None
+    best_key: tuple[float, float, str] | None = None
+    for t in t_edges:
+        L = _road_merge_primary_target_polyline_length_m(t)
+        if L + 1e-9 < min_len:
+            continue
+        cost_sq, maxd = _road_merge_projection_cost_to_target(graph, t, s_edges)
+        key = (cost_sq, maxd, t.id)
+        if best is None or key < best_key:
+            best = t
+            best_key = key
+    return best
+
+
+def _preflight_source_anchor_distances(
+    graph: RoadGraph,
+    target: InternalEdge,
+    source_edges: list[InternalEdge],
+    max_anchor_offset_m: float,
+) -> bool:
+    pl = target.polyline_xy_m
+    if len(pl) < 2:
+        return False
+    for e in source_edges:
+        for nid in (e.u, e.v):
+            q = (graph.nodes[nid].x_m, graph.nodes[nid].y_m)
+            _h, d, _m = _nearest_point_on_polyline(q, pl)
+            if d > max_anchor_offset_m + 1e-9:
+                return False
+    return True
 
 
 def _road_merge_anchor_for_node(
@@ -921,6 +1123,7 @@ def _apply_road_merge_chain_batch(
     anchor_delta_m: float,
     batch_index: int,
     synth_counter: list[int],
+    max_anchor_offset_m: float,
 ) -> tuple[int, int, int]:
     target_order = _ordered_chain_node_ids(target_edges)
     if target_order is None or len(target_order) < 2 or not source_edges:
@@ -937,6 +1140,8 @@ def _apply_road_merge_chain_batch(
         merged_osm_way_ids=_merge_edge_osm_way_ids(target_edges),
     )
 
+    if not _preflight_source_anchor_distances(graph, target_stub, source_edges, max_anchor_offset_m):
+        return (0, 0, 0)
     anchors: list[tuple[float, str]] = []
     acc = 0.0
     anchors.append((0.0, target_order[0]))
@@ -1024,12 +1229,16 @@ def _apply_road_merge_edge_batch(
     anchor_delta_m: float,
     batch_index: int,
     synth_counter: list[int],
+    max_anchor_offset_m: float,
 ) -> tuple[int, int, int]:
     target = graph.edges.get(target_id)
     if target is None:
         return (0, 0, 0)
     sources = [graph.edges[s] for s in source_ids if s in graph.edges and s != target_id]
     if not sources:
+        return (0, 0, 0)
+
+    if not _preflight_source_anchor_distances(graph, target, sources, max_anchor_offset_m):
         return (0, 0, 0)
 
     target_len = sum(_dist(target.polyline_xy_m[i], target.polyline_xy_m[i + 1]) for i in range(len(target.polyline_xy_m) - 1))
@@ -1108,73 +1317,6 @@ def _apply_road_merge_edge_batch(
     return (len(sources), anchors_created, incident_remapped)
 
 
-def _nearest_merge_target_edge_id(
-    graph: RoadGraph,
-    source: InternalEdge,
-    targets: list[InternalEdge],
-    max_distance_m: float,
-    max_angle_deg: float,
-) -> str | None:
-    best: tuple[float, str] | None = None
-    for target in targets:
-        metric = _road_merge_pair_metric(graph, source, target, max_distance_m, max_angle_deg, 0.0, 0.0)
-        if metric is None:
-            continue
-        rank = (-metric.score, target.id)
-        if best is None or rank < best:
-            best = rank
-    return best[1] if best is not None else None
-
-
-def _apply_road_merge_batch(
-    graph: RoadGraph,
-    target_key: str,
-    source_keys: list[str],
-    anchor_delta_m: float,
-    batch_index: int,
-    synth_counter: list[int],
-    max_distance_m: float,
-    max_angle_deg: float,
-) -> tuple[int, int, int]:
-    target_edges = _road_merge_key_edges(graph, target_key)
-    if not target_edges:
-        return (0, 0, 0)
-
-    by_target: dict[str, list[str]] = {}
-    selected_source_ids: set[str] = set()
-    for source_key in source_keys:
-        for source in _road_merge_key_edges(graph, source_key):
-            target_id = _nearest_merge_target_edge_id(
-                graph, source, target_edges, max_distance_m, max_angle_deg
-            )
-            if target_id is not None:
-                by_target.setdefault(target_id, []).append(source.id)
-                selected_source_ids.add(source.id)
-
-    if target_key.startswith("way:") and len(target_edges) > 1 and selected_source_ids:
-        source_edges = [graph.edges[eid] for eid in sorted(selected_source_ids) if eid in graph.edges]
-        return _apply_road_merge_chain_batch(
-            graph, target_edges, source_edges, anchor_delta_m, batch_index, synth_counter
-        )
-
-    removed_total = 0
-    anchors_total = 0
-    remapped_total = 0
-    for i, target_id in enumerate(sorted(by_target)):
-        removed, anchors, remapped = _apply_road_merge_edge_batch(
-            graph,
-            target_id,
-            sorted(set(by_target[target_id])),
-            anchor_delta_m,
-            batch_index * 1000 + i,
-            synth_counter,
-        )
-        removed_total += removed
-        anchors_total += anchors
-        remapped_total += remapped
-    return (removed_total, anchors_total, remapped_total)
-
-
 def merge_duplicate_roads(
     graph: RoadGraph,
     max_distance_m: float = DEFAULT_ROAD_MERGE_DISTANCE_M,
@@ -1182,63 +1324,63 @@ def merge_duplicate_roads(
     min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
     anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
+    max_anchor_offset_m: float = DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
 ) -> dict[str, Any]:
-    candidates = _road_merge_candidates(
+    eff_anchor = _effective_road_merge_max_anchor_offset_m(max_distance_m, max_anchor_offset_m)
+    candidates = _road_merge_edge_pair_candidates(
         graph,
         max_distance_m=max_distance_m,
         max_angle_deg=max_angle_deg,
         min_overlap_m=min_overlap_m,
         min_overlap_ratio=min_overlap_ratio,
     )
-    directed = _initial_directed_road_merges(graph, candidates)
-    directed, direction_repaired = _repair_road_merge_directions(directed)
-    directed, outdegree_pruned = _prune_road_merge_outdegree(directed)
-    directed, cycle_edges_removed = _break_road_merge_cycles(directed)
-    topo = _road_merge_topological_order(directed) or []
-    out = {e.source: e.target for e in directed}
-
-    batches: dict[str, list[str]] = {}
-    for src in reversed(topo):
-        if src not in out:
-            continue
-        target = _resolve_road_merge_target(src, out)
-        if target == src:
-            continue
-        batches.setdefault(target, []).append(src)
+    uf, union_operations = _road_merge_union_find_from_candidates(graph, candidates, max_angle_deg)
+    comp_map = _road_merge_union_components(uf, graph)
+    multi_components = sorted(
+        ([eid for eid in ids if eid in graph.edges] for ids in comp_map.values() if len(ids) >= 2),
+        key=lambda ids: ids[0],
+    )
 
     synth_counter = [0]
     merges_applied = 0
+    skipped_merge_components = 0
     anchors_created = 0
     incident_edges_remapped = 0
     source_edges_removed = 0
-    for batch_index, target in enumerate(sorted(batches)):
-        removed, anchors, remapped = _apply_road_merge_batch(
+    for batch_index, ids in enumerate(multi_components):
+        if len(ids) < 2:
+            continue
+        removed, anchors, remapped = _apply_road_merge_union_component(
             graph,
-            target,
-            batches[target],
+            sorted(ids),
             anchor_delta_m,
             batch_index,
             synth_counter,
             max_distance_m,
             max_angle_deg,
+            min_overlap_m,
+            min_overlap_ratio,
+            eff_anchor,
         )
         if removed:
             merges_applied += 1
             source_edges_removed += removed
             anchors_created += anchors
             incident_edges_remapped += remapped
+        else:
+            skipped_merge_components += 1
 
     return {
         "candidate_pairs": len(candidates),
-        "directed_edges": len(directed),
-        "direction_repaired_edges": direction_repaired,
-        "outdegree_pruned_edges": outdegree_pruned,
-        "cycle_edges_removed": cycle_edges_removed,
+        "union_operations": union_operations,
+        "merge_components": len(multi_components),
         "merge_batches_applied": merges_applied,
+        "skipped_merge_components": skipped_merge_components,
         "source_edges_removed": source_edges_removed,
         "anchors_created": anchors_created,
         "incident_edges_remapped": incident_edges_remapped,
         "anchor_delta_m": anchor_delta_m,
+        "max_anchor_offset_m": eff_anchor,
         "distance_m": max_distance_m,
         "angle_deg": max_angle_deg,
         "min_overlap_m": min_overlap_m,
@@ -1881,6 +2023,7 @@ def build_graph_from_geojson(
             min_overlap_m=options.road_merge_min_overlap_m,
             min_overlap_ratio=options.road_merge_min_overlap_ratio,
             anchor_delta_m=options.road_merge_anchor_delta_m,
+            max_anchor_offset_m=options.road_merge_max_anchor_offset_m,
         )
 
     if options.split_intersections:

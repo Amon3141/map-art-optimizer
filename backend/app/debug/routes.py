@@ -10,6 +10,7 @@ from ..osm.graph_build import (
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
     DEFAULT_ROAD_MERGE_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_DISTANCE_M,
+    DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
     GraphBuildOptions,
@@ -43,6 +44,7 @@ class GraphBuildOptionsBody(BaseModel):
     road_merge_min_overlap_m: float = Field(DEFAULT_ROAD_MERGE_MIN_OVERLAP_M, ge=0.0, le=500.0)
     road_merge_min_overlap_ratio: float = Field(DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO, ge=0.0, le=1.0)
     road_merge_anchor_delta_m: float = Field(DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M, ge=0.05, le=50.0)
+    road_merge_max_anchor_offset_m: float = Field(DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M, ge=0.0, le=500.0)
     split_intersections: bool = False
     remove_redundant_chain_vertices: bool = False
     prune_chain_accum_angle_deg: float = Field(
