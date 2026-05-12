@@ -241,12 +241,13 @@ export function DebugSidebar({
                         step={0.5}
                         disabled={!graphOptions.snap_endpoints}
                         value={graphOptions.snap_epsilon_m}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const raw = parseFloat(e.target.value)
                           onGraphOptionsChange({
                             ...graphOptions,
-                            snap_epsilon_m: Number(e.target.value) || graphOptions.snap_epsilon_m,
+                            snap_epsilon_m: Number.isFinite(raw) ? raw : graphOptions.snap_epsilon_m,
                           })
-                        }
+                        }}
                         className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
                       />
                     </label>
@@ -264,45 +265,57 @@ export function DebugSidebar({
                     />
                   }
                   footer={
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-stone-600">
-                      <NumberOptionInput
-                        label="距離 m"
-                        disabled={!graphOptions.merge_duplicate_roads}
-                        value={graphOptions.road_merge_distance_m}
-                        min={0.5}
-                        max={100}
-                        step={0.5}
-                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_distance_m: v })}
-                      />
-                      <NumberOptionInput
-                        label="角度 °"
-                        disabled={!graphOptions.merge_duplicate_roads}
-                        value={graphOptions.road_merge_angle_deg}
-                        min={0.5}
-                        max={45}
-                        step={0.5}
-                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_angle_deg: v })}
-                      />
-                      <NumberOptionInput
-                        label="重なり m"
-                        disabled={!graphOptions.merge_duplicate_roads}
-                        value={graphOptions.road_merge_min_overlap_m}
-                        min={0}
-                        max={500}
-                        step={1}
-                        onChange={(v) => onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_m: v })}
-                      />
-                      <NumberOptionInput
-                        label="重なり率"
-                        disabled={!graphOptions.merge_duplicate_roads}
-                        value={graphOptions.road_merge_min_overlap_ratio}
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        onChange={(v) =>
-                          onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_ratio: v })
-                        }
-                      />
+                    <div className="mt-2 space-y-2 text-xs text-stone-600">
+                      <div className="grid grid-cols-2 gap-2">
+                        <NumberOptionInput
+                          label="最大横距離（基準）m"
+                          title="辺の弦同士の離れの上限の土台。適応を有効にすると並走が長いほどこの値から緩めた上限まで広がる"
+                          disabled={!graphOptions.merge_duplicate_roads}
+                          value={graphOptions.road_merge_distance_m}
+                          min={0.5}
+                          max={100}
+                          step={0.5}
+                          onChange={(v) =>
+                            onGraphOptionsChange({ ...graphOptions, road_merge_distance_m: v })
+                          }
+                        />
+                        <NumberOptionInput
+                          label="最大許容角度 °"
+                          title="弦同士の向きの差。この角度を超えるペアはマージ候補から除外"
+                          disabled={!graphOptions.merge_duplicate_roads}
+                          value={graphOptions.road_merge_angle_deg}
+                          min={0.5}
+                          max={45}
+                          step={0.5}
+                          onChange={(v) =>
+                            onGraphOptionsChange({ ...graphOptions, road_merge_angle_deg: v })
+                          }
+                        />
+                        <NumberOptionInput
+                          label="最小並走重なり m"
+                          title="一方の弦に他方を射影したときの重なり長さの下限（絶対値）。横距離とは独立"
+                          disabled={!graphOptions.merge_duplicate_roads}
+                          value={graphOptions.road_merge_min_overlap_m}
+                          min={0}
+                          max={500}
+                          step={1}
+                          onChange={(v) =>
+                            onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_m: v })
+                          }
+                        />
+                        <NumberOptionInput
+                          label="最小並走割合"
+                          title="短い辺の長さに対する重なり長の下限（0〜1）。重なりmと併せ max の効く"
+                          disabled={!graphOptions.merge_duplicate_roads}
+                          value={graphOptions.road_merge_min_overlap_ratio}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          onChange={(v) =>
+                            onGraphOptionsChange({ ...graphOptions, road_merge_min_overlap_ratio: v })
+                          }
+                        />
+                      </div>
                     </div>
                   }
                 />
@@ -339,13 +352,15 @@ export function DebugSidebar({
                         step={0.5}
                         disabled={!graphOptions.remove_redundant_chain_vertices}
                         value={graphOptions.prune_chain_accum_angle_deg}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const raw = parseFloat(e.target.value)
                           onGraphOptionsChange({
                             ...graphOptions,
-                            prune_chain_accum_angle_deg:
-                              Number(e.target.value) || graphOptions.prune_chain_accum_angle_deg,
+                            prune_chain_accum_angle_deg: Number.isFinite(raw)
+                              ? raw
+                              : graphOptions.prune_chain_accum_angle_deg,
                           })
-                        }
+                        }}
                         className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
                       />
                     </label>
@@ -482,6 +497,7 @@ function GraphOptionBlock({
 
 function NumberOptionInput({
   label,
+  title,
   disabled,
   value,
   min,
@@ -490,6 +506,7 @@ function NumberOptionInput({
   onChange,
 }: {
   label: string
+  title?: string
   disabled: boolean
   value: number
   min: number
@@ -497,8 +514,9 @@ function NumberOptionInput({
   step: number
   onChange: (value: number) => void
 }) {
+  const safe = Number.isFinite(value) ? value : 0
   return (
-    <label className="flex min-w-0 flex-col gap-1">
+    <label className="flex min-w-0 flex-col gap-1" title={title}>
       <span className="truncate text-[10px]">{label}</span>
       <input
         type="number"
@@ -506,8 +524,11 @@ function NumberOptionInput({
         max={max}
         step={step}
         disabled={disabled}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value) || value)}
+        value={safe}
+        onChange={(e) => {
+          const raw = parseFloat(e.target.value)
+          onChange(Number.isFinite(raw) ? raw : safe)
+        }}
         className="w-full rounded-lg border border-stone-200 bg-[#faf8f4] px-2 py-1 font-mono text-[13px] disabled:opacity-45"
       />
     </label>
@@ -568,12 +589,19 @@ function RoadMergeMetrics({
   return (
     <div className="space-y-1">
       <ul className="space-y-0.5 font-mono text-[11px] text-stone-600">
-        <li>マージ成分数: {d.merge_components ?? '—'}</li>
-        <li>適用バッチ: {d.merge_batches_applied ?? '—'}</li>
-        <li>スキップ成分: {d.skipped_merge_components ?? '—'}</li>
+        <li>畳み込み対象グループ数: {d.merge_components ?? '—'}</li>
+        <li>畳み込みで除いた辺: {d.source_edges_removed ?? '—'}</li>
+        <li>スキップしたグループ: {d.skipped_merge_components ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
         マップにはマージ適用<strong className="font-medium text-stone-700">後</strong>のグラフが表示されています。
+      </p>
+      <p className="text-[10px] leading-snug text-stone-500">
+        マップの
+        <strong className="font-medium" style={{ color: HIGHLIGHT_SYNTHETIC }}>
+          紫のノード
+        </strong>
+        が、代表線へ道路の接続を付け替えるときに追加した頂点です。
       </p>
     </div>
   )
@@ -640,11 +668,11 @@ function SplitMetrics({
         <li>追加した交点頂点: {d.new_vertices_from_split ?? '—'}</li>
       </ul>
       <p className="text-[10px] leading-snug text-stone-500">
-        交差分割で追加された頂点も synthetic のため、マップでは他と同様
+        マップの
         <strong className="font-medium" style={{ color: HIGHLIGHT_SYNTHETIC }}>
           紫のノード
         </strong>
-        で表示されます。
+        が、交差分割で追加された頂点です。
       </p>
     </div>
   )

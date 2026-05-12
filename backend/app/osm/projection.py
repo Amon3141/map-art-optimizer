@@ -1,4 +1,4 @@
-"""H0-a: local tangent plane at reference (lon0, lat0)."""
+"""local tangent plane at reference (lon0, lat0)."""
 
 from __future__ import annotations
 

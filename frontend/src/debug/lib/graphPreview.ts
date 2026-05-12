@@ -85,3 +85,10 @@ export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
     prune_chain_accum_angle_deg: 10,
   }
 }
+
+/** 欠けたキーを埋め、HMR 等で古い state でも API/入力が一貫するようにする */
+export function normalizeGraphBuildOptions(
+  options: Partial<GraphBuildOptionsPayload>,
+): GraphBuildOptionsPayload {
+  return { ...defaultGraphBuildOptions(), ...options }
+}

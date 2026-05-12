@@ -1,8 +1,17 @@
 """Graph build metrics and node visualization metadata."""
 
+import time
+
 import math
 
-from app.osm.graph_build import GraphBuildOptions, build_graph_from_geojson, graph_to_geojson_fc
+from app.osm.graph_build import (
+    GraphBuildOptions,
+    apply_all_graph_build_options,
+    build_graph_from_geojson,
+    build_native_graph,
+    graph_to_geojson_fc,
+    parse_way_features,
+)
 from app.osm.projection import EARTH_RADIUS_M, xy_m_to_lon_lat
 
 
@@ -571,3 +580,71 @@ def test_road_merge_effective_max_anchor_uses_auto_when_zero():
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("source_edges_removed", 0) >= 1
     assert rm.get("max_anchor_offset_m", 0) >= 50.0
+
+
+def test_apply_all_graph_build_options_matches_build_graph_steps():
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [[0, 0], [0.001, 0], [0.002, 0]]},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": [10, 11, 12]},
+            }
+        ],
+    }
+    lon0, lat0 = 0.001, 0.0
+    ways = parse_way_features(fc)
+
+    def proj(lon: float, lat: float) -> tuple[float, float]:
+        from app.osm.projection import lon_lat_to_xy_m
+
+        return lon_lat_to_xy_m(lon0, lat0, lon, lat)
+
+    g1 = build_native_graph(ways, proj)
+    g2 = build_native_graph(ways, proj)
+    opts = GraphBuildOptions(
+        connect_osm_node_ids=True,
+        snap_endpoints=True,
+        snap_epsilon_m=2.0,
+        merge_duplicate_roads=False,
+        split_intersections=True,
+        remove_redundant_chain_vertices=True,
+    )
+    m1 = apply_all_graph_build_options(g1, opts)
+    r2 = build_graph_from_geojson(fc, lon0, lat0, opts)
+    assert m1.keys() == r2.step_metrics.keys()
+    assert len(g1.nodes) == len(r2.graph.nodes)
+    assert len(g1.edges) == len(r2.graph.edges)
+
+
+def test_graph_build_full_options_time_budget_on_long_chain():
+    """~4k 頂点・全オプション ON で数秒以内（性能退行のガード）。"""
+    lon0, lat0 = 139.0, 36.0
+    n_pts = 4001
+    coords = [[lon, lat] for lon, lat in (xy_m_to_lon_lat(lon0, lat0, i * 1.0, 0.0) for i in range(n_pts))]
+    nids = list(range(700_000, 700_000 + n_pts))
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {"osm_way_id": 1, "highway": "residential", "osm_node_ids": nids},
+            }
+        ],
+    }
+    opts = GraphBuildOptions(
+        connect_osm_node_ids=True,
+        snap_endpoints=True,
+        snap_epsilon_m=2.0,
+        merge_duplicate_roads=True,
+        split_intersections=True,
+        remove_redundant_chain_vertices=True,
+    )
+    t0 = time.perf_counter()
+    r = build_graph_from_geojson(fc, lon0, lat0, opts)
+    elapsed = time.perf_counter() - t0
+    assert r.stats["way_input_count"] == 1
+    assert r.stats["node_count"] >= 2
+    assert elapsed < 20.0, f"graph build too slow: {elapsed:.2f}s, step_metrics={r.step_metrics}"

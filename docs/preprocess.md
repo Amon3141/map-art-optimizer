@@ -85,7 +85,7 @@ OSM では、十字のように交わる縦道 `A–B` と横道 `C–D` が、*
 - セグメント–セグメントの交差判定、**ほぼ平行・近接のみ**の誤検出除外。
 - **端点一致**（id マージや距離スナップ）で既にトポロジが閉じている場合との **統合順序**（split 前後どちらで id マージするか等）。
 
-**実装済み（デバッグ用）**: bbox・辺数が大きい場合の交差候補絞り込みとして、`app/osm/graph_build.py` に **Shapely STRtree（セグメント bbox の重なりで候補列挙）** を入れた（詳細は §6.1）。
+**実装済み（デバッグ用）**: bbox・辺数が大きい場合の交差候補絞り込みとして、`app/osm/graph_build/`（Python パッケージ）内の **Shapely STRtree（セグメント bbox の重なりで候補列挙）** を入れた（詳細は §6.1）。
 
 ### B4 — 不要な中間ノード削除（オプション・グラフ構築の最終段）
 
@@ -163,11 +163,11 @@ OSM では同じ道路・近い車線・部分的に重なる way が複数定�
 | **R-tree（Shapely STRtree）** | 辺密度が不均一でもクエリが安定しやすい。 | ライブラリ依存・構築オーバーヘッド。                      |
 
 
-**意思決定**: **本リポジトリのバックエンド（`graph_build.py`）では STRtree を採用**する（`shapely` / `numpy` を `requirements.txt` に固定）。
+**意思決定**: **本リポジトリのバックエンド（`app/osm/graph_build/` パッケージ）では STRtree を採用**する（`shapely` / `numpy` を `requirements.txt` に固定）。
 
 **bbox クリップ**: Overpass で取得した **探索 bbox 外**の辺は、索引に入れないか、クエリ対象から外す。メモリと索引サイズを抑える。
 
-### 6.1 実装メモ（デバッグ用グラフ構築 `app/osm/graph_build.py`）
+### 6.1 実装メモ（デバッグ用グラフ構築 `app/osm/graph_build/`）
 
 FastAPI の **`/api/debug/graph-preview`** から呼ばれる、OSM GeoJSON → 平面グラフ → 可視化用 GeoJSON までのパイプラインにおいて、**H0-e に沿った Shapely STRtree** を用い、大きな way 数でも素朴な全対全にならないようにしている。
 
@@ -213,5 +213,6 @@ H0 は **2 秒優先・最大約 10 秒**の最適化全体バジェットのう
 | 2026-05-09 | §6.1 ε スナップを **端点を含むペアかつ同一辺の両端ではない**場合に限定する仕様を追記（実装と整合）。 |
 | 2026-05-09 | B5 **重複・並行道路マージ**を追加。`node id merge -> epsilon snap -> road merge -> intersection split -> chain prune` の順序を追記。 |
 | 2026-05-11 | B5 / §6.1 を **辺–辺候補 + union-find + 成分ごとの代表 way チェーン**への実装に整合。 |
+| 2026-05-12 | グラフ構築コードを **`app/osm/graph_build/` パッケージ**へ整理（`pipeline.py`・ステップ別モジュール・`helpers.py` に共用のみ）。 |
 
 

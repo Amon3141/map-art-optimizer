@@ -5,6 +5,7 @@ import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugM
 import { fitMapToLineString } from '../debug/lib/fitMapToWay'
 import {
   defaultGraphBuildOptions,
+  normalizeGraphBuildOptions,
   type GraphBuildOptionsPayload,
   type GraphPreviewResponse,
 } from '../debug/lib/graphPreview'
@@ -35,6 +36,11 @@ export function DebugPage() {
   const [graphOptions, setGraphOptions] = useState<GraphBuildOptionsPayload>(() =>
     defaultGraphBuildOptions(),
   )
+  const graphOptionsNormalized = useMemo(() => normalizeGraphBuildOptions(graphOptions), [graphOptions])
+
+  const setGraphOptionsNormalized = useCallback((next: GraphBuildOptionsPayload) => {
+    setGraphOptions(normalizeGraphBuildOptions(next))
+  }, [])
   const [graphPreview, setGraphPreview] = useState<GraphPreviewResponse | null>(null)
   const [graphLoading, setGraphLoading] = useState(false)
   const [graphError, setGraphError] = useState<string | null>(null)
@@ -86,7 +92,7 @@ export function DebugPage() {
             max_lon: b.getEast(),
             max_lat: b.getNorth(),
           },
-          options: graphOptions,
+          options: normalizeGraphBuildOptions(graphOptions),
         }
         const res = await fetch(apiUrl('/api/debug/graph-preview'), {
           method: 'POST',
@@ -200,8 +206,8 @@ export function DebugPage() {
         onFetchWays={fetchWays}
         mapViewMode={mapViewMode}
         onMapViewModeChange={setMapViewMode}
-        graphOptions={graphOptions}
-        onGraphOptionsChange={setGraphOptions}
+        graphOptions={graphOptionsNormalized}
+        onGraphOptionsChange={setGraphOptionsNormalized}
         graphLoading={graphLoading}
         graphError={graphError}
         graphPreview={graphPreview}
