@@ -43,8 +43,12 @@ class _UndirectedEdgeIndex:
         lst = self.uv_eids.get(k)
         if not lst:
             return
-        self.uv_eids[k] = [x for x in lst if x != eid]
-        if not self.uv_eids[k]:
+        for idx, x in enumerate(lst):
+            if x == eid:
+                lst[idx] = lst[-1]
+                lst.pop()
+                break
+        if not lst:
             del self.uv_eids[k]
 
     def register_new_edge(self, eid: str, e: InternalEdge) -> None:
@@ -269,11 +273,16 @@ def _prune_apply_order(
     return removed
 
 
-def _prune_remove_edges_with_missing_endpoints(graph: RoadGraph) -> int:
+def _prune_remove_edges_with_missing_endpoints(
+    graph: RoadGraph, uv_index: _UndirectedEdgeIndex | None = None
+) -> int:
     """削除済み頂点を参照している辺を除去。削除した本数を返す。"""
     bad = [eid for eid, e in graph.edges.items() if e.u not in graph.nodes or e.v not in graph.nodes]
     for eid in bad:
-        del graph.edges[eid]
+        e = graph.edges.get(eid)
+        if e is not None and uv_index is not None:
+            uv_index.unregister_edge(e, eid)
+        graph.edges.pop(eid, None)
     return len(bad)
 
 
@@ -286,6 +295,7 @@ def prune_redundant_chain_vertices(
     vertices_removed = 0
     eid_counter = [0]
     blocked: set[str] = set()
+    uv_index = _UndirectedEdgeIndex(graph)
 
     while True:
         inc = _incident_edges_by_node(graph)
@@ -313,11 +323,10 @@ def prune_redundant_chain_vertices(
             blocked |= comp
             continue
 
-        uv_index = _UndirectedEdgeIndex(graph)
         vertices_removed += _prune_apply_order(graph, order, keep_ix, eligible, eid_counter, uv_index)
-        _prune_remove_edges_with_missing_endpoints(graph)
+        _prune_remove_edges_with_missing_endpoints(graph, uv_index)
 
-    _prune_remove_edges_with_missing_endpoints(graph)
+    _prune_remove_edges_with_missing_endpoints(graph, uv_index)
 
     th_deg = round(accum_threshold_deg, 9)
     return {

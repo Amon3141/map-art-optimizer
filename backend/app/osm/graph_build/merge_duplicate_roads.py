@@ -85,6 +85,21 @@ def _point_segment_distance(
     return _dist(q, p)
 
 
+def _segment_segment_distance_m(
+    a0: tuple[float, float],
+    a1: tuple[float, float],
+    b0: tuple[float, float],
+    b1: tuple[float, float],
+) -> float:
+    """2D 線分同士の最短距離（平面では端点–相手線分の min で十分）。"""
+    return min(
+        _point_segment_distance(a0, b0, b1),
+        _point_segment_distance(a1, b0, b1),
+        _point_segment_distance(b0, a0, a1),
+        _point_segment_distance(b1, a0, a1),
+    )
+
+
 def _acute_angle_deg_between_edge_chords(graph: RoadGraph, e1: InternalEdge, e2: InternalEdge) -> float | None:
     """Chord u–v 同士の鋭角（度）。union ゲート用（角度緩和なし）。"""
     a0, a1 = _edge_endpoints_xy(graph, e1)
@@ -140,7 +155,7 @@ def _road_merge_pair_metric(
     lb = math.hypot(bx, by)
     if la < 1e-6 or lb < 1e-6:
         return None
-    distance_m = LineString([a0, a1]).distance(LineString([b0, b1]))
+    distance_m = _segment_segment_distance_m(a0, a1, b0, b1)
     if distance_m > max_distance_m:
         return None
     overlap_ab = _parallel_overlap_m(a0, a1, b0, b1)
@@ -238,67 +253,14 @@ class _RoadMergeUnionFind:
         return True
 
 
-def _road_merge_eligible_way_key_pairs(
+def _road_merge_way_ok_from_grouped(
     graph: RoadGraph,
-    max_distance_m: float,
-    max_angle_deg: float,
+    grouped: dict[tuple[str, str], dict[str, float]],
     min_overlap_m: float,
     min_overlap_ratio: float,
+    max_angle_deg: float,
 ) -> set[tuple[str, str]]:
-    """Key pairs whose aggregated parallel overlap passes thresholds (short segments need this)."""
-    edge_ids = sorted(graph.edges)
-    geoms: list[LineString] = []
-    refs: list[str] = []
-    for eid in edge_ids:
-        e = graph.edges[eid]
-        a, b = _edge_endpoints_xy(graph, e)
-        if _dist(a, b) < 1e-6:
-            continue
-        geoms.append(LineString([a, b]))
-        refs.append(eid)
-    if len(geoms) < 2:
-        return set()
-    tree = STRtree(geoms)
-    raw = tree.query(np.asarray(geoms, dtype=object), predicate="dwithin", distance=max_distance_m)
-    seen: set[tuple[str, str]] = set()
-    grouped: dict[tuple[str, str], dict[str, float]] = {}
-    if raw.ndim == 2 and raw.shape[0] == 2:
-        for k in range(raw.shape[1]):
-            i, j = int(raw[0, k]), int(raw[1, k])
-            if i >= j:
-                continue
-            e1_id, e2_id = refs[i], refs[j]
-            key = (e1_id, e2_id) if e1_id < e2_id else (e2_id, e1_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            e1 = graph.edges.get(e1_id)
-            e2 = graph.edges.get(e2_id)
-            if e1 is None or e2 is None:
-                continue
-            k1 = _road_merge_key(e1)
-            k2 = _road_merge_key(e2)
-            if k1 == k2:
-                continue
-            metric = _road_merge_pair_metric(
-                graph, e1, e2, max_distance_m, max_angle_deg, 0.0, 0.0, angle_relax=False
-            )
-            if metric is None:
-                continue
-            gkey = (k1, k2) if k1 < k2 else (k2, k1)
-            agg = grouped.setdefault(
-                gkey,
-                {
-                    "score": 0.0,
-                    "distance_m": metric.distance_m,
-                    "angle_deg": 0.0,
-                    "overlap_m": 0.0,
-                },
-            )
-            agg["score"] += metric.score
-            agg["distance_m"] = min(agg["distance_m"], metric.distance_m)
-            agg["angle_deg"] = max(agg["angle_deg"], metric.angle_deg)
-            agg["overlap_m"] += metric.overlap_m
+    """集約メトリクスから OSM way ペアが corridor として許容されるか。"""
     out: set[tuple[str, str]] = set()
     len_by_key: dict[str, float] = {}
     for e in graph.edges.values():
@@ -329,13 +291,6 @@ def _road_merge_edge_pair_candidates(
     Pairs that fail per-segment overlap thresholds can still be kept when their OSM-way
     aggregate overlap passes (short native segments vs. long corridor).
     """
-    way_ok = _road_merge_eligible_way_key_pairs(
-        graph,
-        max_distance_m=max_distance_m,
-        max_angle_deg=max_angle_deg,
-        min_overlap_m=min_overlap_m,
-        min_overlap_ratio=min_overlap_ratio,
-    )
     edge_ids = sorted(graph.edges)
     geoms: list[LineString] = []
     refs: list[str] = []
@@ -350,6 +305,51 @@ def _road_merge_edge_pair_candidates(
         return []
     tree = STRtree(geoms)
     raw = tree.query(np.asarray(geoms, dtype=object), predicate="dwithin", distance=max_distance_m)
+
+    grouped: dict[tuple[str, str], dict[str, float]] = {}
+    seen_way: set[tuple[str, str]] = set()
+    if raw.ndim == 2 and raw.shape[0] == 2:
+        for k in range(raw.shape[1]):
+            i, j = int(raw[0, k]), int(raw[1, k])
+            if i >= j:
+                continue
+            e1_id, e2_id = refs[i], refs[j]
+            key = (e1_id, e2_id) if e1_id < e2_id else (e2_id, e1_id)
+            if key in seen_way:
+                continue
+            seen_way.add(key)
+            e1 = graph.edges.get(e1_id)
+            e2 = graph.edges.get(e2_id)
+            if e1 is None or e2 is None:
+                continue
+            k1 = _road_merge_key(e1)
+            k2 = _road_merge_key(e2)
+            if k1 == k2:
+                continue
+            metric = _road_merge_pair_metric(
+                graph, e1, e2, max_distance_m, max_angle_deg, 0.0, 0.0, angle_relax=False
+            )
+            if metric is None:
+                continue
+            gkey = (k1, k2) if k1 < k2 else (k2, k1)
+            agg = grouped.setdefault(
+                gkey,
+                {
+                    "score": 0.0,
+                    "distance_m": metric.distance_m,
+                    "angle_deg": 0.0,
+                    "overlap_m": 0.0,
+                },
+            )
+            agg["score"] += metric.score
+            agg["distance_m"] = min(agg["distance_m"], metric.distance_m)
+            agg["angle_deg"] = max(agg["angle_deg"], metric.angle_deg)
+            agg["overlap_m"] += metric.overlap_m
+
+    way_ok = _road_merge_way_ok_from_grouped(
+        graph, grouped, min_overlap_m, min_overlap_ratio, max_angle_deg
+    )
+
     seen: set[tuple[str, str]] = set()
     best_by_pair: dict[tuple[str, str], _RoadMergeCandidate] = {}
     if raw.ndim == 2 and raw.shape[0] == 2:
