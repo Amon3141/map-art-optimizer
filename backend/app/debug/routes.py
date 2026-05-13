@@ -6,13 +6,19 @@ from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
 from ..osm.graph_build import (
+    DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
+    DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED,
     DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
+    DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED,
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
     DEFAULT_ROAD_MERGE_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_DISTANCE_M,
     DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+    DEFAULT_SNAP_ENDPOINTS_ENABLED,
+    DEFAULT_SNAP_EPSILON_M,
+    DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
     GraphBuildOptions,
     build_graph_from_geojson,
     graph_to_geojson_fc,
@@ -35,18 +41,18 @@ class BBoxBody(BaseModel):
 
 
 class GraphBuildOptionsBody(BaseModel):
-    connect_osm_node_ids: bool = False
-    snap_endpoints: bool = False
-    snap_epsilon_m: float = Field(3.0, ge=0.05, le=500.0)
-    merge_duplicate_roads: bool = False
+    connect_osm_node_ids_enabled: bool = DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED
+    snap_endpoints_enabled: bool = DEFAULT_SNAP_ENDPOINTS_ENABLED
+    snap_epsilon_m: float = Field(DEFAULT_SNAP_EPSILON_M, ge=0.05, le=500.0)
+    merge_duplicate_roads_enabled: bool = DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED
     road_merge_distance_m: float = Field(DEFAULT_ROAD_MERGE_DISTANCE_M, ge=0.5, le=100.0)
     road_merge_angle_deg: float = Field(DEFAULT_ROAD_MERGE_ANGLE_DEG, ge=0.5, le=45.0)
     road_merge_min_overlap_m: float = Field(DEFAULT_ROAD_MERGE_MIN_OVERLAP_M, ge=0.0, le=500.0)
     road_merge_min_overlap_ratio: float = Field(DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO, ge=0.0, le=1.0)
     road_merge_anchor_delta_m: float = Field(DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M, ge=0.05, le=50.0)
     road_merge_max_anchor_offset_m: float = Field(DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M, ge=0.0, le=500.0)
-    split_intersections: bool = False
-    remove_redundant_chain_vertices: bool = False
+    split_intersections_enabled: bool = DEFAULT_SPLIT_INTERSECTIONS_ENABLED
+    remove_redundant_chain_vertices_enabled: bool = DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED
     prune_chain_accum_angle_deg: float = Field(
         DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
         ge=0.5,

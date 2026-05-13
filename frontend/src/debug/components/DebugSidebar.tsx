@@ -210,8 +210,8 @@ export function DebugSidebar({
               <ul className="flex flex-col gap-3 text-sm text-stone-800">
                 <GraphOptionBlock
                   title="同じ OSM node id の頂点をつなぐ"
-                  checked={graphOptions.connect_osm_node_ids}
-                  onToggle={(c) => toggleOpt('connect_osm_node_ids', c)}
+                  checked={graphOptions.connect_osm_node_ids_enabled}
+                  onToggle={(c) => toggleOpt('connect_osm_node_ids_enabled', c)}
                   result={
                     <ConnectOsmMetrics
                       m={graphPreview?.step_metrics}
@@ -222,8 +222,8 @@ export function DebugSidebar({
                 />
                 <GraphOptionBlock
                   title="距離が近い頂点をまとめる"
-                  checked={graphOptions.snap_endpoints}
-                  onToggle={(c) => toggleOpt('snap_endpoints', c)}
+                  checked={graphOptions.snap_endpoints_enabled}
+                  onToggle={(c) => toggleOpt('snap_endpoints_enabled', c)}
                   result={
                     <SnapMetrics
                       m={graphPreview?.step_metrics}
@@ -239,7 +239,7 @@ export function DebugSidebar({
                         min={0.05}
                         max={500}
                         step={0.5}
-                        disabled={!graphOptions.snap_endpoints}
+                        disabled={!graphOptions.snap_endpoints_enabled}
                         value={graphOptions.snap_epsilon_m}
                         onChange={(e) => {
                           const raw = parseFloat(e.target.value)
@@ -255,8 +255,8 @@ export function DebugSidebar({
                 />
                 <GraphOptionBlock
                   title="重複・並行道路を代表線へマージ"
-                  checked={graphOptions.merge_duplicate_roads}
-                  onToggle={(c) => toggleOpt('merge_duplicate_roads', c)}
+                  checked={graphOptions.merge_duplicate_roads_enabled}
+                  onToggle={(c) => toggleOpt('merge_duplicate_roads_enabled', c)}
                   result={
                     <RoadMergeMetrics
                       m={graphPreview?.step_metrics}
@@ -270,7 +270,7 @@ export function DebugSidebar({
                         <NumberOptionInput
                           label="最大横距離（基準）m"
                           title="辺の弦同士の離れの上限の土台。適応を有効にすると並走が長いほどこの値から緩めた上限まで広がる"
-                          disabled={!graphOptions.merge_duplicate_roads}
+                          disabled={!graphOptions.merge_duplicate_roads_enabled}
                           value={graphOptions.road_merge_distance_m}
                           min={0.5}
                           max={100}
@@ -282,7 +282,7 @@ export function DebugSidebar({
                         <NumberOptionInput
                           label="最大許容角度 °"
                           title="弦同士の向きの差。この角度を超えるペアはマージ候補から除外"
-                          disabled={!graphOptions.merge_duplicate_roads}
+                          disabled={!graphOptions.merge_duplicate_roads_enabled}
                           value={graphOptions.road_merge_angle_deg}
                           min={0.5}
                           max={45}
@@ -294,7 +294,7 @@ export function DebugSidebar({
                         <NumberOptionInput
                           label="最小並走重なり m"
                           title="一方の弦に他方を射影したときの重なり長さの下限（絶対値）。横距離とは独立"
-                          disabled={!graphOptions.merge_duplicate_roads}
+                          disabled={!graphOptions.merge_duplicate_roads_enabled}
                           value={graphOptions.road_merge_min_overlap_m}
                           min={0}
                           max={500}
@@ -306,7 +306,7 @@ export function DebugSidebar({
                         <NumberOptionInput
                           label="最小並走割合"
                           title="短い辺の長さに対する重なり長の下限（0〜1）。重なりmと併せ max の効く"
-                          disabled={!graphOptions.merge_duplicate_roads}
+                          disabled={!graphOptions.merge_duplicate_roads_enabled}
                           value={graphOptions.road_merge_min_overlap_ratio}
                           min={0}
                           max={1}
@@ -321,8 +321,8 @@ export function DebugSidebar({
                 />
                 <GraphOptionBlock
                   title="道路の交差で線を分割する"
-                  checked={graphOptions.split_intersections}
-                  onToggle={(c) => toggleOpt('split_intersections', c)}
+                  checked={graphOptions.split_intersections_enabled}
+                  onToggle={(c) => toggleOpt('split_intersections_enabled', c)}
                   result={
                     <SplitMetrics
                       m={graphPreview?.step_metrics}
@@ -333,8 +333,8 @@ export function DebugSidebar({
                 />
                 <GraphOptionBlock
                   title="不要な中間ノードを削除"
-                  checked={graphOptions.remove_redundant_chain_vertices}
-                  onToggle={(c) => toggleOpt('remove_redundant_chain_vertices', c)}
+                  checked={graphOptions.remove_redundant_chain_vertices_enabled}
+                  onToggle={(c) => toggleOpt('remove_redundant_chain_vertices_enabled', c)}
                   result={
                     <PruneChainsMetrics
                       m={graphPreview?.step_metrics}
@@ -350,7 +350,7 @@ export function DebugSidebar({
                         min={0.5}
                         max={179}
                         step={0.5}
-                        disabled={!graphOptions.remove_redundant_chain_vertices}
+                        disabled={!graphOptions.remove_redundant_chain_vertices_enabled}
                         value={graphOptions.prune_chain_accum_angle_deg}
                         onChange={(e) => {
                           const raw = parseFloat(e.target.value)

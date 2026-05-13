@@ -1,16 +1,16 @@
 export type GraphBuildOptionsPayload = {
-  connect_osm_node_ids: boolean
-  snap_endpoints: boolean
+  connect_osm_node_ids_enabled: boolean
+  snap_endpoints_enabled: boolean
   snap_epsilon_m: number
-  merge_duplicate_roads: boolean
+  merge_duplicate_roads_enabled: boolean
   road_merge_distance_m: number
   road_merge_angle_deg: number
   road_merge_min_overlap_m: number
   road_merge_min_overlap_ratio: number
   road_merge_anchor_delta_m: number
   road_merge_max_anchor_offset_m: number
-  split_intersections: boolean
-  remove_redundant_chain_vertices: boolean
+  split_intersections_enabled: boolean
+  remove_redundant_chain_vertices_enabled: boolean
   prune_chain_accum_angle_deg: number
 }
 
@@ -71,25 +71,45 @@ export type GraphPreviewResponse = {
 /** 既定値は `backend/app/osm/graph_build/defaults.py` と揃えること */
 export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
   return {
-    connect_osm_node_ids: false,
-    snap_endpoints: false,
+    connect_osm_node_ids_enabled: true,
+    snap_endpoints_enabled: false,
     snap_epsilon_m: 3,
-    merge_duplicate_roads: false,
+    merge_duplicate_roads_enabled: true,
     road_merge_distance_m: 20,
     road_merge_angle_deg: 22,
     road_merge_min_overlap_m: 100,
     road_merge_min_overlap_ratio: 0.25,
     road_merge_anchor_delta_m: 2,
     road_merge_max_anchor_offset_m: 0,
-    split_intersections: false,
-    remove_redundant_chain_vertices: false,
+    split_intersections_enabled: false,
+    remove_redundant_chain_vertices_enabled: true,
     prune_chain_accum_angle_deg: 10,
   }
 }
 
+const LEGACY_OPTION_KEYS: Record<string, keyof GraphBuildOptionsPayload> = {
+  connect_osm_node_ids: 'connect_osm_node_ids_enabled',
+  snap_endpoints: 'snap_endpoints_enabled',
+  merge_duplicate_roads: 'merge_duplicate_roads_enabled',
+  split_intersections: 'split_intersections_enabled',
+  remove_redundant_chain_vertices: 'remove_redundant_chain_vertices_enabled',
+}
+
+function _applyLegacyGraphOptionAliases(raw: Record<string, unknown>): Record<string, unknown> {
+  const o = { ...raw }
+  for (const [legacy, canonical] of Object.entries(LEGACY_OPTION_KEYS)) {
+    if (legacy in o && !(canonical in o) && typeof o[legacy] === 'boolean') {
+      o[canonical] = o[legacy]
+    }
+    delete o[legacy]
+  }
+  return o
+}
+
 /** 欠けたキーを埋め、HMR 等で古い state でも API/入力が一貫するようにする */
 export function normalizeGraphBuildOptions(
-  options: Partial<GraphBuildOptionsPayload>,
+  options: Partial<GraphBuildOptionsPayload> & Record<string, unknown>,
 ): GraphBuildOptionsPayload {
-  return { ...defaultGraphBuildOptions(), ...options }
+  const coerced = _applyLegacyGraphOptionAliases({ ...options })
+  return { ...defaultGraphBuildOptions(), ...coerced } as GraphBuildOptionsPayload
 }

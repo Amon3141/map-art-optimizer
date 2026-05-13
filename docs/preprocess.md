@@ -87,11 +87,11 @@ OSM では、十字のように交わる縦道 `A–B` と横道 `C–D` が、*
 
 **実装済み（デバッグ用）**: bbox・辺数が大きい場合の交差候補絞り込みとして、`app/osm/graph_build/`（Python パッケージ）内の **Shapely STRtree（セグメント bbox の重なりで候補列挙）** を入れた（詳細は §6.1）。
 
-**製品既定の見込み（`GraphBuildOptions`）**: スピードと効果のバランスから、実験用の 5 ステップのうち **既定で ON にするのは `connect_osm_node_ids` と `remove_redundant_chain_vertices`（prune）だけ**、それ以外（ε スナップ・道路マージ・交差 split）は OFF に寄せる想定である（API／UI の最終既定は別途確定）。
+**製品既定の見込み（`GraphBuildOptions`）**: スピードと効果のバランスから、実験用の 5 ステップのうち **既定で ON にするのは `connect_osm_node_ids_enabled`、`merge_duplicate_roads_enabled`、`remove_redundant_chain_vertices_enabled`（prune）の三つ**、**ε スナップ（`snap_endpoints_enabled`）と交差 split（`split_intersections_enabled`）は OFF** に寄せる想定である（API／UI の最終既定は別途確定）。
 
 ### B4 — 不要な中間ノード削除（オプション・グラフ構築の最終段）
 
-実験の結果、way 入力段階での「重複・冗長ジオメトリ除去」は採用しない。代わりに、**平面グラフができたあと**（OSM id マージ・交差 split・ε スナップの **すべてのオプション適用の後**）にのみ、次の **次数 2 チェーン簡略化**をオプションで実行する（`remove_redundant_chain_vertices`）。
+実験の結果、way 入力段階での「重複・冗長ジオメトリ除去」は採用しない。代わりに、**平面グラフができたあと**（OSM id マージ・交差 split・ε スナップの **すべてのオプション適用の後**）にのみ、次の **次数 2 チェーン簡略化**をオプションで実行する（`remove_redundant_chain_vertices_enabled`）。
 
 - **削除しない**: `source_osm_node_ids` が空の **synthetic** 頂点、`merged_from_osm_id` または `merged_from_snap` が真の頂点（id／ε 結合点）、`is_way_polyline_endpoint` が真の頂点、次数 ≠ 2 の頂点。
 - **削除候補**: 上記以外で次数 2 かつ入射 2 辺の **`osm_way_id` が同一**の頂点に限る。
@@ -175,15 +175,15 @@ OSM では同じ道路・近い車線・部分的に重なる way が複数定�
 
 FastAPI の **`/api/debug/graph-preview`** から呼ばれる、OSM GeoJSON → 平面グラフ → 可視化用 GeoJSON までのパイプラインにおいて、**ε スナップ・交差 split・重複道路マージ**の各オプションが ON のときに **Shapely STRtree** で候補絞り込みを行い、大きな way 数でも素朴な全対全にならないようにしている。**OSM id マージ**と **chain prune** は STRtree を使わない（下表）。
 
-**`pipeline.py`（`apply_all_graph_build_options`）**: 5 ステップ（OSM id マージ・ε スナップ・road merge・交差 split・prune）は **いずれも該当オプションが ON のときだけ**対応モジュールを import する。`connect_osm_node_ids` と `remove_redundant_chain_vertices` のみ ON のときは、**このパイプライン経路では Shapely モジュールを読み込まない**（他モジュールが先に `shapely` を import していれば別）。
+**`pipeline.py`（`apply_all_graph_build_options`）**: 5 ステップは **該当オプションが ON のときだけ**対応モジュールを import する。**既定の `defaults.py` では `merge_duplicate_roads_enabled` も ON** のため、デバッグのグラフ構築では **road merge が STRtree（Shapely）を構築・使用**する。Shapely をこのパイプライン呼び出しで使わないようにするには、`merge_duplicate_roads_enabled` と `snap_endpoints_enabled` と `split_intersections_enabled` をすべて OFF にする（例: OSM マージ + prune のみの実験）。他モジュールが先に `shapely` を import していれば別。
 
 | 処理 | 要点 |
 | --- | --- |
-| **ε スナップ**（距離が近い頂点をまとめる・UI 表記はそのまま） | 各頂点を **Point** として STRtree に登録し、`dwithin(ε)` で近傍候補を列挙。**`oid > nid`** のときだけ union-find を検討（重複ペア回避）。**結合するのは次を両立するときのみ**: (1) 二点が **どちらか一方でも OSM 折れ線の端点**である、(2) 二点が **同一グラフ辺の両端ではない**（隣接セグメントの端点同士・同一直線上の近接のみを除外）。中間頂点同士は結合しない。更新は **OSM id マージと同型**：成分ごとに代表頂点・属性集約を決め、`rem` で端点を **一括 remap** し、**辺集合は 1 回スキャン**。空間索引まわりの計算量はおおよそ **O(n log n)** とクエリ **O(log n + k)**（k = ε 内の近傍点数）、グラフ側は **O(n + E)**。 |
-| **交差 split** | 全エッジの折れ線をセグメントに分解し、各セグメントを **LineString** として STRtree に登録。**軸平行 bbox の重なり**（木の既定クエリ）で候補ペアを列挙し、`edge_id` の sort rank と `(e1,s1,e2,s2)` で安定ソートしたうえで、厳密な内部交差は既存の `segment_intersection_interior`。交点が見つかるたびにグラフが更新されるため、索引は **反復ごとに再構築**。セグメント数 S に対し構築はおおよそ **O(S log S)**（実測では way 数・セグメント数が多い bbox でもセル幅チューニングなしでスケール）。 |
-| **OSM node id マージ** | 同一 OSM id にぶら下がるグラフ頂点を **union-find で連結成分化**し、代表頂点（id の辞書順最小等）と属性集約を決めたうえで、**辺集合を 1 回スキャン**して端点を remap（逐次の全辺 dict 再構築ループは廃止）。`step_metrics.connect_osm.osm_id_groups_merged` は **初期グラフで「2 つ以上の頂点に現れた OSM id」の個数**。**Shapely 不使用**。 |
-| **重複・並行道路マージ**（オプション） | `merge_duplicate_roads` が ON のとき、OSM id マージと ε スナップの後、交差 split の前に実行。STRtree で近接・並行な **辺–辺**ペアを列挙し、way 単位の重なり長が閾値を満たすペアは短いセグメント同士も候補に残す。共有ノードで交角が大きいペアは除外したうえで **union-find** で成分化し、成分ごとに代表 OSM way 側のチェーンへ他 way の辺を畳み込む。削除側の外部 incident edge は代表線上の既存 node または `road_merge` synthetic anchor へ remap する。 |
-| **不要な中間ノード削除**（オプション） | `remove_redundant_chain_vertices` が ON のとき、road merge と交差 split の **後**に実行。次数 2・同一 `osm_way_id`・保護なしのチェーンを列挙し、**符号付き折れ角の累積の絶対値**が約 10°（既定）を超えた頂点を残して辺をマージ（超過分は符号付きモジュロでリセット）。マージ後の各辺のジオメトリは **残した両端点の弦（polyline 2 点）** とし、同一 uv の重複辺はまとめて削除する。`/api/debug/graph-preview` の GeoJSON は **簡略化後の頂点・辺のみ**を返す。**Shapely／STRtree は使わない**（無向 `{u,v}` キーへの辺 id リストと入射リストの増分更新、`eligible_nodes` で候補のみ再評価。終了時に壊れ辺除去で全辺を 1 回スキャン）。 |
+| **ε スナップ**（距離が近い頂点をまとめる・UI 表記はそのまま） | `snap_endpoints_enabled` が ON のとき、各頂点を **Point** として STRtree に登録し、`dwithin(ε)` で近傍候補を列挙。**`oid > nid`** のときだけ union-find を検討（重複ペア回避）。**結合するのは次を両立するときのみ**: (1) 二点が **どちらか一方でも OSM 折れ線の端点**である、(2) 二点が **同一グラフ辺の両端ではない**（隣接セグメントの端点同士・同一直線上の近接のみを除外）。中間頂点同士は結合しない。更新は **OSM id マージと同型**：成分ごとに代表頂点・属性集約を決め、`rem` で端点を **一括 remap** し、**辺集合は 1 回スキャン**。空間索引まわりの計算量はおおよそ **O(n log n)** とクエリ **O(log n + k)**（k = ε 内の近傍点数）、グラフ側は **O(n + E)**。 |
+| **交差 split** | `split_intersections_enabled` が ON のとき、全エッジの折れ線をセグメントに分解し、各セグメントを **LineString** として STRtree に登録。**軸平行 bbox の重なり**（木の既定クエリ）で候補ペアを列挙し、`edge_id` の sort rank と `(e1,s1,e2,s2)` で安定ソートしたうえで、厳密な内部交差は既存の `segment_intersection_interior`。交点が見つかるたびにグラフが更新されるため、索引は **反復ごとに再構築**。セグメント数 S に対し構築はおおよそ **O(S log S)**（実測では way 数・セグメント数が多い bbox でもセル幅チューニングなしでスケール）。 |
+| **OSM node id マージ** | `connect_osm_node_ids_enabled` が ON のとき、同一 OSM id にぶら下がるグラフ頂点を **union-find で連結成分化**し、代表頂点（id の辞書順最小等）と属性集約を決めたうえで、**辺集合を 1 回スキャン**して端点を remap（逐次の全辺 dict 再構築ループは廃止）。`step_metrics.connect_osm.osm_id_groups_merged` は **初期グラフで「2 つ以上の頂点に現れた OSM id」の個数**。**Shapely 不使用**。 |
+| **重複・並行道路マージ**（オプション） | `merge_duplicate_roads_enabled` が ON のとき、OSM id マージと ε スナップの後、交差 split の前に実行。STRtree で近接・並行な **辺–辺**ペアを列挙し、way 単位の重なり長が閾値を満たすペアは短いセグメント同士も候補に残す。共有ノードで交角が大きいペアは除外したうえで **union-find** で成分化し、成分ごとに代表 OSM way 側のチェーンへ他 way の辺を畳み込む。削除側の外部 incident edge は代表線上の既存 node または `road_merge` synthetic anchor へ remap する。 |
+| **不要な中間ノード削除**（オプション） | `remove_redundant_chain_vertices_enabled` が ON のとき、road merge と交差 split の **後**に実行。次数 2・同一 `osm_way_id`・保護なしのチェーンを列挙し、**符号付き折れ角の累積の絶対値**が約 10°（既定）を超えた頂点を残して辺をマージ（超過分は符号付きモジュロでリセット）。マージ後の各辺のジオメトリは **残した両端点の弦（polyline 2 点）** とし、同一 uv の重複辺はまとめて削除する。`/api/debug/graph-preview` の GeoJSON は **簡略化後の頂点・辺のみ**を返す。**Shapely／STRtree は使わない**（無向 `{u,v}` キーへの辺 id リストと入射リストの増分更新、`eligible_nodes` で候補のみ再評価。終了時に壊れ辺除去で全辺を 1 回スキャン）。 |
 | **GeoJSON 出力** | 頂点の `vertex_role` 等のため、**辺から隣接リストを O(E)** で構築し、次数 2 の頂点で入射辺 2 本を全辺走査しない。 |
 
 **未実装・今後の伸びしろ**: ストローク点列向けの **永続 spatial_index** オブジェクトとしての公開、キャッシュ（1.2 節）、交差処理の **一括列挙＋一括分割**（反復回数そのものの削減）は別タスク。
@@ -214,13 +214,14 @@ H0 は **2 秒優先・最大約 10 秒**の最適化全体バジェットのう
 | ---------- | ---------------------------------------------------------------- |
 | 2026-05-07 | 初版。H0-a 決定事項（local tangent plane）、H0-b〜e・成果物・キャッシュ方針をプランから移管・補足。 |
 | 2026-05-07 | H0-e §6.1 に `graph_build.py` のスナップ／交差／OSM マージ／GeoJSON 出力の実装メモを追記。B3 にデバッグ実装の短い参照を追加。 |
-| 2026-05-08 | §3 B4 **不要な中間ノード削除**（`remove_redundant_chain_vertices`、符号付き折れ角の累積）の仕様と §6.1 の実装メモを追加。 |
+| 2026-05-08 | §3 B4 **不要な中間ノード削除**（`remove_redundant_chain_vertices_enabled` 相当、符号付き折れ角の累積）の仕様と §6.1 の実装メモを追加。 |
 | 2026-05-08 | `graph_build.py` の空間索引を **Shapely STRtree** に変更。H0-e 表・§6.1 を整合更新。 |
 | 2026-05-09 | §6.1 ε スナップを **端点を含むペアかつ同一辺の両端ではない**場合に限定する仕様を追記（実装と整合）。 |
 | 2026-05-09 | B5 **重複・並行道路マージ**を追加。`node id merge -> epsilon snap -> road merge -> intersection split -> chain prune` の順序を追記。 |
 | 2026-05-11 | B5 / §6.1 を **辺–辺候補 + union-find + 成分ごとの代表 way チェーン**への実装に整合。 |
 | 2026-05-12 | グラフ構築コードを **`app/osm/graph_build/` パッケージ**へ整理（`pipeline.py`・ステップ別モジュール・`helpers.py` に共用のみ）。 |
 | 2026-05-13 | §3 に **製品既定では connect_osm + prune のみ ON 見込み** のメモを追記。 |
-| 2026-05-14 | B4 に **prune 実装**（非 Shapely・増分入射・`eligible_nodes`・`comp` 基準の削除）を追記。§6.1 を **STRtree はスナップ／split／road_merge のみ**と明記し、OSM マージ／prune 行を更新。**`apply_all_graph_build_options` は 5 ステップすべて遅延 import**（Shapely 非経路の明確化）。 |
-
+| 2026-05-13 | B4 に **prune 実装**（非 Shapely・増分入射・`eligible_nodes`・`comp` 基準の削除）を追記。§6.1 を **STRtree はスナップ／split／road_merge のみ**と明記し、OSM マージ／prune 行を更新。**`apply_all_graph_build_options` は 5 ステップすべて遅延 import**（Shapely 非経路の明確化）。 |
+| 2026-05-13 | `GraphBuildOptions` / デバッグ API の **ブールに `_enabled` サフィックス**（例: `connect_osm_node_ids_enabled`）。`defaults.py` の定数名も対応。フロントは旧 JSON キーを `normalizeGraphBuildOptions` でエイリアス。 |
+| 2026-05-13 | `defaults.py` で **`merge_duplicate_roads_enabled` を既定 ON** に変更。§3 製品既定・§6.1 の Shapely／lazy import の説明を追随。 |
 

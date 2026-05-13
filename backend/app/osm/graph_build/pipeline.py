@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from .defaults import (
+    DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
+    DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED,
+    DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED,
+    DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
+    DEFAULT_SNAP_ENDPOINTS_ENABLED,
     DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
     DEFAULT_ROAD_MERGE_ANGLE_DEG,
@@ -23,6 +28,7 @@ from .defaults import (
     DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+    DEFAULT_SNAP_EPSILON_M,
 )
 from .helpers import _incident_edges_by_node, _node_degrees_from_incident
 from ..graph_model import InternalEdge, InternalNode, RoadGraph
@@ -33,18 +39,22 @@ PILE_LONLAT_DECIMALS = 5
 
 @dataclass
 class GraphBuildOptions:
-    connect_osm_node_ids: bool = True
-    snap_endpoints: bool = False
-    snap_epsilon_m: float = 3.0
-    merge_duplicate_roads: bool = False
+    connect_osm_node_ids_enabled: bool = DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED
+    
+    snap_endpoints_enabled: bool = DEFAULT_SNAP_ENDPOINTS_ENABLED
+    snap_epsilon_m: float = DEFAULT_SNAP_EPSILON_M
+    
+    merge_duplicate_roads_enabled: bool = DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED
     road_merge_distance_m: float = DEFAULT_ROAD_MERGE_DISTANCE_M
     road_merge_angle_deg: float = DEFAULT_ROAD_MERGE_ANGLE_DEG
     road_merge_min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M
     road_merge_min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO
     road_merge_anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M
     road_merge_max_anchor_offset_m: float = DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M
-    split_intersections: bool = False
-    remove_redundant_chain_vertices: bool = True
+    
+    split_intersections_enabled: bool = DEFAULT_SPLIT_INTERSECTIONS_ENABLED
+    
+    remove_redundant_chain_vertices_enabled: bool = DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED
     prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 
 
@@ -199,8 +209,8 @@ def graph_to_geojson_fc(
         pile_count = pile_key_counts.get(pk, 1)
         synthetic = len(n.source_osm_node_ids) == 0
         role = roles[nid]
-        highlight_osm_merge = bool(options.connect_osm_node_ids and n.merged_from_osm_id)
-        highlight_snap_merge = bool(options.snap_endpoints and n.merged_from_snap)
+        highlight_osm_merge = bool(options.connect_osm_node_ids_enabled and n.merged_from_osm_id)
+        highlight_snap_merge = bool(options.snap_endpoints_enabled and n.merged_from_snap)
 
         node_feats.append(
             {
@@ -250,7 +260,7 @@ def graph_to_geojson_fc(
 def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) -> dict[str, Any]:
     """5 つのオプションを既定順（connect_osm → snap → road_merge → split → prune）でグラフに適用し、step_metrics を返す。"""
     step_metrics: dict[str, Any] = {}
-    if options.connect_osm_node_ids:
+    if options.connect_osm_node_ids_enabled:
         from .connect_osm import merge_by_osm_node_id
 
         step_metrics["connect_osm"] = merge_by_osm_node_id(graph)
@@ -258,12 +268,12 @@ def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) 
             1 for n in graph.nodes.values() if n.merged_from_osm_id
         )
 
-    if options.snap_endpoints:
+    if options.snap_endpoints_enabled:
         from .snap_endpoints import snap_endpoints
 
         step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
 
-    if options.merge_duplicate_roads:
+    if options.merge_duplicate_roads_enabled:
         from .merge_duplicate_roads import merge_duplicate_roads
 
         step_metrics["road_merge"] = merge_duplicate_roads(
@@ -276,12 +286,12 @@ def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) 
             max_anchor_offset_m=options.road_merge_max_anchor_offset_m,
         )
 
-    if options.split_intersections:
+    if options.split_intersections_enabled:
         from .split_intersections import run_intersection_splits
 
         step_metrics["split"] = run_intersection_splits(graph)
 
-    if options.remove_redundant_chain_vertices:
+    if options.remove_redundant_chain_vertices_enabled:
         from .prune_chains import prune_redundant_chain_vertices
 
         step_metrics["prune_chains"] = prune_redundant_chain_vertices(
