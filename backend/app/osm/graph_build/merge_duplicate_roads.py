@@ -11,6 +11,14 @@ import numpy as np
 from shapely import STRtree
 from shapely.geometry import LineString
 
+from .defaults import (
+    DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
+    DEFAULT_ROAD_MERGE_ANGLE_DEG,
+    DEFAULT_ROAD_MERGE_DISTANCE_M,
+    DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
+    DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
+    DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+)
 from .helpers import (
     _dist,
     _incident_edges_by_node,
@@ -22,13 +30,6 @@ from ..graph_model import InternalEdge, InternalNode, RoadGraph
 # Union / way 集約:候補の角度緩和より厳しく見る（脇道の伝播を抑える）
 ROAD_MERGE_STRICT_ANGLE_SLACK_DEG = 0.05
 ROAD_MERGE_WAY_PAIR_MAX_ANGLE_EXTRA_DEG = 6.0
-
-DEFAULT_ROAD_MERGE_DISTANCE_M = 14.0
-DEFAULT_ROAD_MERGE_ANGLE_DEG = 22.0
-DEFAULT_ROAD_MERGE_MIN_OVERLAP_M = 8.0
-DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO = 0.25
-DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M = 2.0
-DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M = 0.0
 
 @dataclass
 class _RoadMergeCandidate:

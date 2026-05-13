@@ -1,6 +1,6 @@
 """OSM way → road graph pipeline (debug / preprocess). Public API re-exported here."""
 
-from .pipeline import (
+from .defaults import (
     DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
     DEFAULT_ROAD_MERGE_ANGLE_DEG,
@@ -8,6 +8,8 @@ from .pipeline import (
     DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+)
+from .pipeline import (
     GraphBuildOptions,
     GraphBuildResult,
     WayPolyline,

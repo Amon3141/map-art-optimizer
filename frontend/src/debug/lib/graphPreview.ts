@@ -68,6 +68,7 @@ export type GraphPreviewResponse = {
   }
 }
 
+/** 既定値は `backend/app/osm/graph_build/defaults.py` と揃えること */
 export function defaultGraphBuildOptions(): GraphBuildOptionsPayload {
   return {
     connect_osm_node_ids: false,

@@ -5,14 +5,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .defaults import DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 from .helpers import (
     _incident_edges_by_node,
     _merge_edge_osm_way_ids,
     _node_degrees_from_incident,
 )
 from ..graph_model import InternalEdge, RoadGraph
-
-DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG = 15.0
 
 _PRUNE_LEN_EPS_SQ = 1e-18
 

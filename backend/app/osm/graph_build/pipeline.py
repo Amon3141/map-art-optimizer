@@ -16,6 +16,15 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from .connect_osm import merge_by_osm_node_id
+from .defaults import (
+    DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
+    DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
+    DEFAULT_ROAD_MERGE_ANGLE_DEG,
+    DEFAULT_ROAD_MERGE_DISTANCE_M,
+    DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
+    DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
+    DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
+)
 from .helpers import _incident_edges_by_node, _node_degrees_from_incident
 from .merge_duplicate_roads import merge_duplicate_roads
 from .prune_chains import prune_redundant_chain_vertices
@@ -23,15 +32,6 @@ from .snap_endpoints import snap_endpoints
 from .split_intersections import run_intersection_splits
 from ..graph_model import InternalEdge, InternalNode, RoadGraph
 from ..projection import lon_lat_to_xy_m, xy_m_to_lon_lat
-
-DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG = 15.0
-DEFAULT_ROAD_MERGE_DISTANCE_M = 14.0
-DEFAULT_ROAD_MERGE_ANGLE_DEG = 22.0
-DEFAULT_ROAD_MERGE_MIN_OVERLAP_M = 8.0
-DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO = 0.25
-DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M = 2.0
-# 0 = 実行時に max(2 * road_merge_distance_m, 50) を使う
-DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M = 0.0
 
 PILE_LONLAT_DECIMALS = 5
 

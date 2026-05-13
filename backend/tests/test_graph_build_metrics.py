@@ -15,6 +15,18 @@ from app.osm.graph_build import (
 from app.osm.projection import EARTH_RADIUS_M, xy_m_to_lon_lat
 
 
+def _graph_opts_road_merge_for_compact_fixtures(**kwargs) -> GraphBuildOptions:
+    """狭い間隔の並列線フィクスチャ用。UI 既定（重なり 100m 等）では候補が出ない。"""
+    base: dict = {
+        "merge_duplicate_roads": True,
+        "road_merge_distance_m": 14.0,
+        "road_merge_min_overlap_m": 8.0,
+        "road_merge_min_overlap_ratio": 0.25,
+    }
+    base.update(kwargs)
+    return GraphBuildOptions(**base)
+
+
 def test_prune_collinear_chain_reduces_graph():
     fc = {
         "type": "FeatureCollection",
@@ -104,7 +116,7 @@ def test_prune_preserves_gentle_arc():
     assert r1.stats["node_count"] > 2
     assert r1.stats["edge_count"] > 1
     pc = r1.step_metrics.get("prune_chains") or {}
-    assert pc.get("angle_accum_threshold_deg") == 15.0
+    assert pc.get("angle_accum_threshold_deg") == 10.0
 
 
 def test_prune_chain_accum_threshold_metric_echoes_option():
@@ -169,7 +181,15 @@ def test_prune_signed_cancellation_collapses_zigzag():
             }
         ],
     }
-    r1 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices=True))
+    r1 = build_graph_from_geojson(
+        fc,
+        lon0,
+        lat0,
+        GraphBuildOptions(
+            remove_redundant_chain_vertices=True,
+            prune_chain_accum_angle_deg=15.0,
+        ),
+    )
     assert r1.stats["node_count"] == 2
     assert r1.stats["edge_count"] == 1
 
@@ -497,7 +517,7 @@ def test_road_merge_accepts_slightly_diverging_endpoint_candidate():
             _line_feature_from_xy(lon0, lat0, 2, [(0, 8), (80, 36)], 200),
         ],
     }
-    opts = GraphBuildOptions(merge_duplicate_roads=True)
+    opts = _graph_opts_road_merge_for_compact_fixtures()
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("candidate_pairs", 0) >= 1
@@ -513,7 +533,7 @@ def test_road_merge_detects_segmented_parallel_ways_as_one_candidate():
             _line_feature_from_xy(lon0, lat0, 2, [(0, 6), (5, 6), (10, 6), (15, 6), (20, 6)], 200),
         ],
     }
-    opts = GraphBuildOptions(merge_duplicate_roads=True)
+    opts = _graph_opts_road_merge_for_compact_fixtures()
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("candidate_pairs", 0) >= 1
@@ -532,7 +552,7 @@ def test_road_merge_does_not_absorb_perpendicular_stub_way():
             _line_feature_from_xy(lon0, lat0, 3, [(80, 5), (80, 18)], 300),
         ],
     }
-    opts = GraphBuildOptions(merge_duplicate_roads=True)
+    opts = _graph_opts_road_merge_for_compact_fixtures()
     r = build_graph_from_geojson(fc, lon0, lat0, opts)
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("source_edges_removed", 0) >= 1
@@ -551,8 +571,7 @@ def test_road_merge_skips_merge_when_max_anchor_offset_tight():
             _line_feature_from_xy(lon0, lat0, 2, [(0, 8), (100, 8)], 200),
         ],
     }
-    opts = GraphBuildOptions(
-        merge_duplicate_roads=True,
+    opts = _graph_opts_road_merge_for_compact_fixtures(
         road_merge_distance_m=15.0,
         road_merge_max_anchor_offset_m=5.0,
     )
@@ -575,7 +594,7 @@ def test_road_merge_effective_max_anchor_uses_auto_when_zero():
         fc,
         lon0,
         lat0,
-        GraphBuildOptions(merge_duplicate_roads=True, road_merge_distance_m=15.0),
+        _graph_opts_road_merge_for_compact_fixtures(road_merge_distance_m=15.0),
     )
     rm = r.step_metrics.get("road_merge") or {}
     assert rm.get("source_edges_removed", 0) >= 1
