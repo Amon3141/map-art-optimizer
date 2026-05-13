@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 from .defaults import DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 from .helpers import (
     _incident_edges_by_node,
     _merge_edge_osm_way_ids,
-    _node_degrees_from_incident,
 )
 from ..graph_model import InternalEdge, RoadGraph
 
@@ -18,6 +18,25 @@ _PRUNE_LEN_EPS_SQ = 1e-18
 
 def _other_vertex(e: InternalEdge, nid: str) -> str:
     return e.v if e.u == nid else e.u
+
+
+def _remove_edge_from_inc(inc: dict[str, list[InternalEdge]], e: InternalEdge) -> None:
+    """inc の両端リストから辺 e を除去（swap-pop）。"""
+    eid = e.id
+    for nid in (e.u, e.v):
+        lst = inc.get(nid)
+        if not lst:
+            continue
+        for i, ed in enumerate(lst):
+            if ed.id == eid:
+                lst[i] = lst[-1]
+                lst.pop()
+                break
+
+
+def _add_edge_to_inc(inc: dict[str, list[InternalEdge]], e: InternalEdge) -> None:
+    inc.setdefault(e.u, []).append(e)
+    inc.setdefault(e.v, []).append(e)
 
 
 class _UndirectedEdgeIndex:
@@ -75,6 +94,35 @@ def _prune_vertex_eligible(d: int, es: list[InternalEdge]) -> bool:
     return w1 is not None and w1 == w2
 
 
+def _node_is_prune_eligible(
+    nid: str,
+    graph: RoadGraph,
+    inc: dict[str, list[InternalEdge]],
+    blocked: set[str],
+) -> bool:
+    if nid not in graph.nodes or nid in blocked:
+        return False
+    es = inc.get(nid, [])
+    return _prune_vertex_eligible(len(es), es)
+
+
+def _sync_eligible(
+    nid: str,
+    graph: RoadGraph,
+    inc: dict[str, list[InternalEdge]],
+    blocked: set[str],
+    eligible_nodes: set[str],
+) -> None:
+    if nid not in graph.nodes or nid in blocked:
+        eligible_nodes.discard(nid)
+        return
+    es = inc.get(nid, [])
+    if _prune_vertex_eligible(len(es), es):
+        eligible_nodes.add(nid)
+    else:
+        eligible_nodes.discard(nid)
+
+
 def _signed_turn_at_vertex_rad(
     ax: float,
     ay: float,
@@ -103,7 +151,7 @@ def _prune_accum_reduce_signed_mod(accum: float, threshold_rad: float) -> float:
 
 def _prune_bfs_component(
     start: str,
-    eligible: dict[str, bool],
+    eli: Callable[[str], bool],
     inc: dict[str, list[InternalEdge]],
 ) -> set[str]:
     from collections import deque
@@ -115,7 +163,7 @@ def _prune_bfs_component(
         cur = dq.popleft()
         for e in inc[cur]:
             o = _other_vertex(e, cur)
-            if eligible.get(o) and o not in comp:
+            if eli(o) and o not in comp:
                 comp.add(o)
                 dq.append(o)
     return comp
@@ -124,19 +172,19 @@ def _prune_bfs_component(
 def _prune_chain_ordered_endpoints(
     comp: set[str],
     inc: dict[str, list[InternalEdge]],
-    eligible: dict[str, bool],
+    eli: Callable[[str], bool],
 ) -> list[str] | None:
     """[frozen_a, …prunable…, frozen_b] or None (pure prunable cycle — skip)."""
 
     def pr_nbrs(nid: str) -> list[str]:
-        return [_other_vertex(e, nid) for e in inc[nid] if eligible.get(_other_vertex(e, nid), False)]
+        return [_other_vertex(e, nid) for e in inc[nid] if eli(_other_vertex(e, nid))]
 
     endpoints = [nid for nid in comp if len(pr_nbrs(nid)) == 1]
 
     if len(comp) == 1:
         v = next(iter(comp))
         frozen = sorted(
-            (_other_vertex(e, v) for e in inc[v] if not eligible.get(_other_vertex(e, v), False)),
+            (_other_vertex(e, v) for e in inc[v] if not eli(_other_vertex(e, v))),
             key=str,
         )
         if len(frozen) != 2:
@@ -149,13 +197,13 @@ def _prune_chain_ordered_endpoints(
     e0 = min(endpoints, key=str)
     nbr_all = [_other_vertex(e, e0) for e in inc[e0]]
     frozen_start = sorted(
-        (x for x in nbr_all if not eligible.get(x, False)),
+        (x for x in nbr_all if not eli(x)),
         key=str,
     )
     if not frozen_start:
         return None
     f0 = frozen_start[0]
-    pr_next = [x for x in nbr_all if eligible.get(x, False)]
+    pr_next = [x for x in nbr_all if eli(x)]
     if len(pr_next) != 1:
         return None
 
@@ -166,7 +214,7 @@ def _prune_chain_ordered_endpoints(
         if len(nxt_cand) != 1:
             return None
         nxt = nxt_cand[0]
-        if not eligible.get(nxt, False):
+        if not eli(nxt):
             order.append(nxt)
             return order
         order.append(nxt)
@@ -176,7 +224,7 @@ def _prune_chain_ordered_endpoints(
 def _prune_simplify_keep_indices(
     order: list[str],
     graph: RoadGraph,
-    eligible: dict[str, bool],
+    eli: Callable[[str], bool],
     threshold_rad: float,
 ) -> list[int]:
     """元ポリライン上の符号付き折れ角を累積し、|累積| が閾値を超えた頂点を残す（1 パス）。"""
@@ -194,7 +242,7 @@ def _prune_simplify_keep_indices(
     accum = 0.0
     last_i = n - 1
     for i in range(1, last_i):
-        if not eligible.get(order[i], False):
+        if not eli(order[i]):
             if keep_ix[-1] != i:
                 keep_ix.append(i)
             accum = 0.0
@@ -216,13 +264,19 @@ def _prune_apply_order(
     graph: RoadGraph,
     order: list[str],
     keep_ix: list[int],
-    eligible: dict[str, bool],
+    comp: set[str],
     eid_counter: list[int],
     uv_index: _UndirectedEdgeIndex,
-) -> int:
-    """Returns number of prunable vertices removed."""
+    inc: dict[str, list[InternalEdge]],
+) -> tuple[int, set[str]]:
+    """Returns (prunable_vertices_removed, touched_node_ids for eligible resync).
+
+    削除対象はマージ前の成分 `comp` に属し `keep_ids` に含まれない頂点のみ（辺更新後の
+    `eli` は次数が変わって偽になりうるため使わない）。
+    """
     keep_ids = {order[i] for i in keep_ix}
     removed = 0
+    touched: set[str] = set()
     for k in range(len(keep_ix) - 1):
         lo, hi = keep_ix[k], keep_ix[k + 1]
         if hi - lo < 2:
@@ -236,7 +290,7 @@ def _prune_apply_order(
             a, b = order[t], order[t + 1]
             segment_edges = uv_index.edges_between(a, b)
             if not segment_edges:
-                return removed
+                return removed, touched
             for e in segment_edges:
                 edges_del.append(e.id)
                 collapse_edges.append(e)
@@ -250,6 +304,9 @@ def _prune_apply_order(
         for eid in edges_del:
             e_old = graph.edges.pop(eid, None)
             if e_old is not None:
+                touched.add(e_old.u)
+                touched.add(e_old.v)
+                _remove_edge_from_inc(inc, e_old)
                 uv_index.unregister_edge(e_old, eid)
         eid_counter[0] += 1
         new_id = f"prune:{eid_counter[0]}:{u0}:{v0}"
@@ -263,13 +320,18 @@ def _prune_apply_order(
             merged_osm_way_ids=_merge_edge_osm_way_ids(collapse_edges),
         )
         graph.edges[new_id] = new_e
+        touched.add(new_e.u)
+        touched.add(new_e.v)
+        _add_edge_to_inc(inc, new_e)
         uv_index.register_new_edge(new_id, new_e)
 
     for nid in order:
-        if eligible.get(nid, False) and nid not in keep_ids and nid in graph.nodes:
+        if nid in comp and nid not in keep_ids and nid in graph.nodes:
             del graph.nodes[nid]
+            inc.pop(nid, None)
+            touched.add(nid)
             removed += 1
-    return removed
+    return removed, touched
 
 
 def _prune_remove_edges_with_missing_endpoints(
@@ -295,35 +357,42 @@ def prune_redundant_chain_vertices(
     eid_counter = [0]
     blocked: set[str] = set()
     uv_index = _UndirectedEdgeIndex(graph)
+    inc = _incident_edges_by_node(graph)
+    eligible_nodes: set[str] = set()
+    for nid in graph.nodes:
+        _sync_eligible(nid, graph, inc, blocked, eligible_nodes)
 
-    while True:
-        inc = _incident_edges_by_node(graph)
-        deg = _node_degrees_from_incident(inc)
-        eligible: dict[str, bool] = {}
-        for nid in graph.nodes:
-            if nid in blocked:
-                eligible[nid] = False
-                continue
-            eligible[nid] = _prune_vertex_eligible(deg.get(nid, 0), inc.get(nid, []))
+    def eli(nid: str) -> bool:
+        return _node_is_prune_eligible(nid, graph, inc, blocked)
 
-        start = next((nid for nid, ok in eligible.items() if ok), None)
-        if start is None:
-            break
-
-        comp = _prune_bfs_component(start, eligible, inc)
-        order = _prune_chain_ordered_endpoints(comp, inc, eligible)
-        if order is None or len(order) < 3:
-            blocked |= comp
+    while eligible_nodes:
+        start = min(eligible_nodes)
+        if not _node_is_prune_eligible(start, graph, inc, blocked):
+            eligible_nodes.discard(start)
             continue
 
-        keep_ix = _prune_simplify_keep_indices(order, graph, eligible, threshold_rad)
+        comp = _prune_bfs_component(start, eli, inc)
+        order = _prune_chain_ordered_endpoints(comp, inc, eli)
+        if order is None or len(order) < 3:
+            blocked |= comp
+            for nid in comp:
+                eligible_nodes.discard(nid)
+            continue
+
+        keep_ix = _prune_simplify_keep_indices(order, graph, eli, threshold_rad)
         any_merge = any(keep_ix[k + 1] - keep_ix[k] >= 2 for k in range(len(keep_ix) - 1))
         if not any_merge:
             blocked |= comp
+            for nid in comp:
+                eligible_nodes.discard(nid)
             continue
 
-        vertices_removed += _prune_apply_order(graph, order, keep_ix, eligible, eid_counter, uv_index)
-        _prune_remove_edges_with_missing_endpoints(graph, uv_index)
+        rem, touched = _prune_apply_order(
+            graph, order, keep_ix, comp, eid_counter, uv_index, inc
+        )
+        vertices_removed += rem
+        for nid in touched:
+            _sync_eligible(nid, graph, inc, blocked, eligible_nodes)
 
     _prune_remove_edges_with_missing_endpoints(graph, uv_index)
 

@@ -45,7 +45,9 @@ def test_prune_collinear_chain_reduces_graph():
             }
         ],
     }
-    r0 = build_graph_from_geojson(fc, 0.002, 0.0, GraphBuildOptions())
+    r0 = build_graph_from_geojson(
+        fc, 0.002, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=False)
+    )
     r1 = build_graph_from_geojson(fc, 0.002, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=True))
     assert r0.stats["node_count"] == 5
     assert r0.stats["edge_count"] == 4
@@ -72,7 +74,9 @@ def test_prune_preserves_sharp_turn():
             }
         ],
     }
-    r0 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphBuildOptions())
+    r0 = build_graph_from_geojson(
+        fc, 0.0005, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=False)
+    )
     r1 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphBuildOptions(remove_redundant_chain_vertices=True))
     assert r0.stats["node_count"] == 3
     assert r1.stats["node_count"] == 3
@@ -110,7 +114,9 @@ def test_prune_preserves_gentle_arc():
             }
         ],
     }
-    r0 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions())
+    r0 = build_graph_from_geojson(
+        fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices=False)
+    )
     r1 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices=True))
     assert r1.stats["node_count"] < r0.stats["node_count"]
     assert r1.stats["node_count"] > 2
@@ -209,7 +215,7 @@ def test_vertex_role_and_pile_in_geojson():
             }
         ],
     }
-    opts = GraphBuildOptions()
+    opts = GraphBuildOptions(remove_redundant_chain_vertices=False)
     r = build_graph_from_geojson(fc, 0.001, 0.0, opts)
     nodes_fc, _edges = graph_to_geojson_fc(r.graph, r.lon0, r.lat0, opts)
     props = [f["properties"] for f in nodes_fc["features"]]
@@ -328,7 +334,11 @@ def test_snap_skips_interior_interior_even_if_close():
             },
         ],
     }
-    opts = GraphBuildOptions(snap_endpoints=True, snap_epsilon_m=2.0)
+    opts = GraphBuildOptions(
+        snap_endpoints=True,
+        snap_epsilon_m=2.0,
+        remove_redundant_chain_vertices=False,
+    )
     r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
     assert r.stats["node_count"] == 5
     sn = r.step_metrics.get("snap") or {}

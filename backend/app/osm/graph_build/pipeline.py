@@ -7,7 +7,7 @@ OSM way 折れ線から平面グラフへの変換パイプライン。
 3. 距離ベース snap（オプション）
 4. 重複・並行道路のマージ（オプション）
 5. 道路交差の幾何 split（オプション）
-6. 不要な中間ノード削除（オプション・上記の後のみ）
+6. 不要な中間ノード削除（オプション）
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
-from .connect_osm import merge_by_osm_node_id
 from .defaults import (
     DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
@@ -26,10 +25,6 @@ from .defaults import (
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
 )
 from .helpers import _incident_edges_by_node, _node_degrees_from_incident
-from .merge_duplicate_roads import merge_duplicate_roads
-from .prune_chains import prune_redundant_chain_vertices
-from .snap_endpoints import snap_endpoints
-from .split_intersections import run_intersection_splits
 from ..graph_model import InternalEdge, InternalNode, RoadGraph
 from ..projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
@@ -38,7 +33,7 @@ PILE_LONLAT_DECIMALS = 5
 
 @dataclass
 class GraphBuildOptions:
-    connect_osm_node_ids: bool = False
+    connect_osm_node_ids: bool = True
     snap_endpoints: bool = False
     snap_epsilon_m: float = 3.0
     merge_duplicate_roads: bool = False
@@ -49,7 +44,7 @@ class GraphBuildOptions:
     road_merge_anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M
     road_merge_max_anchor_offset_m: float = DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M
     split_intersections: bool = False
-    remove_redundant_chain_vertices: bool = False
+    remove_redundant_chain_vertices: bool = True
     prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 
 
@@ -256,15 +251,21 @@ def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) 
     """5 つのオプションを既定順（connect_osm → snap → road_merge → split → prune）でグラフに適用し、step_metrics を返す。"""
     step_metrics: dict[str, Any] = {}
     if options.connect_osm_node_ids:
+        from .connect_osm import merge_by_osm_node_id
+
         step_metrics["connect_osm"] = merge_by_osm_node_id(graph)
         step_metrics["connect_osm"]["merged_vertex_count"] = sum(
             1 for n in graph.nodes.values() if n.merged_from_osm_id
         )
 
     if options.snap_endpoints:
+        from .snap_endpoints import snap_endpoints
+
         step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
 
     if options.merge_duplicate_roads:
+        from .merge_duplicate_roads import merge_duplicate_roads
+
         step_metrics["road_merge"] = merge_duplicate_roads(
             graph,
             max_distance_m=options.road_merge_distance_m,
@@ -276,9 +277,13 @@ def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) 
         )
 
     if options.split_intersections:
+        from .split_intersections import run_intersection_splits
+
         step_metrics["split"] = run_intersection_splits(graph)
 
     if options.remove_redundant_chain_vertices:
+        from .prune_chains import prune_redundant_chain_vertices
+
         step_metrics["prune_chains"] = prune_redundant_chain_vertices(
             graph, options.prune_chain_accum_angle_deg
         )
