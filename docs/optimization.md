@@ -1,6 +1,6 @@
 # 最適化（設計メモ）
 
-**現状: 未実装。** 本文書は、**具体アルゴリズムの確定版ではなく**、要件・懸念・考えるべき点・未決定事項を整理したものである。確定した判断は `docs/decisions.md` にも追記する。
+**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用に離散グリッド探索のベースラインが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
 
 ---
 
@@ -8,9 +8,10 @@
 
 | 書くこと | まだ書かないこと |
 |----------|------------------|
-| プロダクトとして満たしたい性質、制約、データの出所 | 採用アルゴリズムの確定版・擬似コード |
-| API の形（GeoJSON 等）、`properties` の方針 | 評価関数の式・重みの数値 |
+| プロダクトとして満たしたい性質、制約、データの出所 | 本番向けの確定版としての性能保証 |
+| API の形（GeoJSON 等）、`properties` の方針 | 評価関数の最終的な重み調整の結論 |
 | 懸念（形の一致と走行性など） | 実装完了の保証や性能見積り |
+| **セクション 8:** 現行ベースライン実装の要約 | 上記ベースライン以外の未実装範囲の細目 |
 
 ---
 
@@ -110,7 +111,7 @@
 - **近傍**の例: 変換パラメータの摂動、別エッジ列への差し替え、など。
 - **制約**（通行可能辺のみ・連続パス・長さ）は、**ペナルティ法**で緩く入れてから絞る手法も検討余地あり。
 
-具体的な擬似コード・冷却スケジュールは **アルゴリズム選定後**に本ファイルまたは実装とともに追記する。
+具体的な擬似コード・冷却スケジュールは **アルゴリズム選定後**に本ファイルまたは実装とともに追記する。**デバッグ用ベースラインの概要はセクション 8。**
 
 ---
 
@@ -127,7 +128,75 @@
 
 ---
 
-## 8. 未決定・`docs/decisions.md`／本ファイルへ追記するもの
+## 8. 実装ベースライン（現状）
+
+デバッグ検証用。**焼きなましは使わず**、平面変換を **離散グリッド上で総当たり**し、スコア最小の候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
+
+### 8.1 コード配置
+
+| パス | 役割 |
+|------|------|
+| `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、`GRID_TXY_FRACS`、スケール区間・クリップ域 |
+| `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult` |
+| `backend/app/optimization/transform.py` | ストロークをグラフ内にフィットした基準折れ線 → 中心周りの回転・等方スケール・平行移動 |
+| `backend/app/optimization/snap_route.py` | 弧長サンプル、スナップ、単一ソース Dijkstra、折れ線連結 |
+| `backend/app/optimization/scoring.py` | チャンファー形状項・長さ・辺数・旋回・到達不能の加重和 |
+| `backend/app/optimization/anneal.py` | `transform_grid_search`（互換名 `simulated_annealing_search`） |
+| `backend/app/optimization/run.py` | `run_simulated_annealing`（グリッド探索）、GeoJSON 化 |
+| `backend/tests/test_optimization.py` | スモーク |
+
+### 8.2 API（デバッグのみ）
+
+- **`POST /api/debug/optimize`**（[`backend/app/debug/routes.py`](backend/app/debug/routes.py)）
+- リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points`, `target_km`（数値または `null`）を付与。
+- 任意: `weights`, `anneal`, `record_trace`
+  - `weights`: `shape`, `length`, `edge_count`, `turn`, `unreachable`
+  - `anneal`: `optimization_budget_seconds`, `seed`, `num_restarts`, `include_mirror_stroke`, `coarse_presolve`, `coarse_theta_bins`, `coarse_scale_bins`（**`max_iterations` / `trace_stride` は廃止**）
+- サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
+
+### 8.3 探索（離散グリッド）
+
+- **候補**: `coarse_presolve` がオフなら **恒等変換のみ**。オンのとき **`GRID_TXY_FRACS` × θ 等分 × スケール等分**（`COARSE_SCALE_MIN`〜`MAX`）の総当たり。`num_restarts` は θ に位相オフセットを足して同グリッドを複数評価。
+- **鏡映**・**壁時計打ち切り**・**`optimizer_meta.search` = `transform_grid_search`** は従来どおり。
+
+### 8.4 ターゲット折れ線 → グラフ上ルート
+
+1. 変換後の平面折れ線。2. 弧長 **`ROUTE_ARC_SAMPLES`** 等分サンプル。3. スナップ。4. 区間 **Dijkstra**（幾何長）。5. 到達不能はペナルティ。
+
+### 8.5 スコア（最小化）
+
+| 項 | 意味（概要） |
+|----|----------------|
+| `shape` | ターゲット弧長サンプル → ルートへの **チャンファー**（無次元化）。 |
+| `length` | 目標長さからの乖離を正規化した**無次元**項（`target_km` が `null` のとき項は 0）。実ルートの km はレスポンスの `route_length_km` を参照。 |
+| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。 |
+| `turn` | 旋回ペナルティ。 |
+| `unreachable` | 連結失敗時 1。 |
+
+### 8.6 トレース
+
+- 成功時は **ベスト 1 ステップ**のみ（`temperature` は 0）。
+
+### 8.7 レスポンス（デバッグ）
+
+- `candidates_geojson`, `best_score`, `best_breakdown`（内訳の `length` は目標長さからの**無次元**乖離項）, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `steps[]`（形式は従来互換）。
+
+### 8.8 フロント（デバッグ UI）
+
+- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): グリッド探索のオプションと実行・結果表示。
+
+### 8.9 あえて未実装／プロダクト要件との差
+
+- **複数候補のランキング提示**（現状はベスト 1 本のみ。`num_restarts` / 鏡映は内部で複数試行するが返却は 1 本）。
+- **本番用 `/api` エンドポイント**（`/api/debug` のみ）。
+- **鏡映以外の変形**（キャンバス Y 鏡映のみ API 化、一般アフィンは未）。
+- **許容幅付きの距離制約**（±km 帯の完全な二段階最適化など）。
+- **移動モードに沿ったタグ解釈**（Dijkstra は現状幾何距離のみ）。
+- **オイラー路等の厳しい一筆書き制約**。
+
+---
+
+## 9. 未決定・`docs/decisions.md`／本ファイルへ追記するもの
 
 - 徒歩／自転車／車など **どの移動モードを第一に**タグ解釈するか。
 - **形状類似度**と**走行性**の具体的な式と重み。

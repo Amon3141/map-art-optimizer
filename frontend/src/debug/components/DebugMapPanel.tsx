@@ -24,6 +24,9 @@ const G_NODES_LAYER = 'debug-graph-nodes-circle'
 const G_PILE_LABEL = 'debug-graph-pile-label'
 const G_JUNCTION_LABEL = 'debug-graph-junction-label'
 
+const ROUTE_SRC = 'debug-route-overlay'
+const ROUTE_LINE = 'debug-route-overlay-line'
+
 /** マップ上テキストを表示する最小ズーム */
 const GRAPH_NODE_LABELS_MIN_ZOOM = 17
 
@@ -51,6 +54,9 @@ export type DebugMapPanelProps = {
   fitOsmOverlayToData?: boolean
   /** 値が変わったときだけグラフ表示に合わせてフィット（オプション変更のみの更新では増やさない） */
   graphFitTrigger?: number
+  /** 最適化ルートなど（グラフ・OSM の上に描画） */
+  routeOverlay?: GeoJSON.FeatureCollection | null
+  routeLineColor?: string
   onMapReady?: (map: MapLibreMap) => void
 }
 
@@ -66,6 +72,11 @@ function removeGraphLayers(map: MapLibreMap) {
   }
   if (map.getSource(G_NODES_SRC)) map.removeSource(G_NODES_SRC)
   if (map.getSource(G_EDGES_SRC)) map.removeSource(G_EDGES_SRC)
+}
+
+function removeRouteOverlay(map: MapLibreMap) {
+  if (map.getLayer(ROUTE_LINE)) map.removeLayer(ROUTE_LINE)
+  if (map.getSource(ROUTE_SRC)) map.removeSource(ROUTE_SRC)
 }
 
 function applyGraphLayerVisibility(
@@ -153,6 +164,8 @@ export function DebugMapPanel({
   overlayHighlightColor = '#3b9ede',
   fitOsmOverlayToData = true,
   graphFitTrigger = 0,
+  routeOverlay = null,
+  routeLineColor = '#b45309',
   onMapReady,
 }: DebugMapPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -380,6 +393,31 @@ export function DebugMapPanel({
 
     applyGraphLayerVisibility(map, viewModeRef.current, showGraphNodesRef.current)
   }, [mapReady, graphGeoJson, graphFitTrigger])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) return
+
+    removeRouteOverlay(map)
+    const ro = routeOverlay
+    if (!ro || ro.features.length === 0) return
+    const hasLine = ro.features.some(
+      (f) => f.geometry?.type === 'LineString' && (f.geometry.coordinates?.length ?? 0) >= 2,
+    )
+    if (!hasLine) return
+
+    map.addSource(ROUTE_SRC, { type: 'geojson', data: ro })
+    map.addLayer({
+      id: ROUTE_LINE,
+      type: 'line',
+      source: ROUTE_SRC,
+      paint: {
+        'line-color': routeLineColor,
+        'line-width': 5,
+        'line-opacity': 0.92,
+      },
+    })
+  }, [mapReady, routeOverlay, routeLineColor, graphGeoJson])
 
   useEffect(() => {
     const map = mapRef.current

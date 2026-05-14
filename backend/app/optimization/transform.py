@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import math
+
+from app.preprocess.graph_model import RoadGraph
+
+from .types import StrokePoint, Transform
+
+
+def graph_xy_bounds(graph: RoadGraph) -> tuple[float, float, float, float]:
+    if not graph.nodes:
+        return 0.0, 0.0, 1.0, 1.0
+    xs = [n.x_m for n in graph.nodes.values()]
+    ys = [n.y_m for n in graph.nodes.values()]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def stroke_to_base_polyline_m(
+    stroke: list[StrokePoint],
+    graph: RoadGraph,
+    margin_ratio: float = 0.06,
+) -> list[tuple[float, float]]:
+    """キャンバス座標のストロークを、ノード外接矩形内（余白付き）に等比フィットした平面折れ線に変換。"""
+    if len(stroke) < 2:
+        return []
+
+    min_x = min(p.x for p in stroke)
+    min_y = min(p.y for p in stroke)
+    max_x = max(p.x for p in stroke)
+    max_y = max(p.y for p in stroke)
+    bw = max(max_x - min_x, 1e-9)
+    bh = max(max_y - min_y, 1e-9)
+
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    gw = max(gx1 - gx0, 1.0)
+    gh = max(gy1 - gy0, 1.0)
+    cx = (gx0 + gx1) / 2.0
+    cy = (gy0 + gy1) / 2.0
+    m = margin_ratio
+    uw = gw * (1.0 - 2.0 * m)
+    uh = gh * (1.0 - 2.0 * m)
+    s = min(uw / bw, uh / bh)
+
+    out: list[tuple[float, float]] = []
+    for p in stroke:
+        # stroke 中心を原点にしてからスケールし、グラフ中心へ
+        qx = (p.x - (min_x + max_x) / 2.0) * s
+        qy = (p.y - (min_y + max_y) / 2.0) * s
+        out.append((cx + qx, cy + qy))
+    return out
+
+
+def apply_transform(
+    base_xy_m: list[tuple[float, float]],
+    transform: Transform,
+    center_xy: tuple[float, float],
+) -> list[tuple[float, float]]:
+    cx, cy = center_xy
+    co = math.cos(transform.theta_rad)
+    si = math.sin(transform.theta_rad)
+    sc = transform.scale
+    out: list[tuple[float, float]] = []
+    for x, y in base_xy_m:
+        dx = x - cx
+        dy = y - cy
+        rx = sc * (co * dx - si * dy)
+        ry = sc * (si * dx + co * dy)
+        out.append((rx + cx + transform.tx_m, ry + cy + transform.ty_m))
+    return out
+
+
+def graph_center_m(graph: RoadGraph) -> tuple[float, float]:
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    return (gx0 + gx1) / 2.0, (gy0 + gy1) / 2.0
+
+
+def graph_bbox_diagonal_m(graph: RoadGraph) -> float:
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    return max(1.0, math.hypot(gx1 - gx0, gy1 - gy0))
+
+
+def mirror_stroke_horizontal(stroke: list[StrokePoint]) -> list[StrokePoint]:
+    """キャンバス X をストローク外接矩形の中心軸で鏡映（左右反転）。"""
+    if len(stroke) < 1:
+        return []
+    xs = [p.x for p in stroke]
+    cx = (min(xs) + max(xs)) / 2.0
+    return [StrokePoint(x=2.0 * cx - p.x, y=p.y) for p in stroke]

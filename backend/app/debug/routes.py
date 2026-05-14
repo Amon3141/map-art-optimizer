@@ -1,8 +1,9 @@
+from dataclasses import replace
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..osm.geojson import overpass_elements_to_geojson
 from ..osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
@@ -24,6 +25,24 @@ from ..preprocess import (
     DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
     GraphPreprocessOptions,
 )
+from ..optimization.constants import (
+    WEIGHT_EDGE_COUNT,
+    WEIGHT_LENGTH,
+    WEIGHT_SHAPE,
+    WEIGHT_TURN,
+    WEIGHT_UNREACHABLE,
+)
+from ..optimization.defaults import (
+    DEFAULT_ANNEAL_SEED,
+    DEFAULT_COARSE_PRESOLVE,
+    DEFAULT_COARSE_SCALE_BINS,
+    DEFAULT_COARSE_THETA_BINS,
+    DEFAULT_INCLUDE_MIRROR_STROKE,
+    DEFAULT_NUM_RESTARTS,
+    DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+)
+from ..optimization.run import run_simulated_annealing
+from ..optimization.types import AnnealOptions, OptimizeWeights, TraceStep
 from .preview import ways_raw_preview
 
 router = APIRouter()
@@ -64,6 +83,85 @@ class GraphPreviewBody(BaseModel):
     geojson: dict[str, Any]
     bbox: BBoxBody
     options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
+
+
+class StrokePointBody(BaseModel):
+    x: float
+    y: float
+
+
+class OptimizeWeightsBody(BaseModel):
+    shape: float = WEIGHT_SHAPE
+    length: float = WEIGHT_LENGTH
+    edge_count: float = WEIGHT_EDGE_COUNT
+    turn: float = WEIGHT_TURN
+    unreachable: float = WEIGHT_UNREACHABLE
+
+
+class AnnealOptionsBody(BaseModel):
+    """デバッグ UI が送る探索オプション（離散グリッド）。"""
+
+    optimization_budget_seconds: float = Field(
+        DEFAULT_OPTIMIZATION_BUDGET_SECONDS, ge=0.05, le=120.0
+    )
+    seed: int = DEFAULT_ANNEAL_SEED
+    num_restarts: int = Field(DEFAULT_NUM_RESTARTS, ge=1, le=64)
+    include_mirror_stroke: bool = DEFAULT_INCLUDE_MIRROR_STROKE
+    coarse_presolve: bool = DEFAULT_COARSE_PRESOLVE
+    coarse_theta_bins: int = Field(DEFAULT_COARSE_THETA_BINS, ge=2, le=64)
+    coarse_scale_bins: int = Field(DEFAULT_COARSE_SCALE_BINS, ge=1, le=32)
+
+
+def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
+    if body is None:
+        return AnnealOptions()
+    return replace(
+        AnnealOptions(),
+        optimization_budget_seconds=body.optimization_budget_seconds,
+        seed=body.seed,
+        num_restarts=body.num_restarts,
+        include_mirror_stroke=body.include_mirror_stroke,
+        coarse_presolve=body.coarse_presolve,
+        coarse_theta_bins=body.coarse_theta_bins,
+        coarse_scale_bins=body.coarse_scale_bins,
+    )
+
+
+class DebugOptimizeBody(BaseModel):
+    """`graph-preview` と同一のグラフ入力に、キャンバス座標のストロークと目標距離を足す。"""
+
+    geojson: dict[str, Any]
+    bbox: BBoxBody
+    options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
+    stroke_points: list[StrokePointBody] = Field(..., min_length=2)
+    target_km: float | None = Field(
+        default=None,
+        description="目標距離（km）。null のとき目標距離なし（長さ項の重み 0 で形に寄せる）",
+    )
+    weights: OptimizeWeightsBody | None = None
+    anneal: AnnealOptionsBody | None = None
+    record_trace: bool = True
+
+    @field_validator("target_km")
+    @classmethod
+    def validate_target_km(cls, v: float | None) -> float | None:
+        if v is None:
+            return None
+        if v < 0 or v > 800:
+            raise ValueError("target_km must be between 0 and 800 when set")
+        return v
+
+
+def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
+    return {
+        "step_index": t.step_index,
+        "temperature": t.temperature,
+        "accepted": t.accepted,
+        "score_total": t.score_total,
+        "score_terms": t.score_terms,
+        "transform": t.transform,
+        "edge_ids": t.edge_ids,
+    }
 
 
 @router.get("/ways")
@@ -139,4 +237,61 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
             "nodes": nodes_fc,
             "edges": edges_fc,
         },
+    }
+
+
+@router.post("/optimize")
+async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
+    b = body.bbox
+    if b.min_lat >= b.max_lat or b.min_lon >= b.max_lon:
+        raise HTTPException(status_code=400, detail="Invalid bbox")
+
+    fc = body.geojson
+    if fc.get("type") != "FeatureCollection":
+        raise HTTPException(status_code=400, detail="geojson must be a FeatureCollection")
+
+    lon0, lat0 = bbox_center_lon_lat(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
+    opts = GraphPreprocessOptions(**body.options.model_dump())
+    built = build_graph_from_geojson(fc, lon0, lat0, opts)
+
+    w_body = body.weights
+    weights = OptimizeWeights(**w_body.model_dump()) if w_body else OptimizeWeights()
+
+    a_body = body.anneal
+    anneal = _anneal_body_to_options(a_body)
+
+    stroke_payload = [p.model_dump() for p in body.stroke_points]
+
+    opt_result = run_simulated_annealing(
+        built.graph,
+        stroke_payload,
+        lon0,
+        lat0,
+        body.target_km,
+        weights=weights,
+        opt=anneal,
+        record_trace=body.record_trace,
+    )
+
+    projection_summary = (
+        "表示範囲の中心を原点とした平面座標（メートル換算）でグラフを構築しました。"
+    )
+    steps = [_trace_step_to_dict(s) for s in opt_result.trace_steps]
+    return {
+        "trace_format_version": 1,
+        "projection": {
+            "lon0": lon0,
+            "lat0": lat0,
+            "mode": "local_tangent_plane",
+            "summary": projection_summary,
+        },
+        "projection_summary": projection_summary,
+        "stats": built.stats,
+        "candidates_geojson": opt_result.candidates_geojson,
+        "best_score": opt_result.best_score,
+        "best_breakdown": opt_result.best_breakdown.as_dict(),
+        "route_length_m": opt_result.best_route_length_m,
+        "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
+        "optimizer_meta": opt_result.optimizer_meta,
+        "steps": steps,
     }

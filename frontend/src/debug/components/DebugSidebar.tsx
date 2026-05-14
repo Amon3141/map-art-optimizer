@@ -40,6 +40,9 @@ export type DebugSidebarProps = {
   graphLoading: boolean
   graphError: string | null
   graphPreview: GraphPreviewResponse | null
+  /** グラフが表示できているとき、最適化フローへの導線 */
+  showOptimizeCta?: boolean
+  onEnterOptimize?: () => void
 }
 
 export function DebugSidebar({
@@ -64,6 +67,8 @@ export function DebugSidebar({
   graphLoading,
   graphError,
   graphPreview,
+  showOptimizeCta = false,
+  onEnterOptimize,
 }: DebugSidebarProps) {
   const features = geojson?.features ?? []
   const fetchedWayCount = geojson != null ? features.length : null
@@ -96,7 +101,13 @@ export function DebugSidebar({
   return (
     <aside className="flex min-h-0 w-full flex-1 flex-col gap-4.5 overflow-hidden p-5 pb-4 lg:max-w-sm lg:h-full lg:flex-none lg:min-h-0 lg:overflow-visible lg:shrink-0 lg:py-5 lg:pl-5 lg:pr-0">
       <div className="shrink-0 flex flex-col gap-2.5">
-        <h1 className="text-xl font-semibold tracking-tight text-stone-800">デバッグページ</h1>
+        <Link
+          to="/"
+          className="w-fit shrink-0 text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"
+        >
+          ← アプリに戻る
+        </Link>
+        <h1 className="mb-1 text-xl font-semibold tracking-tight text-stone-800">データ前処理</h1>
         <div
           className="inline-flex w-full shrink-0 rounded-xl border border-dashed border-stone-400 bg-white p-0.5 shadow-sm"
           role="group"
@@ -373,6 +384,15 @@ export function DebugSidebar({
                   {graphPreview.stats.edge_count ?? '—'}
                 </p>
               ) : null}
+              {showOptimizeCta && onEnterOptimize ? (
+                <button
+                  type="button"
+                  onClick={onEnterOptimize}
+                  className="mt-3 w-full rounded-xl border border-dashed border-[#4a6f8a]/50 bg-[#f3f6f8]/90 px-3 py-2.5 text-sm font-medium text-[#2d4a5e] shadow-sm hover:bg-[#e8eef3]"
+                >
+                  このグラフで形を探索 →
+                </button>
+              ) : null}
             </div>
             {!hasRoadData ? (
               <p className="shrink-0 text-sm text-stone-500">
@@ -446,13 +466,6 @@ export function DebugSidebar({
           </>
         )}
       </div>
-
-      <Link
-        to="/"
-        className="mt-auto shrink-0 text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"
-      >
-        ← アプリに戻る
-      </Link>
     </aside>
   )
 }

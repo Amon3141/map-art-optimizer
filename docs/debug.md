@@ -33,6 +33,7 @@
 | 置き場 | 役割 |
 | ------ | ---- |
 | [backend/app/debug/](../backend/app/debug/) | **`/api/debug` 配下のルート**と、**そのレスポンスにしか使わない**処理のみ（例: テキストプレビュー用の要約、way 件数上限チェック）。 |
+| [backend/app/optimization/](../backend/app/optimization/) | **最適化ロジック**（本番パイプラインからも import。`/api/debug/optimize` はここを呼ぶ薄い層）。 |
 | [backend/app/osm/](../backend/app/osm/) | OSM 由来データの **本番前処理でも使う変換**（例: Overpass クライアント、way 要素 → GeoJSON FeatureCollection、GeoJSON → 道路グラフ取り込み）。 |
 | [backend/app/preprocess/](../backend/app/preprocess/) | **投影済み `RoadGraph` 上の前処理**（オプション適用・型定義）。デバッグのグラフプレビューからも import。 |
 
@@ -41,6 +42,40 @@
 ### ルーター登録
 
 - [backend/app/main.py](../backend/app/main.py): `app.include_router(debug_router, prefix="/api/debug", ...)`。`debug_router` は `app.debug` パッケージから import。
+
+## 最適化（グリッド探索）のトレース・結果データとデバッグ
+
+最適化アルゴリズムの**入出力の形**とスコアの定義は [optimization.md](./optimization.md) の「実装ベースライン」に書く。**ここでは「どう保存するか・どうデバッグするか」**（運用・UI）に限定する。
+
+### サーバ側の保存
+
+- **現状、サーバはレスポンスを永続化しない。** `POST /api/debug/optimize` は同期的に JSON を返すだけ（DB・ファイル出力なし）。
+- 再現や共有のために残したい場合は、開発者側で **HTTP レスポンス全体をファイルに保存**する（例: ブラウザ開発者ツールの Network でレスポンスをコピー、`curl` の出力を `>` でリダイレクト、Playwright 等で取得）。
+
+### レスポンスに含まれるもの（保存時の単位）
+
+- **`candidates_geojson`**: ベスト候補 1 本の WGS84 `LineString`（再描画にそのまま使える）。
+- **`steps`**: 最適化のスナップショット（現状はベスト 1 ステップ中心）。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコアのみ。
+- **`trace_format_version`**: 現状 `1`。クライアントや後処理スクリプトは、この番号でスキーマ互換を判断できるようにする（形式変更時はバージョンを上げる）。
+
+### フロント（デバッグページ）でのデバッグ
+
+1. **前処理フロー**で道路を取得し、グラフモードで `graph-preview` が成功した状態にする（[`DebugSidebar`](../frontend/src/debug/components/DebugSidebar.tsx)）。
+2. **「このグラフで形を探索」**で最適化サイドバー（[`DebugOptimizePanel`](../frontend/src/debug/components/DebugOptimizePanel.tsx)）へ遷移。
+3. 手書きストローク・目標距離（または「目標距離を無視」）・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。結果は **ページの React 状態にのみ保持**（リロードで消える）。
+4. **マップ上の表示**
+   - **ベスト候補**: `candidates_geojson` をそのままオーバーレイ。
+   - **トレーススライダー**: `steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
+     → トレースを見るには **同じセッションで取得済みのグラフ GeoJSON** が必要。保存した JSON だけでは、edges が別途必要。
+
+### オフラインでトレースを再現するとき
+
+- 保存物に **`optimize` の JSON** と、対応する **`graph-preview` 応答の `graph_geojson.edges`**（および投影 `lon0`/`lat0` が分かること）があれば、`edge_ids` からルート線を復元できる。
+- **`seed` とリクエストボディが同じ**なら、実装が変わらない限りサーバ上の探索は再現可能（デバッグ用の決定性）。
+
+### 本番との境界
+
+- トレースの冗長保存・長期保管・ユーザー向けエクスポートは **本番仕様としては未着手**。必要になったら `app/optimization/` の結果型を流用しつつ、保存先と PII 方針（`product.md` のメモ）を決めてから `app/debug` 以外に載せる。
 
 ## 「検証完了 → 本番へ載せる」ときの流れ
 
@@ -51,4 +86,5 @@
 ## 関連ドキュメント
 
 - [preprocess.md](./preprocess.md) — H0 の段階（投影・グラフ化・索引など）と検証観点。
+- [optimization.md](./optimization.md) — 最適化の要件・実装ベースライン（API フィールド・スコア項など）。**トレースの保存・UI での見方は本文書の「最適化（グリッド探索）のトレース・結果データとデバッグ」**。
 - [architecture.md](./architecture.md) — Overpass を FastAPI がプロキシする経路。

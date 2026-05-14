@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DebugOptimizePanel } from '../debug/components/DebugOptimizePanel'
 import { DebugSidebar, type DebugPanelMode } from '../debug/components/DebugSidebar'
 import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugMapPanel'
 import { fitMapToLineString } from '../debug/lib/fitMapToWay'
@@ -17,6 +18,8 @@ import {
   type DebugHighwayIncludeSelection,
   type DebugHighwayTag,
 } from '../debug/lib/debugHighwayInclude'
+
+type DebugFlow = 'preprocess' | 'optimize'
 
 /** デバッグ用: Overpass → OSM GeoJSON → 平面グラフの可視化 */
 export function DebugPage() {
@@ -46,6 +49,8 @@ export function DebugPage() {
   const [graphError, setGraphError] = useState<string | null>(null)
   const [graphFitTrigger, setGraphFitTrigger] = useState(0)
   const prevMapViewModeRef = useRef<DebugMapViewMode>(mapViewMode)
+  const [debugFlow, setDebugFlow] = useState<DebugFlow>('preprocess')
+  const [routeOverlay, setRouteOverlay] = useState<GeoJSON.FeatureCollection | null>(null)
 
   const onMapReady = useCallback((map: MapLibreMap) => {
     mapRef.current = map
@@ -187,31 +192,78 @@ export function DebugPage() {
     setHighwayInclude((prev) => ({ ...prev, [value]: checked }))
   }
 
+  const getMapBounds = useCallback(() => {
+    const map = mapRef.current
+    if (!map?.loaded()) return null
+    const b = map.getBounds()
+    return {
+      min_lon: b.getWest(),
+      min_lat: b.getSouth(),
+      max_lon: b.getEast(),
+      max_lat: b.getNorth(),
+    }
+  }, [])
+
+  const showOptimizeCta =
+    debugFlow === 'preprocess' &&
+    mapViewMode === 'graph' &&
+    graphPreview != null &&
+    !graphLoading &&
+    (geojson?.features?.length ?? 0) > 0
+
+  const handleEnterOptimize = useCallback(() => {
+    setDebugFlow('optimize')
+    setRouteOverlay(null)
+    setMapViewMode('graph')
+  }, [])
+
+  const handleBackFromOptimize = useCallback(() => {
+    setDebugFlow('preprocess')
+    setRouteOverlay(null)
+  }, [])
+
+  const handleRouteOverlayChange = useCallback((fc: GeoJSON.FeatureCollection | null) => {
+    setRouteOverlay(fc)
+  }, [])
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-0 bg-[#faf8f4] lg:flex-row lg:gap-5">
-      <DebugSidebar
-        loading={loading}
-        error={error}
-        textDump={textDump}
-        geojson={geojson}
-        waysFetchedCount={waysFcRaw?.features?.length ?? null}
-        highwayInclude={highwayInclude}
-        onHighwayIncludeChecked={onHighwayIncludeChecked}
-        roadFilterOpen={roadFilterOpen}
-        onRoadFilterOpenChange={setRoadFilterOpen}
-        panelMode={panelMode}
-        onPanelModeChange={setPanelMode}
-        selectedWayId={selectedWayId}
-        onSelectWay={handleSelectWay}
-        onFetchWays={fetchWays}
-        mapViewMode={mapViewMode}
-        onMapViewModeChange={setMapViewMode}
-        graphOptions={graphOptionsNormalized}
-        onGraphOptionsChange={setGraphOptionsNormalized}
-        graphLoading={graphLoading}
-        graphError={graphError}
-        graphPreview={graphPreview}
-      />
+      {debugFlow === 'preprocess' ? (
+        <DebugSidebar
+          loading={loading}
+          error={error}
+          textDump={textDump}
+          geojson={geojson}
+          waysFetchedCount={waysFcRaw?.features?.length ?? null}
+          highwayInclude={highwayInclude}
+          onHighwayIncludeChecked={onHighwayIncludeChecked}
+          roadFilterOpen={roadFilterOpen}
+          onRoadFilterOpenChange={setRoadFilterOpen}
+          panelMode={panelMode}
+          onPanelModeChange={setPanelMode}
+          selectedWayId={selectedWayId}
+          onSelectWay={handleSelectWay}
+          onFetchWays={fetchWays}
+          mapViewMode={mapViewMode}
+          onMapViewModeChange={setMapViewMode}
+          graphOptions={graphOptionsNormalized}
+          onGraphOptionsChange={setGraphOptionsNormalized}
+          graphLoading={graphLoading}
+          graphError={graphError}
+          graphPreview={graphPreview}
+          showOptimizeCta={showOptimizeCta}
+          onEnterOptimize={handleEnterOptimize}
+        />
+      ) : (
+        <DebugOptimizePanel
+          geojson={geojson}
+          graphOptions={graphOptionsNormalized}
+          graphPreview={graphPreview}
+          onBack={handleBackFromOptimize}
+          getMapBounds={getMapBounds}
+          onRouteOverlayChange={handleRouteOverlayChange}
+        />
+      )}
 
       <main className="flex min-h-0 min-w-0 shrink-0 flex-col px-3 pb-3 pt-1.5 max-lg:h-[min(42vh,360px)] max-lg:min-h-[260px] max-lg:flex-none lg:min-h-0 lg:flex-1 lg:px-5 lg:pb-5 lg:pl-0 lg:pt-5">
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] max-lg:min-h-0 lg:min-h-[280px]">
@@ -223,6 +275,7 @@ export function DebugPage() {
             overlaySelectedId={selectedWayId}
             fitOsmOverlayToData={false}
             graphFitTrigger={graphFitTrigger}
+            routeOverlay={debugFlow === 'optimize' ? routeOverlay : null}
             onMapReady={onMapReady}
           />
         </div>
