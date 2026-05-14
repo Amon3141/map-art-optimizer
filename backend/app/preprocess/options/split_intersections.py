@@ -1,4 +1,4 @@
-"""Split edges at interior segment intersections."""
+"""線分同士の内部交差で辺を分割する。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 from shapely import STRtree
 from shapely.geometry import LineString, Point
 
-from .helpers import _dist, nearest_point_on_segment
+from ..helpers import _dist, nearest_point_on_segment
 from ..graph_model import InternalEdge, InternalNode, RoadGraph
 
 SEG_PT_TOL_M = 0.05

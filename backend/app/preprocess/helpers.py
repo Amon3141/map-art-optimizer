@@ -1,10 +1,10 @@
-"""Cross-step helpers shared by multiple graph_build modules."""
+"""前処理の複数モジュールで共有する補助関数（ステップ横断）。"""
 
 from __future__ import annotations
 
 import math
 
-from ..graph_model import InternalEdge, RoadGraph
+from .graph_model import InternalEdge, RoadGraph
 
 
 def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:

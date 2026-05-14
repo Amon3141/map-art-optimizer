@@ -1,4 +1,4 @@
-"""OSM way → road graph pipeline (debug / preprocess). Public API re-exported here."""
+"""道路グラフの前処理（投影済みメートル・メモリ内）。公開 API の再エクスポート。"""
 
 from .defaults import (
     DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
@@ -15,17 +15,8 @@ from .defaults import (
     DEFAULT_SNAP_EPSILON_M,
     DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
 )
-from .pipeline import (
-    GraphBuildOptions,
-    GraphBuildResult,
-    WayPolyline,
-    apply_all_graph_build_options,
-    build_graph_from_geojson,
-    build_native_graph,
-    classify_vertex_role,
-    graph_to_geojson_fc,
-    parse_way_features,
-)
+from .graph_model import InternalEdge, InternalNode, RoadGraph
+from .pipeline import GraphPreprocessOptions, preprocess_road_graph
 
 __all__ = [
     "DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED",
@@ -41,13 +32,9 @@ __all__ = [
     "DEFAULT_SNAP_ENDPOINTS_ENABLED",
     "DEFAULT_SNAP_EPSILON_M",
     "DEFAULT_SPLIT_INTERSECTIONS_ENABLED",
-    "GraphBuildOptions",
-    "GraphBuildResult",
-    "WayPolyline",
-    "apply_all_graph_build_options",
-    "build_graph_from_geojson",
-    "build_native_graph",
-    "classify_vertex_role",
-    "graph_to_geojson_fc",
-    "parse_way_features",
+    "GraphPreprocessOptions",
+    "InternalEdge",
+    "InternalNode",
+    "RoadGraph",
+    "preprocess_road_graph",
 ]

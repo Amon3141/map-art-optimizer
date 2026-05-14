@@ -1,21 +1,20 @@
-"""Graph build metrics and node visualization metadata."""
+"""道路グラフ前処理のメトリクスと、ノード可視化用メタデータのテスト。"""
 
 import time
 
 import math
 
-from app.osm.graph_build import (
-    GraphBuildOptions,
-    apply_all_graph_build_options,
+from app.osm.ingest import (
     build_graph_from_geojson,
     build_native_graph,
     graph_to_geojson_fc,
     parse_way_features,
 )
 from app.osm.projection import EARTH_RADIUS_M, xy_m_to_lon_lat
+from app.preprocess.pipeline import GraphPreprocessOptions, preprocess_road_graph
 
 
-def _graph_opts_road_merge_for_compact_fixtures(**kwargs) -> GraphBuildOptions:
+def _graph_opts_road_merge_for_compact_fixtures(**kwargs) -> GraphPreprocessOptions:
     """狭い間隔の並列線フィクスチャ用。UI 既定（重なり 100m 等）では候補が出ない。"""
     base: dict = {
         "merge_duplicate_roads_enabled": True,
@@ -24,7 +23,7 @@ def _graph_opts_road_merge_for_compact_fixtures(**kwargs) -> GraphBuildOptions:
         "road_merge_min_overlap_ratio": 0.25,
     }
     base.update(kwargs)
-    return GraphBuildOptions(**base)
+    return GraphPreprocessOptions(**base)
 
 
 def test_prune_collinear_chain_reduces_graph():
@@ -46,9 +45,9 @@ def test_prune_collinear_chain_reduces_graph():
         ],
     }
     r0 = build_graph_from_geojson(
-        fc, 0.002, 0.0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=False)
+        fc, 0.002, 0.0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=False)
     )
-    r1 = build_graph_from_geojson(fc, 0.002, 0.0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=True))
+    r1 = build_graph_from_geojson(fc, 0.002, 0.0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=True))
     assert r0.stats["node_count"] == 5
     assert r0.stats["edge_count"] == 4
     assert r1.stats["node_count"] == 2
@@ -75,9 +74,9 @@ def test_prune_preserves_sharp_turn():
         ],
     }
     r0 = build_graph_from_geojson(
-        fc, 0.0005, 0.0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=False)
+        fc, 0.0005, 0.0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=False)
     )
-    r1 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=True))
+    r1 = build_graph_from_geojson(fc, 0.0005, 0.0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=True))
     assert r0.stats["node_count"] == 3
     assert r1.stats["node_count"] == 3
     assert r1.stats["edge_count"] == 2
@@ -115,9 +114,9 @@ def test_prune_preserves_gentle_arc():
         ],
     }
     r0 = build_graph_from_geojson(
-        fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=False)
+        fc, lon0, lat0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=False)
     )
-    r1 = build_graph_from_geojson(fc, lon0, lat0, GraphBuildOptions(remove_redundant_chain_vertices_enabled=True))
+    r1 = build_graph_from_geojson(fc, lon0, lat0, GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=True))
     assert r1.stats["node_count"] < r0.stats["node_count"]
     assert r1.stats["node_count"] > 2
     assert r1.stats["edge_count"] > 1
@@ -144,7 +143,7 @@ def test_prune_chain_accum_threshold_metric_echoes_option():
         fc,
         0.002,
         0.0,
-        GraphBuildOptions(
+        GraphPreprocessOptions(
             remove_redundant_chain_vertices_enabled=True,
             prune_chain_accum_angle_deg=42.5,
         ),
@@ -191,7 +190,7 @@ def test_prune_signed_cancellation_collapses_zigzag():
         fc,
         lon0,
         lat0,
-        GraphBuildOptions(
+        GraphPreprocessOptions(
             remove_redundant_chain_vertices_enabled=True,
             prune_chain_accum_angle_deg=15.0,
         ),
@@ -215,7 +214,7 @@ def test_vertex_role_and_pile_in_geojson():
             }
         ],
     }
-    opts = GraphBuildOptions(remove_redundant_chain_vertices_enabled=False)
+    opts = GraphPreprocessOptions(remove_redundant_chain_vertices_enabled=False)
     r = build_graph_from_geojson(fc, 0.001, 0.0, opts)
     nodes_fc, _edges = graph_to_geojson_fc(r.graph, r.lon0, r.lat0, opts)
     props = [f["properties"] for f in nodes_fc["features"]]
@@ -251,7 +250,7 @@ def test_connect_osm_merge_metrics():
             },
         ],
     }
-    opts = GraphBuildOptions(connect_osm_node_ids_enabled=True)
+    opts = GraphPreprocessOptions(connect_osm_node_ids_enabled=True)
     r = build_graph_from_geojson(fc, 0.0015, 0.0, opts)
     cm = r.step_metrics.get("connect_osm") or {}
     assert cm.get("graph_vertices_removed_by_merge", 0) >= 1
@@ -280,7 +279,7 @@ def test_split_intersection_one_crossing():
             },
         ],
     }
-    opts = GraphBuildOptions(split_intersections_enabled=True)
+    opts = GraphPreprocessOptions(split_intersections_enabled=True)
     r = build_graph_from_geojson(fc, 0.0001, 0.0, opts)
     sp = r.step_metrics.get("split") or {}
     assert sp.get("intersection_splits_applied", 0) >= 1
@@ -302,7 +301,7 @@ def test_snap_skips_adjacent_vertices_same_edge_even_if_close():
             },
         ],
     }
-    opts = GraphBuildOptions(snap_endpoints_enabled=True, snap_epsilon_m=5.0)
+    opts = GraphPreprocessOptions(snap_endpoints_enabled=True, snap_epsilon_m=5.0)
     r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
     assert r.stats["node_count"] == 2
     assert r.stats["edge_count"] == 1
@@ -334,7 +333,7 @@ def test_snap_skips_interior_interior_even_if_close():
             },
         ],
     }
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         snap_endpoints_enabled=True,
         snap_epsilon_m=2.0,
         remove_redundant_chain_vertices_enabled=False,
@@ -363,7 +362,7 @@ def test_snap_endpoints_merge_close_vertices():
             },
         ],
     }
-    opts = GraphBuildOptions(snap_endpoints_enabled=True, snap_epsilon_m=5.0)
+    opts = GraphPreprocessOptions(snap_endpoints_enabled=True, snap_epsilon_m=5.0)
     r = build_graph_from_geojson(fc, 0.0, 0.0, opts)
     sn = r.step_metrics.get("snap") or {}
     assert sn.get("snap_clusters", 0) >= 1
@@ -397,14 +396,14 @@ def test_connect_osm_two_disjoint_shared_ids():
             },
         ],
     }
-    opts = GraphBuildOptions(connect_osm_node_ids_enabled=True)
+    opts = GraphPreprocessOptions(connect_osm_node_ids_enabled=True)
     r = build_graph_from_geojson(fc, 0.001, 0.005, opts)
     cm = r.step_metrics.get("connect_osm") or {}
     assert cm.get("osm_id_groups_merged") == 2
     assert cm.get("graph_vertices_removed_by_merge") == 2
 
 
-def test_all_graph_options_enabled_crossing_fixture():
+def test_all_preprocess_options_enabled_crossing_fixture():
     fc = {
         "type": "FeatureCollection",
         "features": [
@@ -420,7 +419,7 @@ def test_all_graph_options_enabled_crossing_fixture():
             },
         ],
     }
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         connect_osm_node_ids_enabled=True,
         split_intersections_enabled=True,
         snap_endpoints_enabled=True,
@@ -466,7 +465,7 @@ def test_road_merge_remaps_source_junction_to_representative_anchor():
             _line_feature_from_xy(lon0, lat0, 3, [(55, 5), (55, 35)], 300),
         ],
     }
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         snap_endpoints_enabled=True,
         snap_epsilon_m=1.0,
         merge_duplicate_roads_enabled=True,
@@ -505,7 +504,7 @@ def test_road_merge_unions_three_parallel_ways():
             _line_feature_from_xy(lon0, lat0, 3, [(0, 8), (140, 8)], 300),
         ],
     }
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         merge_duplicate_roads_enabled=True,
         road_merge_distance_m=10.0,
         road_merge_min_overlap_m=20.0,
@@ -611,7 +610,7 @@ def test_road_merge_effective_max_anchor_uses_auto_when_zero():
     assert rm.get("max_anchor_offset_m", 0) >= 50.0
 
 
-def test_apply_all_graph_build_options_matches_build_graph_steps():
+def test_preprocess_road_graph_matches_geojson_ingest_steps():
     fc = {
         "type": "FeatureCollection",
         "features": [
@@ -632,7 +631,7 @@ def test_apply_all_graph_build_options_matches_build_graph_steps():
 
     g1 = build_native_graph(ways, proj)
     g2 = build_native_graph(ways, proj)
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         connect_osm_node_ids_enabled=True,
         snap_endpoints_enabled=True,
         snap_epsilon_m=2.0,
@@ -640,14 +639,14 @@ def test_apply_all_graph_build_options_matches_build_graph_steps():
         split_intersections_enabled=True,
         remove_redundant_chain_vertices_enabled=True,
     )
-    m1 = apply_all_graph_build_options(g1, opts)
+    m1 = preprocess_road_graph(g1, opts)
     r2 = build_graph_from_geojson(fc, lon0, lat0, opts)
     assert m1.keys() == r2.step_metrics.keys()
     assert len(g1.nodes) == len(r2.graph.nodes)
     assert len(g1.edges) == len(r2.graph.edges)
 
 
-def test_graph_build_full_options_time_budget_on_long_chain():
+def test_preprocess_road_graph_full_options_time_budget_on_long_chain():
     """~4k 頂点・全オプション ON で数秒以内（性能退行のガード）。"""
     lon0, lat0 = 139.0, 36.0
     n_pts = 4001
@@ -663,7 +662,7 @@ def test_graph_build_full_options_time_budget_on_long_chain():
             }
         ],
     }
-    opts = GraphBuildOptions(
+    opts = GraphPreprocessOptions(
         connect_osm_node_ids_enabled=True,
         snap_endpoints_enabled=True,
         snap_epsilon_m=2.0,

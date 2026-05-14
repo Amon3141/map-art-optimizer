@@ -1,4 +1,4 @@
-"""Merge near-parallel duplicate / corridor roads (chord heuristic + union-find)."""
+"""近接・ほぼ平行な重複道路（回廊）をマージする（弦ヒューリスティック + union-find）。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import numpy as np
 from shapely import STRtree
 from shapely.geometry import LineString
 
-from .defaults import (
+from ..defaults import (
     DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
     DEFAULT_ROAD_MERGE_ANGLE_DEG,
     DEFAULT_ROAD_MERGE_DISTANCE_M,
@@ -19,7 +19,7 @@ from .defaults import (
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
     DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
 )
-from .helpers import (
+from ..helpers import (
     _dist,
     _incident_edges_by_node,
     _merge_edge_osm_way_ids,

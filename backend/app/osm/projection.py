@@ -1,4 +1,4 @@
-"""local tangent plane at reference (lon0, lat0)."""
+"""基準点 (lon0, lat0) における局所接平面（メートル換算）。"""
 
 from __future__ import annotations
 

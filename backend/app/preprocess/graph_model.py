@@ -1,4 +1,4 @@
-"""Mutable road graph in projected meters (debug / preprocessing intermediate)."""
+"""投影メートル座標上の可変道路グラフ（デバッグ／前処理の中間表現）。"""
 
 from __future__ import annotations
 

@@ -5,7 +5,10 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
-from ..osm.graph_build import (
+from ..osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
+from ..osm.overpass import fetch_interpreter
+from ..osm.projection import bbox_center_lon_lat
+from ..preprocess import (
     DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
     DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED,
     DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
@@ -19,12 +22,8 @@ from ..osm.graph_build import (
     DEFAULT_SNAP_ENDPOINTS_ENABLED,
     DEFAULT_SNAP_EPSILON_M,
     DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
-    GraphBuildOptions,
-    build_graph_from_geojson,
-    graph_to_geojson_fc,
+    GraphPreprocessOptions,
 )
-from ..osm.projection import bbox_center_lon_lat
-from ..overpass.client import fetch_interpreter
 from .preview import ways_raw_preview
 
 router = APIRouter()
@@ -40,7 +39,7 @@ class BBoxBody(BaseModel):
     max_lat: float
 
 
-class GraphBuildOptionsBody(BaseModel):
+class GraphPreprocessOptionsBody(BaseModel):
     connect_osm_node_ids_enabled: bool = DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED
     snap_endpoints_enabled: bool = DEFAULT_SNAP_ENDPOINTS_ENABLED
     snap_epsilon_m: float = Field(DEFAULT_SNAP_EPSILON_M, ge=0.05, le=500.0)
@@ -64,7 +63,7 @@ class GraphBuildOptionsBody(BaseModel):
 class GraphPreviewBody(BaseModel):
     geojson: dict[str, Any]
     bbox: BBoxBody
-    options: GraphBuildOptionsBody = Field(default_factory=GraphBuildOptionsBody)
+    options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
 
 
 @router.get("/ways")
@@ -120,7 +119,7 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="geojson must be a FeatureCollection")
 
     lon0, lat0 = bbox_center_lon_lat(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
-    opts = GraphBuildOptions(**body.options.model_dump())
+    opts = GraphPreprocessOptions(**body.options.model_dump())
     result = build_graph_from_geojson(fc, lon0, lat0, opts)
     nodes_fc, edges_fc = graph_to_geojson_fc(result.graph, lon0, lat0, opts)
     projection_summary = (

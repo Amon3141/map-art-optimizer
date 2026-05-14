@@ -1,61 +1,17 @@
-"""
-OSM way 折れ線から平面グラフへの変換パイプライン。
-
-処理順（既定）:
-1. ネイティブトポロジ（way 内の連続頂点間エッジ）
-2. OSM node id による接続（オプション）
-3. 距離ベース snap（オプション）
-4. 重複・並行道路のマージ（オプション）
-5. 道路交差の幾何 split（オプション）
-6. 不要な中間ノード削除（オプション）
-"""
+"""GeoJSON FeatureCollection → RoadGraph 取り込み"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
-from .defaults import (
-    DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
-    DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED,
-    DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED,
-    DEFAULT_SPLIT_INTERSECTIONS_ENABLED,
-    DEFAULT_SNAP_ENDPOINTS_ENABLED,
-    DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG,
-    DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M,
-    DEFAULT_ROAD_MERGE_ANGLE_DEG,
-    DEFAULT_ROAD_MERGE_DISTANCE_M,
-    DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M,
-    DEFAULT_ROAD_MERGE_MIN_OVERLAP_M,
-    DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO,
-    DEFAULT_SNAP_EPSILON_M,
-)
-from .helpers import _incident_edges_by_node, _node_degrees_from_incident
-from ..graph_model import InternalEdge, InternalNode, RoadGraph
-from ..projection import lon_lat_to_xy_m, xy_m_to_lon_lat
+from app.preprocess.graph_model import InternalEdge, InternalNode, RoadGraph
+from app.preprocess.helpers import _incident_edges_by_node, _node_degrees_from_incident
+from app.preprocess.pipeline import GraphPreprocessOptions, preprocess_road_graph
+
+from .projection import lon_lat_to_xy_m, xy_m_to_lon_lat
 
 PILE_LONLAT_DECIMALS = 5
-
-
-@dataclass
-class GraphBuildOptions:
-    connect_osm_node_ids_enabled: bool = DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED
-    
-    snap_endpoints_enabled: bool = DEFAULT_SNAP_ENDPOINTS_ENABLED
-    snap_epsilon_m: float = DEFAULT_SNAP_EPSILON_M
-    
-    merge_duplicate_roads_enabled: bool = DEFAULT_MERGE_DUPLICATE_ROADS_ENABLED
-    road_merge_distance_m: float = DEFAULT_ROAD_MERGE_DISTANCE_M
-    road_merge_angle_deg: float = DEFAULT_ROAD_MERGE_ANGLE_DEG
-    road_merge_min_overlap_m: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_M
-    road_merge_min_overlap_ratio: float = DEFAULT_ROAD_MERGE_MIN_OVERLAP_RATIO
-    road_merge_anchor_delta_m: float = DEFAULT_ROAD_MERGE_ANCHOR_DELTA_M
-    road_merge_max_anchor_offset_m: float = DEFAULT_ROAD_MERGE_MAX_ANCHOR_OFFSET_M
-    
-    split_intersections_enabled: bool = DEFAULT_SPLIT_INTERSECTIONS_ENABLED
-    
-    remove_redundant_chain_vertices_enabled: bool = DEFAULT_REMOVE_REDUNDANT_CHAIN_VERTICES_ENABLED
-    prune_chain_accum_angle_deg: float = DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
 
 
 @dataclass
@@ -185,7 +141,7 @@ def graph_to_geojson_fc(
     graph: RoadGraph,
     lon0: float,
     lat0: float,
-    options: GraphBuildOptions,
+    options: GraphPreprocessOptions,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     incident = _incident_edges_by_node(graph)
     deg = _node_degrees_from_incident(incident)
@@ -257,55 +213,11 @@ def graph_to_geojson_fc(
     return nodes_fc, edges_fc
 
 
-def apply_all_graph_build_options(graph: RoadGraph, options: GraphBuildOptions) -> dict[str, Any]:
-    """5 つのオプションを既定順（connect_osm → snap → road_merge → split → prune）でグラフに適用し、step_metrics を返す。"""
-    step_metrics: dict[str, Any] = {}
-    if options.connect_osm_node_ids_enabled:
-        from .connect_osm import merge_by_osm_node_id
-
-        step_metrics["connect_osm"] = merge_by_osm_node_id(graph)
-        step_metrics["connect_osm"]["merged_vertex_count"] = sum(
-            1 for n in graph.nodes.values() if n.merged_from_osm_id
-        )
-
-    if options.snap_endpoints_enabled:
-        from .snap_endpoints import snap_endpoints
-
-        step_metrics["snap"] = snap_endpoints(graph, options.snap_epsilon_m)
-
-    if options.merge_duplicate_roads_enabled:
-        from .merge_duplicate_roads import merge_duplicate_roads
-
-        step_metrics["road_merge"] = merge_duplicate_roads(
-            graph,
-            max_distance_m=options.road_merge_distance_m,
-            max_angle_deg=options.road_merge_angle_deg,
-            min_overlap_m=options.road_merge_min_overlap_m,
-            min_overlap_ratio=options.road_merge_min_overlap_ratio,
-            anchor_delta_m=options.road_merge_anchor_delta_m,
-            max_anchor_offset_m=options.road_merge_max_anchor_offset_m,
-        )
-
-    if options.split_intersections_enabled:
-        from .split_intersections import run_intersection_splits
-
-        step_metrics["split"] = run_intersection_splits(graph)
-
-    if options.remove_redundant_chain_vertices_enabled:
-        from .prune_chains import prune_redundant_chain_vertices
-
-        step_metrics["prune_chains"] = prune_redundant_chain_vertices(
-            graph, options.prune_chain_accum_angle_deg
-        )
-
-    return step_metrics
-
-
 def build_graph_from_geojson(
     geojson_fc: dict[str, Any],
     lon0: float,
     lat0: float,
-    options: GraphBuildOptions,
+    options: GraphPreprocessOptions,
 ) -> GraphBuildResult:
     ways = parse_way_features(geojson_fc)
 
@@ -313,7 +225,7 @@ def build_graph_from_geojson(
         return lon_lat_to_xy_m(lon0, lat0, lon, lat)
 
     graph = build_native_graph(ways, proj)
-    step_metrics = apply_all_graph_build_options(graph, options)
+    step_metrics = preprocess_road_graph(graph, options)
 
     synth = sum(1 for n in graph.nodes.values() if len(n.source_osm_node_ids) == 0)
     stats = {

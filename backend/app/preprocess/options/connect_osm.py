@@ -1,4 +1,4 @@
-"""Merge graph vertices that share the same OSM node id."""
+"""同一 OSM node id を共有するグラフ頂点をマージする。"""
 
 from __future__ import annotations
 

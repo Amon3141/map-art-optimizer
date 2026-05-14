@@ -85,9 +85,9 @@ OSM では、十字のように交わる縦道 `A–B` と横道 `C–D` が、*
 - セグメント–セグメントの交差判定、**ほぼ平行・近接のみ**の誤検出除外。
 - **端点一致**（id マージや距離スナップ）で既にトポロジが閉じている場合との **統合順序**（split 前後どちらで id マージするか等）。
 
-**実装済み（デバッグ用）**: bbox・辺数が大きい場合の交差候補絞り込みとして、`app/osm/graph_build/`（Python パッケージ）内の **Shapely STRtree（セグメント bbox の重なりで候補列挙）** を入れた（詳細は §6.1）。
+**実装済み（デバッグ用）**: bbox・辺数が大きい場合の交差候補絞り込みとして、`app/preprocess/options/`（Python パッケージ）内の **Shapely STRtree（セグメント bbox の重なりで候補列挙）** を入れた（詳細は §6.1）。
 
-**製品既定の見込み（`GraphBuildOptions`）**: スピードと効果のバランスから、実験用の 5 ステップのうち **既定で ON にするのは `connect_osm_node_ids_enabled`、`merge_duplicate_roads_enabled`、`remove_redundant_chain_vertices_enabled`（prune）の三つ**、**ε スナップ（`snap_endpoints_enabled`）と交差 split（`split_intersections_enabled`）は OFF** に寄せる想定である（API／UI の最終既定は別途確定）。
+**製品既定の見込み（`GraphPreprocessOptions`）**: スピードと効果のバランスから、実験用の 5 ステップのうち **既定で ON にするのは `connect_osm_node_ids_enabled`、`merge_duplicate_roads_enabled`、`remove_redundant_chain_vertices_enabled`（prune）の三つ**、**ε スナップ（`snap_endpoints_enabled`）と交差 split（`split_intersections_enabled`）は OFF** に寄せる想定である（API／UI の最終既定は別途確定）。
 
 ### B4 — 不要な中間ノード削除（オプション・グラフ構築の最終段）
 
@@ -98,7 +98,7 @@ OSM では、十字のように交わる縦道 `A–B` と横道 `C–D` が、*
 - **幾何（符号付き累積角）**: チェーンを端から一方向に走査し、各削除候補頂点での折れを **符号付き角**（進行方向 `P[i−1]→P[i]→P[i+1]`、`atan2(cross, dot)`、退化辺は 0）として **累積**する。**累積の絶対値**が閾値 **約 10°**（API／UI 既定の `prune_chain_accum_angle_deg` をラジアン化）以上になった頂点を **サンプルとして残す**。超過分は **符号に沿って閾値の整数倍を差し引き**（累積のモジュロ）、残りを次の区間の累積の初期値とする。これにより **一頂点あたりの折れが小さくても** **同符号で積み上がる緩いカーブ**に中間頂点が残り、弦一本への潰れを防ぐ。一方、**符号が打ち消し合う左右振れ**では累積が閾値に届きにくく、遠視で直線に近い見え方として潰しやすい。マージで新設する辺の `polyline_xy_m` は **残した両端点の弦（polyline 2 点）** とし、潰れた区間に含まれていた折れ細部の座標列は連結して保持しない（可視化と「中間ノード除去」の意味を一致させる）。同一 uv 間に複数辺があればすべて削除対象に含める。計算量はチェーン長に線形（頂点あたり `atan2` 1 回程度）。
 - **閉路**: 成分が「すべて削除候補のみの閉路」のときは簡略化をスキップする（レア）。
 
-**実装（`app/osm/graph_build/prune_chains.py`）**: 同一 `{u,v}` 無向キーに辺 id をぶら下げる自前インデックスで「隣接頂点間の辺」を引き、入射リストは **初回だけ全辺スキャン**で構築し、以降は辺の削除・追加に合わせて **増分更新**する。次数 2・同一 way の候補頂点は **`eligible_nodes` 集合**で保持し、マージで入射が変わった頂点（削除辺・新設辺の端点・削除した内部頂点）に対してだけ集合へ載せ直す。始点は **`min(eligible_nodes)`** で決定性を確保。マージ後に次数が変わるため、内部頂点の削除可否は **マージ前の BFS 成分 `comp` と `keep_ids`** で判定する（辺更新後の判定では偽陰性になる）。
+**実装（`app/preprocess/options/prune_chains.py`）**: 同一 `{u,v}` 無向キーに辺 id をぶら下げる自前インデックスで「隣接頂点間の辺」を引き、入射リストは **初回だけ全辺スキャン**で構築し、以降は辺の削除・追加に合わせて **増分更新**する。次数 2・同一 way の候補頂点は **`eligible_nodes` 集合**で保持し、マージで入射が変わった頂点（削除辺・新設辺の端点・削除した内部頂点）に対してだけ集合へ載せ直す。始点は **`min(eligible_nodes)`** で決定性を確保。マージ後に次数が変わるため、内部頂点の削除可否は **マージ前の BFS 成分 `comp` と `keep_ids`** で判定する（辺更新後の判定では偽陰性になる）。
 
 ### H0-c との順序
 
@@ -167,15 +167,15 @@ OSM では同じ道路・近い車線・部分的に重なる way が複数定�
 | **R-tree（Shapely STRtree）** | 辺密度が不均一でもクエリが安定しやすい。 | ライブラリ依存・構築オーバーヘッド。                      |
 
 
-**意思決定**: **本リポジトリのバックエンド（`app/osm/graph_build/` パッケージ）では**、ε スナップ・交差 split・重複道路マージの **空間候補絞り込みに Shapely STRtree** を採用する（`shapely` / `numpy` を `requirements.txt` に固定）。OSM id マージと chain prune は STRtree を用いない。
+**意思決定**: **本リポジトリのバックエンド（`app/preprocess/options/` および `app/preprocess/pipeline.py`）では**、ε スナップ・交差 split・重複道路マージの **空間候補絞り込みに Shapely STRtree** を採用する（`shapely` / `numpy` を `requirements.txt` に固定）。OSM id マージと chain prune は STRtree を用いない。
 
 **bbox クリップ**: Overpass で取得した **探索 bbox 外**の辺は、索引に入れないか、クエリ対象から外す。メモリと索引サイズを抑える。
 
-### 6.1 実装メモ（デバッグ用グラフ構築 `app/osm/graph_build/`）
+### 6.1 実装メモ（デバッグ用グラフ構築 `app/preprocess/`・`app/osm/ingest.py`）
 
 FastAPI の **`/api/debug/graph-preview`** から呼ばれる、OSM GeoJSON → 平面グラフ → 可視化用 GeoJSON までのパイプラインにおいて、**ε スナップ・交差 split・重複道路マージ**の各オプションが ON のときに **Shapely STRtree** で候補絞り込みを行い、大きな way 数でも素朴な全対全にならないようにしている。**OSM id マージ**と **chain prune** は STRtree を使わない（下表）。
 
-**`pipeline.py`（`apply_all_graph_build_options`）**: 5 ステップは **該当オプションが ON のときだけ**対応モジュールを import する。**既定の `defaults.py` では `merge_duplicate_roads_enabled` も ON** のため、デバッグのグラフ構築では **road merge が STRtree（Shapely）を構築・使用**する。Shapely をこのパイプライン呼び出しで使わないようにするには、`merge_duplicate_roads_enabled` と `snap_endpoints_enabled` と `split_intersections_enabled` をすべて OFF にする（例: OSM マージ + prune のみの実験）。他モジュールが先に `shapely` を import していれば別。
+**`app/preprocess/pipeline.py` の `preprocess_road_graph`**: **該当オプションが ON のときだけ**対応モジュールを import する。**既定の `app/preprocess/defaults.py` では `merge_duplicate_roads_enabled` も ON** のため、デバッグのグラフ構築では **road merge が STRtree（Shapely）を構築・使用**する。Shapely をこのパイプライン呼び出しで使わないようにするには、`merge_duplicate_roads_enabled` と `snap_endpoints_enabled` と `split_intersections_enabled` をすべて OFF にする（例: OSM マージ + prune のみの実験）。他モジュールが先に `shapely` を import していれば別。
 
 | 処理 | 要点 |
 | --- | --- |
@@ -220,8 +220,10 @@ H0 は **2 秒優先・最大約 10 秒**の最適化全体バジェットのう
 | 2026-05-09 | B5 **重複・並行道路マージ**を追加。`node id merge -> epsilon snap -> road merge -> intersection split -> chain prune` の順序を追記。 |
 | 2026-05-11 | B5 / §6.1 を **辺–辺候補 + union-find + 成分ごとの代表 way チェーン**への実装に整合。 |
 | 2026-05-12 | グラフ構築コードを **`app/osm/graph_build/` パッケージ**へ整理（`pipeline.py`・ステップ別モジュール・`helpers.py` に共用のみ）。 |
+| 2026-05-13 | レイアウト変更: **`app/preprocess/`**（`pipeline.py`・`defaults.py`・`helpers.py`・`graph_model.py`・`options/` に 5 ステップ）、**`app/osm/ingest.py`**（GeoJSON→グラフ・可視化用 GeoJSON）、**`app/osm/overpass.py`**。旧 `app/overpass/`・`app/osm/graph_build/` を廃止。 |
 | 2026-05-13 | §3 に **製品既定では connect_osm + prune のみ ON 見込み** のメモを追記。 |
 | 2026-05-13 | B4 に **prune 実装**（非 Shapely・増分入射・`eligible_nodes`・`comp` 基準の削除）を追記。§6.1 を **STRtree はスナップ／split／road_merge のみ**と明記し、OSM マージ／prune 行を更新。**`apply_all_graph_build_options` は 5 ステップすべて遅延 import**（Shapely 非経路の明確化）。 |
 | 2026-05-13 | `GraphBuildOptions` / デバッグ API の **ブールに `_enabled` サフィックス**（例: `connect_osm_node_ids_enabled`）。`defaults.py` の定数名も対応。フロントは旧 JSON キーを `normalizeGraphBuildOptions` でエイリアス。 |
 | 2026-05-13 | `defaults.py` で **`merge_duplicate_roads_enabled` を既定 ON** に変更。§3 製品既定・§6.1 の Shapely／lazy import の説明を追随。 |
+| 2026-05-13 | バックエンド命名: **`GraphPreprocessOptions`** / **`preprocess_road_graph`**（旧 `GraphBuildOptions` / `apply_all_graph_build_options`）。§3・§6.1 の記述を追随。 |
 

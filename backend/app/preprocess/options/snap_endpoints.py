@@ -1,4 +1,4 @@
-"""Epsilon snap of way polyline endpoints."""
+"""way 折れ線の端点を ε 近傍でスナップ（結合）する。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 from shapely import STRtree
 from shapely.geometry import Point
 
-from .helpers import _dist
+from ..helpers import _dist
 from ..graph_model import InternalEdge, InternalNode, RoadGraph
 
 from .connect_osm import _merge_source_ids, _uf_find, _uf_union

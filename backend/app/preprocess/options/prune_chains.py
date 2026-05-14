@@ -1,4 +1,4 @@
-"""Prune redundant degree-2 chain vertices on a single OSM way."""
+"""単一 OSM way 上の次数 2 チェーンで、冗長な中間頂点を削除する。"""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import math
 from collections.abc import Callable
 from typing import Any
 
-from .defaults import DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
-from .helpers import (
+from ..defaults import DEFAULT_PRUNE_CHAIN_ACCUM_ANGLE_DEG
+from ..helpers import (
     _incident_edges_by_node,
     _merge_edge_osm_way_ids,
 )

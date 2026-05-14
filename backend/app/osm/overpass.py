@@ -1,3 +1,5 @@
+"""Overpass API（/api/interpreter）への非同期 HTTP クライアント。"""
+
 import os
 from typing import Any
 

@@ -33,8 +33,8 @@
 | 置き場 | 役割 |
 | ------ | ---- |
 | [backend/app/debug/](../backend/app/debug/) | **`/api/debug` 配下のルート**と、**そのレスポンスにしか使わない**処理のみ（例: テキストプレビュー用の要約、way 件数上限チェック）。 |
-| [backend/app/osm/](../backend/app/osm/) | OSM 由来データの **本番前処理でも使う変換**（例: Overpass の way 要素 → GeoJSON FeatureCollection）。 |
-| [backend/app/overpass/](../backend/app/overpass/) | Overpass API への問い合わせなど **プロダクト全体で共有しうるクライアント処理**。 |
+| [backend/app/osm/](../backend/app/osm/) | OSM 由来データの **本番前処理でも使う変換**（例: Overpass クライアント、way 要素 → GeoJSON FeatureCollection、GeoJSON → 道路グラフ取り込み）。 |
+| [backend/app/preprocess/](../backend/app/preprocess/) | **投影済み `RoadGraph` 上の前処理**（オプション適用・型定義）。デバッグのグラフプレビューからも import。 |
 
 `debug` パッケージのルートハンドラは、上記の **再利用モジュールを呼び出す薄い層** に留める。
 
@@ -44,7 +44,7 @@
 
 ## 「検証完了 → 本番へ載せる」ときの流れ
 
-1. ロジックは最初から **`app/osm/`・`app/overpass/` など適切な場所**に実装し、`app/debug/` から呼ぶ。
+1. ロジックは最初から **`app/osm/`・`app/preprocess/` など適切な場所**に実装し、`app/debug/` から呼ぶ。
 2. デバッグ専用の整形・ホワイトリスト・プレビュー文字列の切り詰めなどは **`app/debug/` にのみ**置く。
 3. 本番 API を追加するときは、**同じ関数を import** してパイプラインに組み込む。デバッグ用コードを複製しない。
 

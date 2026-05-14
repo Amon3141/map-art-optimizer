@@ -1,3 +1,5 @@
+"""Overpass / OSM の JSON 要素列と GeoJSON FeatureCollection の相互変換。"""
+
 from typing import Any
 
 

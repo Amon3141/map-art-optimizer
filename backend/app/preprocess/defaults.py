@@ -1,8 +1,8 @@
 """
-グラフ構築の既定値（ブール・距離・角度）。
+グラフ前処理の既定値（ブール・距離・角度）。
 
-フロントの `frontend/src/debug/lib/graphPreview.ts` の `defaultGraphBuildOptions()`
-と同一に保つこと（API 既定・デバッグ UI・テストの基準）。
+フロントの `frontend/src/debug/lib/graphPreview.ts` の `defaultGraphBuildOptions()` と、
+バックエンドの `GraphPreprocessOptions` の既定フィールドと同一に保つこと。
 """
 
 DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED = True

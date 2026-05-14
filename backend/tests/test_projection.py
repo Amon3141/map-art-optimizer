@@ -1,4 +1,4 @@
-"""Projection round-trip sanity check."""
+"""局所接平面投影の往復（lon/lat ↔ xy_m）の妥当性テスト。"""
 
 from app.osm.projection import EARTH_RADIUS_M, lon_lat_to_xy_m, xy_m_to_lon_lat
 
