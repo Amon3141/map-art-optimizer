@@ -352,9 +352,7 @@ export function DebugOptimizePanel({
               {steps.length > 0 ? (
                 <div className="mt-0.5">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label htmlFor="trace-slider" className="text-xs font-medium text-stone-700">
-                      トレース表示
-                    </label>
+                    <span className="text-xs font-medium text-stone-700">トレース表示</span>
                     <button
                       type="button"
                       className="text-[11px] font-medium text-[#4a6f8a] hover:underline"
@@ -363,15 +361,21 @@ export function DebugOptimizePanel({
                       ベストに戻す
                     </button>
                   </div>
-                  <input
-                    id="trace-slider"
-                    type="range"
-                    min={0}
-                    max={maxStepIdx}
-                    value={traceView === 'best' ? maxStepIdx : traceView}
-                    onChange={(e) => setTraceView(Number(e.target.value))}
-                    className="w-full accent-[#4a6f8a]"
-                  />
+                  {maxStepIdx === 0 ? (
+                    <p className="text-[11px] leading-snug text-stone-500">
+                      トレースは 1 ステップのみです。中間のベスト更新が記録されていないため、スライダーは表示しません。
+                    </p>
+                  ) : (
+                    <input
+                      id="trace-slider"
+                      type="range"
+                      min={0}
+                      max={maxStepIdx}
+                      value={traceView === 'best' ? maxStepIdx : traceView}
+                      onChange={(e) => setTraceView(Number(e.target.value))}
+                      className="w-full accent-[#4a6f8a]"
+                    />
+                  )}
                   <p className="mt-1 font-mono text-[10px] text-stone-500">
                     {traceView === 'best' ? (
                       <>表示: ベスト候補（スライダーはベスト 1 ステップの確認用）</>

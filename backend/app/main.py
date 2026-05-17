@@ -15,7 +15,7 @@ CORS_ORIGINS = [
     if o.strip()
 ]
 
-app = FastAPI(title="地図アート作成機 API", version="0.1.0")
+app = FastAPI(title="GPSアート作成機 API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

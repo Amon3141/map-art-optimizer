@@ -68,8 +68,10 @@ def test_build_route_from_horizontal_polyline() -> None:
 
 def test_simulated_annealing_trace_edge_ids() -> None:
     g = _line_graph()
-    stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=50.0, y=50.0)]
-    opt = AnnealOptions(seed=42)
+    # 対角ストロークは多くの格子点で到達不能のままになりトレースが 1 件に留まりやすい。
+    # 水平ストローク + seed=0 はグリッド中で複数回ベスト更新が起きる。
+    stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=200.0, y=0.0)]
+    opt = AnnealOptions(seed=0)
     result = run_simulated_annealing(
         g,
         [{"x": p.x, "y": p.y} for p in stroke],
@@ -80,10 +82,15 @@ def test_simulated_annealing_trace_edge_ids() -> None:
         opt=opt,
         record_trace=True,
     )
-    assert result.trace_steps
-    for step in result.trace_steps:
+    steps = result.trace_steps
+    assert steps
+    assert len(steps) > 1
+    for i, step in enumerate(steps):
+        assert step.step_index == i
         for eid in step.edge_ids:
             assert eid in g.edges
+    for i in range(len(steps) - 1):
+        assert steps[i].score_total > steps[i + 1].score_total
 
 
 def test_null_target_km_no_length_score_weight() -> None:

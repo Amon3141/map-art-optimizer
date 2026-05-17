@@ -50,6 +50,10 @@ def _over_deadline(deadline: float | None) -> bool:
     return deadline is not None and time.monotonic() >= deadline
 
 
+# 巨大グリッドで API レスポンスが膨らみすぎないようトレース行数を上限する
+_MAX_GRID_TRACE_STEPS = 2000
+
+
 def transform_grid_search(
     graph: RoadGraph,
     stroke: list[StrokePoint],
@@ -82,6 +86,7 @@ def transform_grid_search(
     best_route = RouteBuildResult([], [], False, 0)
     best_bd = ScoreBreakdown(0.0, 0.0, 0.0, 0.0, 1.0)
     best_score = math.inf
+    trace: list[TraceStep] = []
 
     def consider(t: Transform) -> None:
         nonlocal best_t, best_route, best_bd, best_score
@@ -95,6 +100,23 @@ def transform_grid_search(
             best_t = Transform(t.tx_m, t.ty_m, t.theta_rad, t.scale)
             best_route = route
             best_bd = bd
+            if record_trace and len(trace) < _MAX_GRID_TRACE_STEPS:
+                trace.append(
+                    TraceStep(
+                        step_index=len(trace),
+                        temperature=0.0,
+                        accepted=True,
+                        score_total=sc_v,
+                        score_terms=bd.as_dict(),
+                        transform={
+                            "tx_m": best_t.tx_m,
+                            "ty_m": best_t.ty_m,
+                            "theta_rad": best_t.theta_rad,
+                            "scale": best_t.scale,
+                        },
+                        edge_ids=[str(eid) for eid in route.edge_ids],
+                    )
+                )
 
     if initial_transform is not None:
         consider(
@@ -130,25 +152,6 @@ def transform_grid_search(
                                 scale=_clamp_scale(float(sc)),
                             )
                         )
-
-    trace: list[TraceStep] = []
-    if record_trace:
-        trace.append(
-            TraceStep(
-                step_index=0,
-                temperature=0.0,
-                accepted=True,
-                score_total=best_score,
-                score_terms=best_bd.as_dict(),
-                transform={
-                    "tx_m": best_t.tx_m,
-                    "ty_m": best_t.ty_m,
-                    "theta_rad": best_t.theta_rad,
-                    "scale": best_t.scale,
-                },
-                edge_ids=list(best_route.edge_ids),
-            )
-        )
 
     return best_t, best_route, best_bd, trace
 

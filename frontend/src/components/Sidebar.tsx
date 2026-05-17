@@ -24,7 +24,7 @@ export function Sidebar({
     <aside className="flex w-full shrink-0 flex-col gap-4.5 p-5 pb-4 lg:max-w-sm lg:py-5 lg:pl-5 lg:pr-0">
       <div className="flex flex-col gap-1.5">
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">
-          地図アート作成機
+          GPSアート作成機
         </h1>
         <p className="text-sm leading-relaxed text-stone-600">
           キャンバスに描いた形を、地図の道路上で再現するルートを探します。
@@ -70,7 +70,7 @@ export function Sidebar({
             /* 将来: 最適化APIを呼ぶ */
           }}
         >
-          地図アートを作成
+          GPSアートを作成
         </button>
       </div>
 
