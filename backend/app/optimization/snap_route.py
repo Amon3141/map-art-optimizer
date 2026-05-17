@@ -309,6 +309,103 @@ def dijkstra_path(
     return edge_ids_rev, dist[target]
 
 
+def _angle_between_abs(a_rad: float, b_rad: float) -> float:
+    diff = (a_rad - b_rad + math.pi) % (2.0 * math.pi) - math.pi
+    return abs(diff)
+
+
+def _node_projection_and_lateral(
+    xy: tuple[float, float],
+    a: tuple[float, float],
+    vx: float,
+    vy: float,
+    seg_len: float,
+) -> tuple[float, float]:
+    dx, dy = xy[0] - a[0], xy[1] - a[1]
+    along = (dx * vx + dy * vy) / seg_len
+    cross = abs(dx * vy - dy * vx) / seg_len
+    return along, cross
+
+
+def _smooth_dp_segment_path(
+    graph: RoadGraph,
+    adj: dict[str, list[tuple[str, str, float]]],
+    start_nid: str,
+    end_nid: str,
+    source_a: tuple[float, float],
+    source_b: tuple[float, float],
+) -> list[str] | None:
+    """スナップ元の一辺に沿う向き・角度ズレをコストにした DAG DP。失敗時は None。"""
+    if start_nid == end_nid:
+        return []
+    vx = source_b[0] - source_a[0]
+    vy = source_b[1] - source_a[1]
+    seg_len = math.hypot(vx, vy)
+    if seg_len < 1e-9:
+        return None
+
+    corridor = max(30.0, min(180.0, 0.25 * seg_len))
+    source_angle = math.atan2(vy, vx)
+    meta: dict[str, tuple[float, float]] = {}
+    for nid, node in graph.nodes.items():
+        along, lateral = _node_projection_and_lateral((node.x_m, node.y_m), source_a, vx, vy, seg_len)
+        if -corridor <= along <= seg_len + corridor and lateral <= corridor:
+            meta[nid] = (along, lateral)
+    if start_nid not in meta:
+        n = graph.nodes.get(start_nid)
+        if n is not None:
+            meta[start_nid] = _node_projection_and_lateral((n.x_m, n.y_m), source_a, vx, vy, seg_len)
+    if end_nid not in meta:
+        n = graph.nodes.get(end_nid)
+        if n is not None:
+            meta[end_nid] = _node_projection_and_lateral((n.x_m, n.y_m), source_a, vx, vy, seg_len)
+    if start_nid not in meta or end_nid not in meta:
+        return None
+
+    ordered = sorted(meta, key=lambda nid: (meta[nid][0], meta[nid][1]))
+    dist: dict[str, float] = {start_nid: 0.0}
+    prev: dict[str, tuple[str, str] | None] = {start_nid: None}
+    eps = max(1e-6, seg_len * 1e-6)
+
+    for u in ordered:
+        if u not in dist:
+            continue
+        u_along, _ = meta[u]
+        for v, eid, length_m in adj.get(u, []):
+            if v not in meta:
+                continue
+            v_along, v_lateral = meta[v]
+            if v_along <= u_along + eps:
+                continue
+            e = graph.edges.get(eid)
+            if e is None or len(e.polyline_xy_m) < 2:
+                continue
+            ux, uy = graph.nodes[u].x_m, graph.nodes[u].y_m
+            vx_node, vy_node = graph.nodes[v].x_m, graph.nodes[v].y_m
+            edge_angle = math.atan2(vy_node - uy, vx_node - ux)
+            angle_cost = _angle_between_abs(edge_angle, source_angle) / math.pi
+            lateral_cost = v_lateral / max(corridor, 1.0)
+            length_cost = length_m / max(seg_len, 1.0)
+            nd = dist[u] + angle_cost * length_cost + 0.05 * lateral_cost + 0.001 * length_cost
+            if nd < dist.get(v, math.inf):
+                dist[v] = nd
+                prev[v] = (u, eid)
+
+    if end_nid not in prev:
+        return None
+    edge_ids_rev: list[str] = []
+    cur = end_nid
+    while cur != start_nid:
+        p = prev.get(cur)
+        if p is None:
+            return None
+        pu, pe = p
+        edge_ids_rev.append(pe)
+        cur = pu
+    edge_ids_rev.reverse()
+    return edge_ids_rev
+
+
 def concatenate_edge_polylines(
     graph: RoadGraph,
     edge_ids: list[str],
@@ -340,7 +437,7 @@ def concatenate_edge_polylines(
     return out
 
 
-def build_route_from_polyline(
+def _build_nearest_sample_route(
     graph: RoadGraph,
     adj: dict[str, list[tuple[str, str, float]]],
     polyline_xy_m: list[tuple[float, float]],
@@ -376,3 +473,51 @@ def build_route_from_polyline(
     route_line = concatenate_edge_polylines(graph, all_edges)
     reachable = failures == 0 and len(all_edges) > 0
     return RouteBuildResult(all_edges, route_line, reachable, failures)
+
+
+def _build_smooth_dp_route(
+    graph: RoadGraph,
+    adj: dict[str, list[tuple[str, str, float]]],
+    polyline_xy_m: list[tuple[float, float]],
+    snap_index: AnyEdgeSnapIndex | None = None,
+) -> RouteBuildResult:
+    if len(polyline_xy_m) < 2:
+        return RouteBuildResult([], [], False, 0)
+    snap = snap_index or build_edge_snap_index(graph)
+    all_edges: list[str] = []
+    failures = 0
+
+    for i in range(len(polyline_xy_m) - 1):
+        a_xy, b_xy = polyline_xy_m[i], polyline_xy_m[i + 1]
+        if math.hypot(b_xy[0] - a_xy[0], b_xy[1] - a_xy[1]) < 1e-9:
+            continue
+        start_nid, _ = snap.nearest(a_xy[0], a_xy[1])
+        end_nid, _ = snap.nearest(b_xy[0], b_xy[1])
+        seg_edges = _smooth_dp_segment_path(graph, adj, start_nid, end_nid, a_xy, b_xy)
+        if seg_edges is None:
+            fallback = dijkstra_path(graph, adj, start_nid, end_nid)
+            if fallback is None:
+                failures += 1
+                continue
+            seg_edges, _ = fallback
+        for eid in seg_edges:
+            if all_edges and all_edges[-1] == eid:
+                continue
+            all_edges.append(eid)
+
+    route_line = concatenate_edge_polylines(graph, all_edges)
+    reachable = failures == 0 and len(all_edges) > 0
+    return RouteBuildResult(all_edges, route_line, reachable, failures)
+
+
+def build_route_from_polyline(
+    graph: RoadGraph,
+    adj: dict[str, list[tuple[str, str, float]]],
+    polyline_xy_m: list[tuple[float, float]],
+    arc_samples: int = ROUTE_ARC_SAMPLES,
+    snap_index: AnyEdgeSnapIndex | None = None,
+    snap_strategy: str = "smooth_dp",
+) -> RouteBuildResult:
+    if snap_strategy == "nearest":
+        return _build_nearest_sample_route(graph, adj, polyline_xy_m, arc_samples, snap_index)
+    return _build_smooth_dp_route(graph, adj, polyline_xy_m, snap_index)

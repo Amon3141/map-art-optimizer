@@ -1,9 +1,9 @@
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
 from ..osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
@@ -27,8 +27,11 @@ from ..preprocess import (
 )
 from ..optimization.constants import (
     WEIGHT_EDGE_COUNT,
-    WEIGHT_LENGTH,
-    WEIGHT_SHAPE,
+    WEIGHT_ROUTE_LENGTH,
+    WEIGHT_SHAPE_DISTANCE,
+    WEIGHT_SOURCE_MIRROR,
+    WEIGHT_SOURCE_ROTATION,
+    WEIGHT_SOURCE_SCALE,
     WEIGHT_TURN,
     WEIGHT_UNREACHABLE,
 )
@@ -37,6 +40,7 @@ from ..optimization.defaults import (
     DEFAULT_COARSE_PRESOLVE,
     DEFAULT_COARSE_SCALE_BINS,
     DEFAULT_COARSE_THETA_BINS,
+    DEFAULT_EVALUATION_MODE,
     DEFAULT_INCLUDE_MIRROR_STROKE,
     DEFAULT_NUM_RESTARTS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
@@ -91,8 +95,11 @@ class StrokePointBody(BaseModel):
 
 
 class OptimizeWeightsBody(BaseModel):
-    shape: float = WEIGHT_SHAPE
-    length: float = WEIGHT_LENGTH
+    source_rotation: float = WEIGHT_SOURCE_ROTATION
+    source_scale: float = WEIGHT_SOURCE_SCALE
+    source_mirror: float = WEIGHT_SOURCE_MIRROR
+    shape_distance: float = WEIGHT_SHAPE_DISTANCE
+    route_length: float = WEIGHT_ROUTE_LENGTH
     edge_count: float = WEIGHT_EDGE_COUNT
     turn: float = WEIGHT_TURN
     unreachable: float = WEIGHT_UNREACHABLE
@@ -110,6 +117,7 @@ class AnnealOptionsBody(BaseModel):
     coarse_presolve: bool = DEFAULT_COARSE_PRESOLVE
     coarse_theta_bins: int = Field(DEFAULT_COARSE_THETA_BINS, ge=2, le=64)
     coarse_scale_bins: int = Field(DEFAULT_COARSE_SCALE_BINS, ge=1, le=32)
+    evaluation_mode: Literal["faithful", "elegant"] = DEFAULT_EVALUATION_MODE
 
 
 def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
@@ -124,32 +132,20 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         coarse_presolve=body.coarse_presolve,
         coarse_theta_bins=body.coarse_theta_bins,
         coarse_scale_bins=body.coarse_scale_bins,
+        evaluation_mode=body.evaluation_mode,
     )
 
 
 class DebugOptimizeBody(BaseModel):
-    """`graph-preview` と同一のグラフ入力に、キャンバス座標のストロークと目標距離を足す。"""
+    """`graph-preview` と同一のグラフ入力に、キャンバス座標のストロークを足す。"""
 
     geojson: dict[str, Any]
     bbox: BBoxBody
     options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
     stroke_points: list[StrokePointBody] = Field(..., min_length=2)
-    target_km: float | None = Field(
-        default=None,
-        description="目標距離（km）。null のとき目標距離なし（長さ項の重み 0 で形に寄せる）",
-    )
     weights: OptimizeWeightsBody | None = None
     anneal: AnnealOptionsBody | None = None
     record_trace: bool = True
-
-    @field_validator("target_km")
-    @classmethod
-    def validate_target_km(cls, v: float | None) -> float | None:
-        if v is None:
-            return None
-        if v < 0 or v > 800:
-            raise ValueError("target_km must be between 0 and 800 when set")
-        return v
 
 
 def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
@@ -267,7 +263,6 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         stroke_payload,
         lon0,
         lat0,
-        body.target_km,
         weights=weights,
         opt=anneal,
         record_trace=body.record_trace,

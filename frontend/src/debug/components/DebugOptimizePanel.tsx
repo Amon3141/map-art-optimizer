@@ -14,6 +14,7 @@ import {
   DEFAULT_COARSE_PRESOLVE,
   DEFAULT_COARSE_SCALE_BINS,
   DEFAULT_COARSE_THETA_BINS,
+  DEFAULT_EVALUATION_MODE,
   DEFAULT_INCLUDE_MIRROR_STROKE,
   DEFAULT_NUM_RESTARTS,
   DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
@@ -30,6 +31,8 @@ export type OptimizeTraceStep = {
   edge_ids: string[]
 }
 
+type EvaluationMode = 'faithful' | 'elegant'
+
 export type OptimizeApiResponse = {
   trace_format_version: number
   projection: GraphPreviewResponse['projection']
@@ -40,7 +43,7 @@ export type OptimizeApiResponse = {
   best_breakdown: Record<string, number>
   /** ベストルートのグラフ上の長さ（メートル） */
   route_length_m?: number
-  /** 同上（キロメートル）。スコア内訳の `length`（無次元）とは別 */
+  /** 同上（キロメートル）。評価とは独立した表示用メタ情報 */
   route_length_km?: number
   optimizer_meta?: Record<string, unknown>
   steps: OptimizeTraceStep[]
@@ -71,8 +74,6 @@ export function DebugOptimizePanel({
 }: DebugOptimizePanelProps) {
   const [sketchOpen, setSketchOpen] = useState(false)
   const [strokePoints, setStrokePoints] = useState<Point[] | null>(null)
-  const [targetKm, setTargetKm] = useState(5)
-  const [ignoreTargetDistance, setIgnoreTargetDistance] = useState(false)
   const [seed, setSeed] = useState(DEFAULT_ANNEAL_SEED)
   const [budgetSeconds, setBudgetSeconds] = useState(DEFAULT_OPTIMIZATION_BUDGET_SECONDS)
   const [numRestarts, setNumRestarts] = useState(DEFAULT_NUM_RESTARTS)
@@ -80,6 +81,7 @@ export function DebugOptimizePanel({
   const [coarsePresolve, setCoarsePresolve] = useState(DEFAULT_COARSE_PRESOLVE)
   const [coarseThetaBins, setCoarseThetaBins] = useState(DEFAULT_COARSE_THETA_BINS)
   const [coarseScaleBins, setCoarseScaleBins] = useState(DEFAULT_COARSE_SCALE_BINS)
+  const [evaluationMode, setEvaluationMode] = useState<EvaluationMode>(DEFAULT_EVALUATION_MODE as EvaluationMode)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<OptimizeApiResponse | null>(null)
@@ -132,7 +134,6 @@ export function DebugOptimizePanel({
         bbox,
         options: optsNorm,
         stroke_points: strokePoints.map((p) => ({ x: p.x, y: p.y })),
-        target_km: ignoreTargetDistance ? null : targetKm,
         record_trace: true,
         anneal: {
           optimization_budget_seconds: budgetSeconds,
@@ -142,6 +143,7 @@ export function DebugOptimizePanel({
           coarse_presolve: coarsePresolve,
           coarse_theta_bins: coarseThetaBins,
           coarse_scale_bins: coarseScaleBins,
+          evaluation_mode: evaluationMode,
         },
       }
       const res = await fetch(apiUrl('/api/debug/optimize'), {
@@ -201,30 +203,20 @@ export function DebugOptimizePanel({
             ) : null}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-stone-700">
-              目標距離（km）
-              <input
-                type="number"
-                min={0}
-                max={800}
-                step={1}
-                value={targetKm}
-                disabled={ignoreTargetDistance}
-                onChange={(e) => setTargetKm(Number(e.target.value) || 0)}
-                className="mt-1.5 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 shadow-inner outline-none ring-[#4a6f8a] focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-            {ignoreTargetDistance ? (
-              <p className="mt-1.5 text-[11px] text-stone-500">
-                リクエストでは <code className="rounded bg-stone-200/80 px-1">target_km: null</code>。長さスコアの重みは 0 です。
-              </p>
-            ) : null}
-          </div>
-
           <details className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
             <summary className="cursor-pointer text-xs py-0.5 font-medium text-stone-700">グリッド探索の設定</summary>
             <div className="mt-2.5 flex flex-col gap-2">
+              <label className="text-xs text-stone-600">
+                評価モード
+                <select
+                  value={evaluationMode}
+                  onChange={(e) => setEvaluationMode(e.target.value as EvaluationMode)}
+                  className="mt-0.5 w-full rounded border border-stone-200 bg-white px-2 py-1 text-sm"
+                >
+                  <option value="faithful">faithful（形状・角度重視）</option>
+                  <option value="elegant">elegant（形状 + 簡潔さ）</option>
+                </select>
+              </label>
               <label className="text-xs text-stone-600">
                 乱数シード（θ 位相の微調整に使用）
                 <input
@@ -305,15 +297,6 @@ export function DebugOptimizePanel({
                   onChange={(e) => setIncludeMirrorStroke(e.target.checked)}
                 />
                 <span>左右鏡映ストロークも試す</span>
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-700">
-                <input
-                  type="checkbox"
-                  className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
-                  checked={ignoreTargetDistance}
-                  onChange={(e) => setIgnoreTargetDistance(e.target.checked)}
-                />
-                <span>目標距離を無視する</span>
               </label>
             </div>
           </details>

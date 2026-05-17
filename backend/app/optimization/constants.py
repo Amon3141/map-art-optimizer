@@ -4,10 +4,13 @@
 ROUTE_ARC_SAMPLES: int = 16
 
 # スコア重みの既定（OptimizeWeights / API body と同値）
-WEIGHT_SHAPE: float = 1.0
-WEIGHT_LENGTH: float = 0.5
-WEIGHT_EDGE_COUNT: float = 0.5
-WEIGHT_TURN: float = 0.15
+WEIGHT_SOURCE_ROTATION: float = 0.15
+WEIGHT_SOURCE_SCALE: float = 0.02
+WEIGHT_SOURCE_MIRROR: float = 0.0
+WEIGHT_SHAPE_DISTANCE: float = 1.0
+WEIGHT_ROUTE_LENGTH: float = 0.0
+WEIGHT_EDGE_COUNT: float = 0.0
+WEIGHT_TURN: float = 0.0
 WEIGHT_UNREACHABLE: float = 1e6
 
 # グリッド探索: 並進を bbox に対する小数比で試す (fx, fy)

@@ -139,8 +139,8 @@
 | `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、`GRID_TXY_FRACS`、スケール区間・クリップ域 |
 | `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult` |
 | `backend/app/optimization/transform.py` | ストロークをグラフ内にフィットした基準折れ線 → 中心周りの回転・等方スケール・平行移動 |
-| `backend/app/optimization/snap_route.py` | 弧長サンプル、スナップ、単一ソース Dijkstra、折れ線連結 |
-| `backend/app/optimization/scoring.py` | チャンファー形状項・長さ・辺数・旋回・到達不能の加重和 |
+| `backend/app/optimization/snap_route.py` | 最近傍スナップ、辺ごとの smooth DP スナップ、Dijkstra フォールバック、折れ線連結 |
+| `backend/app/optimization/scoring.py` | スナップ元評価・双方向チャンファー形状項・モード別の簡潔さ項・到達不能の加重和 |
 | `backend/app/optimization/anneal.py` | `transform_grid_search`（互換名 `simulated_annealing_search`） |
 | `backend/app/optimization/run.py` | `run_simulated_annealing`（グリッド探索）、GeoJSON 化 |
 | `backend/tests/test_optimization.py` | スモーク |
@@ -148,10 +148,10 @@
 ### 8.2 API（デバッグのみ）
 
 - **`POST /api/debug/optimize`**（[`backend/app/debug/routes.py`](backend/app/debug/routes.py)）
-- リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points`, `target_km`（数値または `null`）を付与。
+- リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points` を付与。
 - 任意: `weights`, `anneal`, `record_trace`
-  - `weights`: `shape`, `length`, `edge_count`, `turn`, `unreachable`
-  - `anneal`: `optimization_budget_seconds`, `seed`, `num_restarts`, `include_mirror_stroke`, `coarse_presolve`, `coarse_theta_bins`, `coarse_scale_bins`（**`max_iterations` / `trace_stride` は廃止**）
+  - `weights`: `source_rotation`, `source_scale`, `source_mirror`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
+  - `anneal`: `optimization_budget_seconds`, `seed`, `num_restarts`, `include_mirror_stroke`, `coarse_presolve`, `coarse_theta_bins`, `coarse_scale_bins`, `evaluation_mode`（`faithful` / `elegant`）
 - サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
 
 ### 8.3 探索（離散グリッド）
@@ -161,16 +161,19 @@
 
 ### 8.4 ターゲット折れ線 → グラフ上ルート
 
-1. 変換後の平面折れ線。2. 弧長 **`ROUTE_ARC_SAMPLES`** 等分サンプル。3. スナップ。4. 区間 **Dijkstra**（幾何長）。5. 到達不能はペナルティ。
+1. 変換後の平面折れ線。2. スナップ元の各辺周辺のグラフ頂点を抽出。3. 辺方向の射影順に DAG として扱い、角度ズレ・横方向ズレ・長さをコストに smooth DP。4. 失敗時のみ区間 **Dijkstra** にフォールバック。5. 到達不能はペナルティ。
 
 ### 8.5 スコア（最小化）
 
 | 項 | 意味（概要） |
 |----|----------------|
-| `shape` | ターゲット弧長サンプル → ルートへの **チャンファー**（無次元化）。 |
-| `length` | 目標長さからの乖離を正規化した**無次元**項（`target_km` が `null` のとき項は 0）。実ルートの km はレスポンスの `route_length_km` を参照。 |
-| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。 |
-| `turn` | 旋回ペナルティ。 |
+| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。 |
+| `source_scale` | スナップ元のスケール評価。`faithful` では 1 倍からのズレ、`elegant` では小ささを弱く好む。 |
+| `source_mirror` | 鏡映候補への弱いペナルティ（モード・重みに依存）。 |
+| `shape_distance` | スナップ元 ↔ ルートの **双方向チャンファー**（無次元化）。 |
+| `route_length` | 実ルート長 ÷ bbox 対角。`elegant` でのみ弱く寄与する簡潔さ項。 |
+| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。`elegant` でのみ弱く寄与する簡潔さ項。 |
+| `turn` | 旋回ペナルティ。`elegant` でのみ弱く寄与する簡潔さ項。 |
 | `unreachable` | 連結失敗時 1。 |
 
 ### 8.6 トレース
@@ -179,7 +182,7 @@
 
 ### 8.7 レスポンス（デバッグ）
 
-- `candidates_geojson`, `best_score`, `best_breakdown`（内訳の `length` は目標長さからの**無次元**乖離項）, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `steps[]`（形式は従来互換）。
+- `candidates_geojson`, `best_score`, `best_breakdown`, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `steps[]`。
 
 ### 8.8 フロント（デバッグ UI）
 

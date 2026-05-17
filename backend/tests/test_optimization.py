@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from dataclasses import replace
 
 from app.optimization.run import run_simulated_annealing
 from app.optimization.scoring import score_route
@@ -12,8 +11,7 @@ from app.optimization.snap_route import (
     build_route_from_polyline,
     dijkstra_path,
 )
-from app.optimization.constants import WEIGHT_UNREACHABLE
-from app.optimization.types import AnnealOptions, OptimizeWeights, StrokePoint
+from app.optimization.types import AnnealOptions, OptimizeWeights, StrokePoint, Transform
 from app.preprocess.graph_model import InternalEdge, InternalNode, RoadGraph
 
 
@@ -77,7 +75,6 @@ def test_simulated_annealing_trace_edge_ids() -> None:
         [{"x": p.x, "y": p.y} for p in stroke],
         139.7,
         35.6,
-        0.25,
         weights=OptimizeWeights(),
         opt=opt,
         record_trace=True,
@@ -92,26 +89,6 @@ def test_simulated_annealing_trace_edge_ids() -> None:
     for i in range(len(steps) - 1):
         assert steps[i].score_total > steps[i + 1].score_total
 
-
-def test_null_target_km_no_length_score_weight() -> None:
-    """target_km が None のとき長さ項は重み 0・スコアに寄与しない。"""
-    g = _line_graph()
-    opt = AnnealOptions(seed=2)
-    heavy_length = OptimizeWeights(length=WEIGHT_UNREACHABLE)
-    result = run_simulated_annealing(
-        g,
-        [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
-        0.0,
-        0.0,
-        None,
-        weights=heavy_length,
-        opt=opt,
-    )
-    w_effective = replace(heavy_length, length=0.0)
-    assert result.best_score == result.best_breakdown.total(w_effective)
-    assert result.best_breakdown.length == 0.0
-
-
 def test_sa_smoke_low_iterations() -> None:
     g = _line_graph()
     opt = AnnealOptions(seed=0)
@@ -120,7 +97,6 @@ def test_sa_smoke_low_iterations() -> None:
         [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
         0.0,
         0.0,
-        0.2,
         opt=opt,
     )
     assert result.best_score == result.best_breakdown.total(OptimizeWeights())
@@ -141,7 +117,6 @@ def test_multirestart_and_mirror_merge_meta() -> None:
         [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
         0.0,
         0.0,
-        0.2,
         opt=opt,
     )
     assert result.optimizer_meta["num_restarts"] == 2
@@ -159,12 +134,12 @@ def test_score_route_normalized_smoke() -> None:
         g,
         poly,
         route,
-        150.0,
+        Transform(),
         OptimizeWeights(),
     )
     assert s >= 0.0
     assert bd.unreachable == 0.0
-    assert bd.shape >= 0.0
+    assert bd.shape_distance >= 0.0
 
 
 def test_chamfer_shape_lower_when_route_matches_target() -> None:
@@ -173,15 +148,34 @@ def test_chamfer_shape_lower_when_route_matches_target() -> None:
     target = [(0.0, 0.0), (200.0, 0.0)]
     route = build_route_from_polyline(g, adj, target, arc_samples=12)
     w = OptimizeWeights()
-    _, bd_match = score_route(g, target, route, None, w)
+    _, bd_match = score_route(g, target, route, Transform(), w)
     _, bd_offset = score_route(
         g,
         [(50.0, 0.0), (250.0, 0.0)],
         route,
-        None,
+        Transform(),
         w,
     )
-    assert bd_match.shape < bd_offset.shape
+    assert bd_match.shape_distance < bd_offset.shape_distance
+
+
+def test_source_rotation_penalty_prefers_input_angle() -> None:
+    g = _line_graph()
+    adj = build_adjacency(g)
+    target = [(0.0, 0.0), (200.0, 0.0)]
+    route = build_route_from_polyline(g, adj, target, arc_samples=12)
+    w = OptimizeWeights()
+    _, bd_zero = score_route(g, target, route, Transform(theta_rad=0.0), w)
+    _, bd_rotated = score_route(g, target, route, Transform(theta_rad=1.0), w)
+    assert bd_zero.source_rotation < bd_rotated.source_rotation
+
+
+def test_unreachable_route_gets_large_penalty() -> None:
+    g = _line_graph()
+    route = build_route_from_polyline(g, {}, [(0.0, 0.0), (200.0, 0.0)], arc_samples=12)
+    s, bd = score_route(g, [(0.0, 0.0), (200.0, 0.0)], route, Transform(), OptimizeWeights())
+    assert bd.unreachable == 1.0
+    assert s >= OptimizeWeights().unreachable
 
 
 def _long_chain_graph() -> RoadGraph:

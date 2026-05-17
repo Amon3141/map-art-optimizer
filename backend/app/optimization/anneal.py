@@ -57,7 +57,6 @@ _MAX_GRID_TRACE_STEPS = 2000
 def transform_grid_search(
     graph: RoadGraph,
     stroke: list[StrokePoint],
-    target_length_m: float | None,
     weights: OptimizeWeights,
     opt: AnnealOptions,
     record_trace: bool = True,
@@ -65,6 +64,7 @@ def transform_grid_search(
     adj: dict[str, list[tuple[str, str, float]]] | None = None,
     snap_index: AnyEdgeSnapIndex | None = None,
     deadline: float | None = None,
+    source_mirrored: bool = False,
 ) -> tuple[Transform, RouteBuildResult, ScoreBreakdown, list[TraceStep]]:
     """変換を離散グリッド上で総当たりし、スコア最小の 1 点を返す（焼きなましは使わない）。"""
     if adj is None:
@@ -74,7 +74,7 @@ def transform_grid_search(
     base = stroke_to_base_polyline_m(stroke, graph)
     if len(base) < 2:
         empty = RouteBuildResult([], [], False, 0)
-        z = ScoreBreakdown(0.0, 0.0, 0.0, 0.0, 1.0)
+        z = ScoreBreakdown(0.0, 0.0, 0.0, 1e4, 1e4, 1e4, 1e4, 1.0)
         return Transform(), empty, z, []
 
     center = graph_center_m(graph)
@@ -84,7 +84,7 @@ def transform_grid_search(
 
     best_t = Transform()
     best_route = RouteBuildResult([], [], False, 0)
-    best_bd = ScoreBreakdown(0.0, 0.0, 0.0, 0.0, 1.0)
+    best_bd = ScoreBreakdown(0.0, 0.0, 0.0, 1e4, 1e4, 1e4, 1e4, 1.0)
     best_score = math.inf
     trace: list[TraceStep] = []
 
@@ -94,7 +94,15 @@ def transform_grid_search(
             return
         poly = apply_transform(base, t, center)
         route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index)
-        sc_v, bd = score_route(graph, poly, route, target_length_m, weights)
+        sc_v, bd = score_route(
+            graph,
+            poly,
+            route,
+            t,
+            weights,
+            evaluation_mode=opt.evaluation_mode,
+            source_mirrored=source_mirrored,
+        )
         if sc_v < best_score:
             best_score = sc_v
             best_t = Transform(t.tx_m, t.ty_m, t.theta_rad, t.scale)
@@ -159,7 +167,6 @@ def transform_grid_search(
 def simulated_annealing_search(
     graph: RoadGraph,
     stroke: list[StrokePoint],
-    target_length_m: float | None,
     weights: OptimizeWeights,
     opt: AnnealOptions,
     record_trace: bool = True,
@@ -167,12 +174,12 @@ def simulated_annealing_search(
     adj: dict[str, list[tuple[str, str, float]]] | None = None,
     snap_index: AnyEdgeSnapIndex | None = None,
     deadline: float | None = None,
+    source_mirrored: bool = False,
 ) -> tuple[Transform, RouteBuildResult, ScoreBreakdown, list[TraceStep]]:
     """互換名。内部は `transform_grid_search` のみ。"""
     return transform_grid_search(
         graph,
         stroke,
-        target_length_m,
         weights,
         opt,
         record_trace=record_trace,
@@ -180,4 +187,5 @@ def simulated_annealing_search(
         adj=adj,
         snap_index=snap_index,
         deadline=deadline,
+        source_mirrored=source_mirrored,
     )

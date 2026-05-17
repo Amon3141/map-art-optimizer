@@ -21,6 +21,7 @@ from .types import (
     StrokePoint,
     TraceStep,
     Transform,
+    weights_for_evaluation_mode,
 )
 
 
@@ -46,23 +47,17 @@ def run_simulated_annealing(
     stroke_points: list[dict[str, float]],
     lon0: float,
     lat0: float,
-    target_length_km: float | None,
     weights: OptimizeWeights | None = None,
     opt: AnnealOptions | None = None,
     record_trace: bool = True,
 ) -> OptimizeResult:
     """手書きストロークと道路グラフから、離散グリッドで候補ルートを 1 本返す。
 
-    ``target_length_km`` が ``None`` のときは目標距離を課さず、長さ項の重みを 0 にして形などに寄せる。
-
     ``include_mirror_stroke`` / ``num_restarts`` により複数試行し、ベスト 1 本を返す（トレースはベスト試行のもの）。
     """
-    w = weights or OptimizeWeights()
-    if target_length_km is None:
-        w = replace(w, length=0.0)
     o = opt or AnnealOptions()
+    w = weights or weights_for_evaluation_mode(o.evaluation_mode)
     stroke = [StrokePoint(x=float(p["x"]), y=float(p["y"])) for p in stroke_points]
-    target_m = None if target_length_km is None else max(0.0, float(target_length_km)) * 1000.0
 
     adj = build_adjacency(graph)
     snap_index = build_edge_snap_index(graph)
@@ -89,13 +84,13 @@ def run_simulated_annealing(
             t, route, bd, trace = simulated_annealing_search(
                 graph,
                 stk,
-                target_m,
                 w,
                 opt_r,
                 record_trace=record_trace,
                 adj=adj,
                 snap_index=snap_index,
                 deadline=deadline,
+                source_mirrored=mirrored,
             )
             total = bd.total(w)
             if total < best_score:
@@ -119,6 +114,7 @@ def run_simulated_annealing(
         "num_restarts": o.num_restarts,
         "include_mirror_stroke": o.include_mirror_stroke,
         "coarse_presolve": o.coarse_presolve,
+        "evaluation_mode": o.evaluation_mode,
         "optimization_budget_seconds": o.optimization_budget_seconds,
         "deadline_hit": time.monotonic() >= deadline,
     }
@@ -135,8 +131,6 @@ def run_simulated_annealing(
             "scale": best_t.scale,
         },
         "reachable": best_route.reachable,
-        "target_km": target_length_km,
-        "target_length_ignored": target_length_km is None,
         "optimizer": optimizer_meta,
     }
     feat = _route_to_feature(lon0, lat0, best_route.polyline_xy_m, props)

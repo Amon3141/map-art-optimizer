@@ -9,3 +9,4 @@ export const DEFAULT_INCLUDE_MIRROR_STROKE = false
 export const DEFAULT_COARSE_PRESOLVE = true
 export const DEFAULT_COARSE_THETA_BINS = 3
 export const DEFAULT_COARSE_SCALE_BINS = 3
+export const DEFAULT_EVALUATION_MODE = 'faithful'

@@ -5,8 +5,11 @@ from typing import Any
 
 from .constants import (
     WEIGHT_EDGE_COUNT,
-    WEIGHT_LENGTH,
-    WEIGHT_SHAPE,
+    WEIGHT_ROUTE_LENGTH,
+    WEIGHT_SHAPE_DISTANCE,
+    WEIGHT_SOURCE_MIRROR,
+    WEIGHT_SOURCE_ROTATION,
+    WEIGHT_SOURCE_SCALE,
     WEIGHT_TURN,
     WEIGHT_UNREACHABLE,
 )
@@ -15,6 +18,7 @@ from .defaults import (
     DEFAULT_COARSE_PRESOLVE,
     DEFAULT_COARSE_SCALE_BINS,
     DEFAULT_COARSE_THETA_BINS,
+    DEFAULT_EVALUATION_MODE,
     DEFAULT_INCLUDE_MIRROR_STROKE,
     DEFAULT_NUM_RESTARTS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
@@ -40,11 +44,31 @@ class Transform:
 @dataclass
 class OptimizeWeights:
     """無次元スコア（正規化項）向けの既定重み。"""
-    shape: float = WEIGHT_SHAPE
-    length: float = WEIGHT_LENGTH
+
+    source_rotation: float = WEIGHT_SOURCE_ROTATION
+    source_scale: float = WEIGHT_SOURCE_SCALE
+    source_mirror: float = WEIGHT_SOURCE_MIRROR
+    shape_distance: float = WEIGHT_SHAPE_DISTANCE
+    route_length: float = WEIGHT_ROUTE_LENGTH
     edge_count: float = WEIGHT_EDGE_COUNT
     turn: float = WEIGHT_TURN
     unreachable: float = WEIGHT_UNREACHABLE
+
+
+def weights_for_evaluation_mode(mode: str) -> OptimizeWeights:
+    """評価モードごとの既定重み。faithful は形状、elegant は簡潔さも弱く見る。"""
+    if mode == "elegant":
+        return OptimizeWeights(
+            source_rotation=0.12,
+            source_scale=0.10,
+            source_mirror=0.02,
+            shape_distance=1.0,
+            route_length=0.06,
+            edge_count=0.04,
+            turn=0.06,
+            unreachable=WEIGHT_UNREACHABLE,
+        )
+    return OptimizeWeights()
 
 
 @dataclass
@@ -58,21 +82,29 @@ class AnnealOptions:
     coarse_presolve: bool = DEFAULT_COARSE_PRESOLVE
     coarse_theta_bins: int = DEFAULT_COARSE_THETA_BINS
     coarse_scale_bins: int = DEFAULT_COARSE_SCALE_BINS
+    evaluation_mode: str = DEFAULT_EVALUATION_MODE
 
 
 @dataclass
 class ScoreBreakdown:
-    """無次元スコア内訳。shape はターゲット→ルートのチャンファー。"""
-    shape: float
-    length: float
+    """無次元スコア内訳。shape_distance は双方向チャンファー。"""
+
+    source_rotation: float
+    source_scale: float
+    source_mirror: float
+    shape_distance: float
+    route_length: float
     edge_count: float
     turn: float
     unreachable: float
 
     def total(self, w: OptimizeWeights) -> float:
         return (
-            w.shape * self.shape
-            + w.length * self.length
+            w.source_rotation * self.source_rotation
+            + w.source_scale * self.source_scale
+            + w.source_mirror * self.source_mirror
+            + w.shape_distance * self.shape_distance
+            + w.route_length * self.route_length
             + w.edge_count * self.edge_count
             + w.turn * self.turn
             + w.unreachable * self.unreachable
@@ -80,8 +112,11 @@ class ScoreBreakdown:
 
     def as_dict(self) -> dict[str, float]:
         return {
-            "shape": self.shape,
-            "length": self.length,
+            "source_rotation": self.source_rotation,
+            "source_scale": self.source_scale,
+            "source_mirror": self.source_mirror,
+            "shape_distance": self.shape_distance,
+            "route_length": self.route_length,
             "edge_count": self.edge_count,
             "turn": self.turn,
             "unreachable": self.unreachable,

@@ -62,7 +62,7 @@
 
 1. **前処理フロー**で道路を取得し、グラフモードで `graph-preview` が成功した状態にする（[`DebugSidebar`](../frontend/src/debug/components/DebugSidebar.tsx)）。
 2. **「このグラフで形を探索」**で最適化サイドバー（[`DebugOptimizePanel`](../frontend/src/debug/components/DebugOptimizePanel.tsx)）へ遷移。
-3. 手書きストローク・目標距離（または「目標距離を無視」）・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。結果は **ページの React 状態にのみ保持**（リロードで消える）。
+3. 手書きストローク・評価モード・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。結果は **ページの React 状態にのみ保持**（リロードで消える）。
 4. **マップ上の表示**
    - **ベスト候補**: `candidates_geojson` をそのままオーバーレイ。
    - **トレーススライダー**: `steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
