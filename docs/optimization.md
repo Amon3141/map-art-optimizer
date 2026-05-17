@@ -1,6 +1,6 @@
 # 最適化（設計メモ）
 
-**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用に離散グリッド探索のベースラインが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
+**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用にスナップ元の単一スタート焼きなましが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## 2. プロダクト上の狙い（最適化に関わる部分）
 
-- **入力**: キャンバス上の**単一ストローク（手書き）のみ**。探索エリア内で **位置・回転・スケール（および鏡映）** を調べ、道路ネット上で「絵」に近い**一連のルート**を探す。
+- **入力**: キャンバス上の**単一ストローク（手書き）のみ**。探索エリア内で **位置・回転・スケール** を調べ、道路ネット上で「絵」に近い**一連のルート**を探す。
 - **出力**: **複数候補**をユーザーに提示できるようにする（ランキングや選択の余地）。
 - **距離**: 目安として整数 km（**±2 km 程度**のゆるさは将来目標。実装段階で要検証）。
 
@@ -41,7 +41,7 @@
 
 - **目的**: 最適化の**結果を追跡・デバッグ・UI 表示**に使う。スキーマの細目はアルゴリズム確定後に固める。
 - **載せたい情報の例**（レベル感の合意のみ）:
-  - 適用した幾何変換（例: 回転角、水平／垂直フリップの有無）
+  - 適用した幾何変換（例: 回転角、スケール、平行移動）
   - 評価スコア（定義はアルゴリズム依存）
   - ルート長（例: `length_km`、**単位を明示**）
 - **検討課題**: `rank` / `candidate_id` の要否など。
@@ -107,7 +107,7 @@
 ## 6. メタヒューリスティック・探索の方向（確定ではない）
 
 - **焼きなまし法をメインにする**案は、**状態と近傍の定義がはっきりすれば**現実的な候補の一つ。
-- **状態**の例: 平面の **平行移動・回転・スケール・鏡映** と、**道路グラフ上のパスやスナップ結果**の組み合わせ。
+- **状態**の例: 平面の **平行移動・回転・スケール** と、**道路グラフ上のパスやスナップ結果**の組み合わせ。
 - **近傍**の例: 変換パラメータの摂動、別エッジ列への差し替え、など。
 - **制約**（通行可能辺のみ・連続パス・長さ）は、**ペナルティ法**で緩く入れてから絞る手法も検討余地あり。
 
@@ -130,19 +130,19 @@
 
 ## 8. 実装ベースライン（現状）
 
-デバッグ検証用。**焼きなましは使わず**、平面変換を **離散グリッド上で総当たり**し、スコア最小の候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
+デバッグ検証用。スナップ元の状態 `(theta, scale, tx, ty)` を単一スタートの**焼きなまし**で遷移させ、各状態を smooth DP スナップ後に評価してベスト候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
 
 ### 8.1 コード配置
 
 | パス | 役割 |
 |------|------|
-| `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、`GRID_TXY_FRACS`、スケール区間・クリップ域 |
+| `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、スケールクリップ域、評価重みの既定 |
 | `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult` |
 | `backend/app/optimization/transform.py` | ストロークをグラフ内にフィットした基準折れ線 → 中心周りの回転・等方スケール・平行移動 |
 | `backend/app/optimization/snap_route.py` | 最近傍スナップ、辺ごとの smooth DP スナップ、Dijkstra フォールバック、折れ線連結 |
-| `backend/app/optimization/scoring.py` | スナップ元評価・双方向チャンファー形状項・モード別の簡潔さ項・到達不能の加重和 |
-| `backend/app/optimization/anneal.py` | `transform_grid_search`（互換名 `simulated_annealing_search`） |
-| `backend/app/optimization/run.py` | `run_simulated_annealing`（グリッド探索）、GeoJSON 化 |
+| `backend/app/optimization/scoring.py` | スナップ元評価・順序対応形状項・coverage 形状項・ゲート付き簡潔さ項・到達不能の加重和 |
+| `backend/app/optimization/anneal.py` | `simulated_annealing_search`（単一スタート焼きなまし） |
+| `backend/app/optimization/run.py` | `run_simulated_annealing`（焼きなまし）、GeoJSON 化 |
 | `backend/tests/test_optimization.py` | スモーク |
 
 ### 8.2 API（デバッグのみ）
@@ -150,35 +150,37 @@
 - **`POST /api/debug/optimize`**（[`backend/app/debug/routes.py`](backend/app/debug/routes.py)）
 - リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points` を付与。
 - 任意: `weights`, `anneal`, `record_trace`
-  - `weights`: `source_rotation`, `source_scale`, `source_mirror`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
-  - `anneal`: `optimization_budget_seconds`, `seed`, `num_restarts`, `include_mirror_stroke`, `coarse_presolve`, `coarse_theta_bins`, `coarse_scale_bins`, `evaluation_mode`（`faithful` / `elegant`）
+  - `weights`: `source_rotation`, `source_scale`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
+  - `anneal`: `optimization_budget_seconds`, `seed`, `evaluation_mode`（`faithful` / `elegant`）, `max_iterations`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
 - サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
 
-### 8.3 探索（離散グリッド）
+### 8.3 探索（焼きなまし）
 
-- **候補**: `coarse_presolve` がオフなら **恒等変換のみ**。オンのとき **`GRID_TXY_FRACS` × θ 等分 × スケール等分**（`COARSE_SCALE_MIN`〜`MAX`）の総当たり。`num_restarts` は θ に位相オフセットを足して同グリッドを複数評価。
-- **鏡映**・**壁時計打ち切り**・**`optimizer_meta.search` = `transform_grid_search`** は従来どおり。
+- **状態**: `theta_rad`, `scale`, `tx_m`, `ty_m`。
+- **遷移**: 回転・対数スケール・並進を小さく摂動する。遷移幅は温度に連動し、終盤ほど局所探索へ寄る。
+- **採択**: 改善は必ず採択、悪化は `exp(-delta / temperature)` で採択する。温度は `initial_temperature` から `final_temperature` へ幾何冷却。
+- **打ち切り**: `max_iterations` または `optimization_budget_seconds` の早い方。
+- **`optimizer_meta.search`**: `simulated_annealing`。
 
 ### 8.4 ターゲット折れ線 → グラフ上ルート
 
-1. 変換後の平面折れ線。2. スナップ元の各辺周辺のグラフ頂点を抽出。3. 辺方向の射影順に DAG として扱い、角度ズレ・横方向ズレ・長さをコストに smooth DP。4. 失敗時のみ区間 **Dijkstra** にフォールバック。5. 到達不能はペナルティ。
+1. 変換後の平面折れ線。2. ノード空間 index からスナップ元の各辺周辺のグラフ頂点を抽出。3. 辺方向の射影順に DAG として扱い、角度ズレ・横方向ズレ・長さをコストに smooth DP。4. 失敗時のみ区間 **Dijkstra** にフォールバック。5. 到達不能はペナルティ。
 
 ### 8.5 スコア（最小化）
 
 | 項 | 意味（概要） |
 |----|----------------|
 | `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。 |
-| `source_scale` | スナップ元のスケール評価。`faithful` では 1 倍からのズレ、`elegant` では小ささを弱く好む。 |
-| `source_mirror` | 鏡映候補への弱いペナルティ（モード・重みに依存）。 |
-| `shape_distance` | スナップ元 ↔ ルートの **双方向チャンファー**（無次元化）。 |
-| `route_length` | 実ルート長 ÷ bbox 対角。`elegant` でのみ弱く寄与する簡潔さ項。 |
-| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。`elegant` でのみ弱く寄与する簡潔さ項。 |
-| `turn` | 旋回ペナルティ。`elegant` でのみ弱く寄与する簡潔さ項。 |
+| `source_scale` | スナップ元のスケール評価。`faithful` では 1 倍からのズレ、`elegant` では shape が良い時だけ小ささを弱く好む。 |
+| `shape_distance` | スナップ元とルートの **弧長順序対応距離 + coverage 距離**（無次元化）。 |
+| `route_length` | 実ルート長 ÷ bbox 対角。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
+| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
+| `turn` | 旋回ペナルティ。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
 | `unreachable` | 連結失敗時 1。 |
 
 ### 8.6 トレース
 
-- 成功時は **ベスト 1 ステップ**のみ（`temperature` は 0）。
+- 初期 step、`trace_stride` ごとの step、best 更新 step を保存する。各 step は `temperature`, `accepted`, `score_total`, `score_terms`, `transform`, `edge_ids` を持つ。
 
 ### 8.7 レスポンス（デバッグ）
 
@@ -186,13 +188,14 @@
 
 ### 8.8 フロント（デバッグ UI）
 
-- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): グリッド探索のオプションと実行・結果表示。
+- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましの温度・反復数・遷移幅オプション、実行中の経過秒表示、結果表示。
 
 ### 8.9 あえて未実装／プロダクト要件との差
 
-- **複数候補のランキング提示**（現状はベスト 1 本のみ。`num_restarts` / 鏡映は内部で複数試行するが返却は 1 本）。
+- **複数候補のランキング提示**（現状はベスト 1 本のみ）。
+- **マルチスタート焼きなまし**（現状は単一スタートのみ）。
 - **本番用 `/api` エンドポイント**（`/api/debug` のみ）。
-- **鏡映以外の変形**（キャンバス Y 鏡映のみ API 化、一般アフィンは未）。
+- **反転・一般アフィン変形**（現状は回転・等方スケール・平行移動のみ）。
 - **許容幅付きの距離制約**（±km 帯の完全な二段階最適化など）。
 - **移動モードに沿ったタグ解釈**（Dijkstra は現状幾何距離のみ）。
 - **オイラー路等の厳しい一筆書き制約**。

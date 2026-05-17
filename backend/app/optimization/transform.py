@@ -43,9 +43,9 @@ def stroke_to_base_polyline_m(
 
     out: list[tuple[float, float]] = []
     for p in stroke:
-        # stroke 中心を原点にしてからスケールし、グラフ中心へ
+        # Canvas は y-down、局所平面座標は y-up なので y だけ反転する。
         qx = (p.x - (min_x + max_x) / 2.0) * s
-        qy = (p.y - (min_y + max_y) / 2.0) * s
+        qy = -(p.y - (min_y + max_y) / 2.0) * s
         out.append((cx + qx, cy + qy))
     return out
 
@@ -77,12 +77,3 @@ def graph_center_m(graph: RoadGraph) -> tuple[float, float]:
 def graph_bbox_diagonal_m(graph: RoadGraph) -> float:
     gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
     return max(1.0, math.hypot(gx1 - gx0, gy1 - gy0))
-
-
-def mirror_stroke_horizontal(stroke: list[StrokePoint]) -> list[StrokePoint]:
-    """キャンバス X をストローク外接矩形の中心軸で鏡映（左右反転）。"""
-    if len(stroke) < 1:
-        return []
-    xs = [p.x for p in stroke]
-    cx = (min(xs) + max(xs)) / 2.0
-    return [StrokePoint(x=2.0 * cx - p.x, y=p.y) for p in stroke]

@@ -1,26 +1,19 @@
 from __future__ import annotations
 
-import math
 import time
-from dataclasses import replace
 from typing import Any
 
 from app.osm.projection import xy_m_to_lon_lat
 from app.preprocess.graph_model import RoadGraph
 
 from .anneal import simulated_annealing_search
-from .snap_route import build_adjacency, build_edge_snap_index
+from .snap_route import build_adjacency, build_edge_snap_index, build_node_spatial_index
 from .scoring import route_geometric_length_m
-from .transform import mirror_stroke_horizontal
 from .types import (
     AnnealOptions,
     OptimizeResult,
     OptimizeWeights,
-    RouteBuildResult,
-    ScoreBreakdown,
     StrokePoint,
-    TraceStep,
-    Transform,
     weights_for_evaluation_mode,
 )
 
@@ -51,70 +44,42 @@ def run_simulated_annealing(
     opt: AnnealOptions | None = None,
     record_trace: bool = True,
 ) -> OptimizeResult:
-    """手書きストロークと道路グラフから、離散グリッドで候補ルートを 1 本返す。
-
-    ``include_mirror_stroke`` / ``num_restarts`` により複数試行し、ベスト 1 本を返す（トレースはベスト試行のもの）。
-    """
+    """手書きストロークと道路グラフから、焼きなましで候補ルートを 1 本返す。"""
     o = opt or AnnealOptions()
     w = weights or weights_for_evaluation_mode(o.evaluation_mode)
     stroke = [StrokePoint(x=float(p["x"]), y=float(p["y"])) for p in stroke_points]
 
     adj = build_adjacency(graph)
     snap_index = build_edge_snap_index(graph)
+    node_index = build_node_spatial_index(graph)
 
     deadline = time.monotonic() + max(0.05, float(o.optimization_budget_seconds))
 
-    strokes: list[tuple[list[StrokePoint], bool]] = [(stroke, False)]
-    if o.include_mirror_stroke:
-        strokes.append((mirror_stroke_horizontal(stroke), True))
-
-    best_t: Transform | None = None
-    best_route: RouteBuildResult | None = None
-    best_bd: ScoreBreakdown | None = None
-    best_trace: list[TraceStep] = []
-    best_score = math.inf
-    winning_seed = o.seed
-    winning_mirror = False
-
-    for si, (stk, _) in enumerate(strokes):
-        mirrored = si == 1 and o.include_mirror_stroke
-        for r in range(max(1, o.num_restarts)):
-            seed_eff = o.seed + r * 10_007 + si * 131_071
-            opt_r = replace(o, seed=seed_eff)
-            t, route, bd, trace = simulated_annealing_search(
-                graph,
-                stk,
-                w,
-                opt_r,
-                record_trace=record_trace,
-                adj=adj,
-                snap_index=snap_index,
-                deadline=deadline,
-                source_mirrored=mirrored,
-            )
-            total = bd.total(w)
-            if total < best_score:
-                best_score = total
-                best_t = t
-                best_route = route
-                best_bd = bd
-                winning_seed = seed_eff
-                winning_mirror = mirrored
-                if record_trace:
-                    best_trace = list(trace)
-
-    assert best_t is not None and best_route is not None and best_bd is not None
+    best_t, best_route, best_bd, best_trace = simulated_annealing_search(
+        graph,
+        stroke,
+        w,
+        o,
+        record_trace=record_trace,
+        adj=adj,
+        snap_index=snap_index,
+        node_index=node_index,
+        deadline=deadline,
+    )
 
     length_m = route_geometric_length_m(graph, best_route.edge_ids)
     total_score = best_bd.total(w)
     optimizer_meta: dict[str, Any] = {
-        "search": "transform_grid_search",
-        "winning_seed": winning_seed,
-        "stroke_mirrored": winning_mirror,
-        "num_restarts": o.num_restarts,
-        "include_mirror_stroke": o.include_mirror_stroke,
-        "coarse_presolve": o.coarse_presolve,
+        "search": "simulated_annealing",
+        "seed": o.seed,
         "evaluation_mode": o.evaluation_mode,
+        "max_iterations": o.max_iterations,
+        "initial_temperature": o.initial_temperature,
+        "final_temperature": o.final_temperature,
+        "translation_step_m_ratio": o.translation_step_m_ratio,
+        "rotation_step_rad": o.rotation_step_rad,
+        "log_scale_step": o.log_scale_step,
+        "trace_stride": o.trace_stride,
         "optimization_budget_seconds": o.optimization_budget_seconds,
         "deadline_hit": time.monotonic() >= deadline,
     }

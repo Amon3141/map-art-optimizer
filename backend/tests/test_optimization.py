@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import random
 
+from app.optimization.anneal import AnnealState, _propose_state
 from app.optimization.run import run_simulated_annealing
-from app.optimization.scoring import score_route
+from app.optimization.scoring import score_route, shape_similarity_loss
 from app.optimization.snap_route import (
     EdgeSnapIndexGrid,
     EdgeSnapIndexLinear,
+    build_node_spatial_index,
     build_adjacency,
     build_route_from_polyline,
     dijkstra_path,
 )
+from app.optimization.transform import stroke_to_base_polyline_m
 from app.optimization.types import AnnealOptions, OptimizeWeights, StrokePoint, Transform
 from app.preprocess.graph_model import InternalEdge, InternalNode, RoadGraph
 
@@ -66,10 +69,8 @@ def test_build_route_from_horizontal_polyline() -> None:
 
 def test_simulated_annealing_trace_edge_ids() -> None:
     g = _line_graph()
-    # 対角ストロークは多くの格子点で到達不能のままになりトレースが 1 件に留まりやすい。
-    # 水平ストローク + seed=0 はグリッド中で複数回ベスト更新が起きる。
     stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=200.0, y=0.0)]
-    opt = AnnealOptions(seed=0)
+    opt = AnnealOptions(seed=0, max_iterations=20, trace_stride=2)
     result = run_simulated_annealing(
         g,
         [{"x": p.x, "y": p.y} for p in stroke],
@@ -84,14 +85,15 @@ def test_simulated_annealing_trace_edge_ids() -> None:
     assert len(steps) > 1
     for i, step in enumerate(steps):
         assert step.step_index == i
+        assert step.temperature > 0.0
+        assert isinstance(step.accepted, bool)
         for eid in step.edge_ids:
             assert eid in g.edges
-    for i in range(len(steps) - 1):
-        assert steps[i].score_total > steps[i + 1].score_total
+
 
 def test_sa_smoke_low_iterations() -> None:
     g = _line_graph()
-    opt = AnnealOptions(seed=0)
+    opt = AnnealOptions(seed=0, max_iterations=8)
     result = run_simulated_annealing(
         g,
         [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
@@ -101,28 +103,23 @@ def test_sa_smoke_low_iterations() -> None:
     )
     assert result.best_score == result.best_breakdown.total(OptimizeWeights())
     assert "FeatureCollection" == result.candidates_geojson.get("type")
-    assert result.optimizer_meta.get("num_restarts") == 1
+    assert result.optimizer_meta.get("search") == "simulated_annealing"
+    assert result.optimizer_meta.get("max_iterations") == 8
 
 
-def test_multirestart_and_mirror_merge_meta() -> None:
+def test_optimizer_meta_single_start_simulated_annealing() -> None:
     g = _line_graph()
-    opt = AnnealOptions(
-        seed=3,
-        num_restarts=2,
-        include_mirror_stroke=True,
-        coarse_presolve=False,
-    )
+    opt = AnnealOptions(seed=3, max_iterations=12, trace_stride=1)
     result = run_simulated_annealing(
         g,
         [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
         0.0,
         0.0,
         opt=opt,
+        record_trace=True,
     )
-    assert result.optimizer_meta["num_restarts"] == 2
-    assert result.optimizer_meta["include_mirror_stroke"] is True
-    assert result.optimizer_meta.get("search") == "transform_grid_search"
-    assert isinstance(result.optimizer_meta.get("winning_seed"), int)
+    assert result.optimizer_meta["search"] == "simulated_annealing"
+    assert result.optimizer_meta["max_iterations"] == 12
 
 
 def test_score_route_normalized_smoke() -> None:
@@ -157,6 +154,45 @@ def test_chamfer_shape_lower_when_route_matches_target() -> None:
         w,
     )
     assert bd_match.shape_distance < bd_offset.shape_distance
+
+
+def test_stroke_to_base_polyline_flips_canvas_y_axis() -> None:
+    g = _line_graph()
+    stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=0.0, y=100.0)]
+    base = stroke_to_base_polyline_m(stroke, g)
+    assert base[0][1] > base[1][1]
+
+
+def test_ordered_shape_loss_penalizes_reversed_route_order() -> None:
+    target = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]
+    same = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]
+    reversed_route = list(reversed(same))
+    assert shape_similarity_loss(target, same, 200.0) < shape_similarity_loss(
+        target,
+        reversed_route,
+        200.0,
+    )
+
+
+def test_elegant_simplicity_terms_are_gated_by_shape_quality() -> None:
+    g = _line_graph()
+    adj = build_adjacency(g)
+    route = build_route_from_polyline(g, adj, [(0.0, 0.0), (200.0, 0.0)], arc_samples=12)
+    w = OptimizeWeights()
+    _, good = score_route(g, [(0.0, 0.0), (200.0, 0.0)], route, Transform(), w, "elegant")
+    _, bad = score_route(g, [(0.0, 600.0), (200.0, 600.0)], route, Transform(), w, "elegant")
+    assert bad.shape_distance > good.shape_distance
+    assert bad.route_length < good.route_length
+
+
+def test_temperature_scaled_proposal_shrinks_step_width() -> None:
+    opt = AnnealOptions(translation_step_m_ratio=0.1, rotation_step_rad=0.3, log_scale_step=0.1)
+    current = AnnealState(Transform())
+    wide = _propose_state(current, random.Random(2), opt, 100.0, 100.0, 1.0).transform
+    narrow = _propose_state(current, random.Random(2), opt, 100.0, 100.0, 0.2).transform
+    wide_mag = abs(wide.tx_m) + abs(wide.ty_m) + abs(wide.theta_rad) + abs(wide.scale - 1.0)
+    narrow_mag = abs(narrow.tx_m) + abs(narrow.ty_m) + abs(narrow.theta_rad) + abs(narrow.scale - 1.0)
+    assert narrow_mag < wide_mag
 
 
 def test_source_rotation_penalty_prefers_input_angle() -> None:
@@ -213,3 +249,12 @@ def test_edge_snap_grid_nearest_matches_linear() -> None:
         _n1, d1 = linear.nearest(qx, qy)
         _n2, d2 = grid.nearest(qx, qy)
         assert abs(d1 - d2) < 1e-6
+
+
+def test_node_spatial_index_query_bbox_matches_full_scan() -> None:
+    g = _long_chain_graph()
+    idx = build_node_spatial_index(g)
+    lo, hi = 100.0, 250.0
+    got = set(idx.query_bbox(lo, -1.0, hi, 1.0))
+    expected = {nid for nid, n in g.nodes.items() if lo <= n.x_m <= hi and -1.0 <= n.y_m <= 1.0}
+    assert expected <= got

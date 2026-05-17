@@ -262,6 +262,77 @@ def build_edge_snap_index(graph: RoadGraph) -> AnyEdgeSnapIndex:
     return EdgeSnapIndexGrid.build(graph)
 
 
+class NodeSpatialIndexGrid:
+    __slots__ = ("graph", "x0", "y0", "cw", "ch", "nx", "ny", "cells")
+
+    def __init__(
+        self,
+        graph: RoadGraph,
+        x0: float,
+        y0: float,
+        cw: float,
+        ch: float,
+        nx: int,
+        ny: int,
+        cells: list[list[str]],
+    ) -> None:
+        self.graph = graph
+        self.x0 = x0
+        self.y0 = y0
+        self.cw = max(cw, 1e-6)
+        self.ch = max(ch, 1e-6)
+        self.nx = nx
+        self.ny = ny
+        self.cells = cells
+
+    @staticmethod
+    def build(graph: RoadGraph) -> NodeSpatialIndexGrid:
+        if not graph.nodes:
+            return NodeSpatialIndexGrid(graph, 0.0, 0.0, 1.0, 1.0, 1, 1, [[]])
+        min_x = min(n.x_m for n in graph.nodes.values())
+        max_x = max(n.x_m for n in graph.nodes.values())
+        min_y = min(n.y_m for n in graph.nodes.values())
+        max_y = max(n.y_m for n in graph.nodes.values())
+        span_x = max(max_x - min_x, 1.0)
+        span_y = max(max_y - min_y, 1.0)
+        margin = max(8.0, 0.02 * max(span_x, span_y))
+        x0 = min_x - margin
+        y0 = min_y - margin
+        span_x += 2.0 * margin
+        span_y += 2.0 * margin
+        target_cell = max(25.0, min(120.0, math.sqrt(span_x * span_y / max(1, len(graph.nodes) / 8.0))))
+        nx = min(128, max(8, int(math.ceil(span_x / target_cell))))
+        ny = min(128, max(8, int(math.ceil(span_y / target_cell))))
+        cw = span_x / nx
+        ch = span_y / ny
+        cells: list[list[str]] = [[] for _ in range(nx * ny)]
+        idx = NodeSpatialIndexGrid(graph, x0, y0, cw, ch, nx, ny, cells)
+        for nid, node in graph.nodes.items():
+            ix = max(0, min(nx - 1, int((node.x_m - x0) / cw)))
+            iy = max(0, min(ny - 1, int((node.y_m - y0) / ch)))
+            cells[ix + iy * nx].append(nid)
+        return idx
+
+    def query_bbox(self, min_x: float, min_y: float, max_x: float, max_y: float) -> list[str]:
+        ix0 = max(0, min(self.nx - 1, int((min_x - self.x0) / self.cw)))
+        ix1 = max(0, min(self.nx - 1, int((max_x - self.x0) / self.cw)))
+        iy0 = max(0, min(self.ny - 1, int((min_y - self.y0) / self.ch)))
+        iy1 = max(0, min(self.ny - 1, int((max_y - self.y0) / self.ch)))
+        if ix0 > ix1:
+            ix0, ix1 = ix1, ix0
+        if iy0 > iy1:
+            iy0, iy1 = iy1, iy0
+        out: list[str] = []
+        for ix in range(ix0, ix1 + 1):
+            for iy in range(iy0, iy1 + 1):
+                out.extend(self.cells[ix + iy * self.nx])
+        return out
+
+
+def build_node_spatial_index(graph: RoadGraph) -> NodeSpatialIndexGrid:
+    return NodeSpatialIndexGrid.build(graph)
+
+
 def nearest_graph_endpoint(
     graph: RoadGraph,
     q: tuple[float, float],
@@ -334,6 +405,7 @@ def _smooth_dp_segment_path(
     end_nid: str,
     source_a: tuple[float, float],
     source_b: tuple[float, float],
+    node_index: NodeSpatialIndexGrid | None = None,
 ) -> list[str] | None:
     """スナップ元の一辺に沿う向き・角度ズレをコストにした DAG DP。失敗時は None。"""
     if start_nid == end_nid:
@@ -347,7 +419,18 @@ def _smooth_dp_segment_path(
     corridor = max(30.0, min(180.0, 0.25 * seg_len))
     source_angle = math.atan2(vy, vx)
     meta: dict[str, tuple[float, float]] = {}
-    for nid, node in graph.nodes.items():
+    if node_index is None:
+        candidate_node_ids = list(graph.nodes)
+    else:
+        min_x = min(source_a[0], source_b[0]) - corridor
+        max_x = max(source_a[0], source_b[0]) + corridor
+        min_y = min(source_a[1], source_b[1]) - corridor
+        max_y = max(source_a[1], source_b[1]) + corridor
+        candidate_node_ids = node_index.query_bbox(min_x, min_y, max_x, max_y)
+    for nid in candidate_node_ids:
+        node = graph.nodes.get(nid)
+        if node is None:
+            continue
         along, lateral = _node_projection_and_lateral((node.x_m, node.y_m), source_a, vx, vy, seg_len)
         if -corridor <= along <= seg_len + corridor and lateral <= corridor:
             meta[nid] = (along, lateral)
@@ -480,6 +563,7 @@ def _build_smooth_dp_route(
     adj: dict[str, list[tuple[str, str, float]]],
     polyline_xy_m: list[tuple[float, float]],
     snap_index: AnyEdgeSnapIndex | None = None,
+    node_index: NodeSpatialIndexGrid | None = None,
 ) -> RouteBuildResult:
     if len(polyline_xy_m) < 2:
         return RouteBuildResult([], [], False, 0)
@@ -493,7 +577,7 @@ def _build_smooth_dp_route(
             continue
         start_nid, _ = snap.nearest(a_xy[0], a_xy[1])
         end_nid, _ = snap.nearest(b_xy[0], b_xy[1])
-        seg_edges = _smooth_dp_segment_path(graph, adj, start_nid, end_nid, a_xy, b_xy)
+        seg_edges = _smooth_dp_segment_path(graph, adj, start_nid, end_nid, a_xy, b_xy, node_index)
         if seg_edges is None:
             fallback = dijkstra_path(graph, adj, start_nid, end_nid)
             if fallback is None:
@@ -516,8 +600,9 @@ def build_route_from_polyline(
     polyline_xy_m: list[tuple[float, float]],
     arc_samples: int = ROUTE_ARC_SAMPLES,
     snap_index: AnyEdgeSnapIndex | None = None,
+    node_index: NodeSpatialIndexGrid | None = None,
     snap_strategy: str = "smooth_dp",
 ) -> RouteBuildResult:
     if snap_strategy == "nearest":
         return _build_nearest_sample_route(graph, adj, polyline_xy_m, arc_samples, snap_index)
-    return _build_smooth_dp_route(graph, adj, polyline_xy_m, snap_index)
+    return _build_smooth_dp_route(graph, adj, polyline_xy_m, snap_index, node_index)

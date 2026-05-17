@@ -7,7 +7,6 @@ from .constants import (
     WEIGHT_EDGE_COUNT,
     WEIGHT_ROUTE_LENGTH,
     WEIGHT_SHAPE_DISTANCE,
-    WEIGHT_SOURCE_MIRROR,
     WEIGHT_SOURCE_ROTATION,
     WEIGHT_SOURCE_SCALE,
     WEIGHT_TURN,
@@ -15,13 +14,15 @@ from .constants import (
 )
 from .defaults import (
     DEFAULT_ANNEAL_SEED,
-    DEFAULT_COARSE_PRESOLVE,
-    DEFAULT_COARSE_SCALE_BINS,
-    DEFAULT_COARSE_THETA_BINS,
     DEFAULT_EVALUATION_MODE,
-    DEFAULT_INCLUDE_MIRROR_STROKE,
-    DEFAULT_NUM_RESTARTS,
+    DEFAULT_FINAL_TEMPERATURE,
+    DEFAULT_INITIAL_TEMPERATURE,
+    DEFAULT_LOG_SCALE_STEP,
+    DEFAULT_MAX_ITERATIONS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+    DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_TRACE_STRIDE,
+    DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
 
 
@@ -47,7 +48,6 @@ class OptimizeWeights:
 
     source_rotation: float = WEIGHT_SOURCE_ROTATION
     source_scale: float = WEIGHT_SOURCE_SCALE
-    source_mirror: float = WEIGHT_SOURCE_MIRROR
     shape_distance: float = WEIGHT_SHAPE_DISTANCE
     route_length: float = WEIGHT_ROUTE_LENGTH
     edge_count: float = WEIGHT_EDGE_COUNT
@@ -61,7 +61,6 @@ def weights_for_evaluation_mode(mode: str) -> OptimizeWeights:
         return OptimizeWeights(
             source_rotation=0.12,
             source_scale=0.10,
-            source_mirror=0.02,
             shape_distance=1.0,
             route_length=0.06,
             edge_count=0.04,
@@ -73,16 +72,18 @@ def weights_for_evaluation_mode(mode: str) -> OptimizeWeights:
 
 @dataclass
 class AnnealOptions:
-    """デバッグ API / UI から渡す探索パラメータ（離散グリッド探索）。"""
+    """デバッグ API / UI から渡す探索パラメータ（単一スタート焼きなまし）。"""
 
     optimization_budget_seconds: float = DEFAULT_OPTIMIZATION_BUDGET_SECONDS
     seed: int = DEFAULT_ANNEAL_SEED
-    num_restarts: int = DEFAULT_NUM_RESTARTS
-    include_mirror_stroke: bool = DEFAULT_INCLUDE_MIRROR_STROKE
-    coarse_presolve: bool = DEFAULT_COARSE_PRESOLVE
-    coarse_theta_bins: int = DEFAULT_COARSE_THETA_BINS
-    coarse_scale_bins: int = DEFAULT_COARSE_SCALE_BINS
     evaluation_mode: str = DEFAULT_EVALUATION_MODE
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
+    initial_temperature: float = DEFAULT_INITIAL_TEMPERATURE
+    final_temperature: float = DEFAULT_FINAL_TEMPERATURE
+    translation_step_m_ratio: float = DEFAULT_TRANSLATION_STEP_M_RATIO
+    rotation_step_rad: float = DEFAULT_ROTATION_STEP_RAD
+    log_scale_step: float = DEFAULT_LOG_SCALE_STEP
+    trace_stride: int = DEFAULT_TRACE_STRIDE
 
 
 @dataclass
@@ -91,7 +92,6 @@ class ScoreBreakdown:
 
     source_rotation: float
     source_scale: float
-    source_mirror: float
     shape_distance: float
     route_length: float
     edge_count: float
@@ -102,7 +102,6 @@ class ScoreBreakdown:
         return (
             w.source_rotation * self.source_rotation
             + w.source_scale * self.source_scale
-            + w.source_mirror * self.source_mirror
             + w.shape_distance * self.shape_distance
             + w.route_length * self.route_length
             + w.edge_count * self.edge_count
@@ -114,7 +113,6 @@ class ScoreBreakdown:
         return {
             "source_rotation": self.source_rotation,
             "source_scale": self.source_scale,
-            "source_mirror": self.source_mirror,
             "shape_distance": self.shape_distance,
             "route_length": self.route_length,
             "edge_count": self.edge_count,
@@ -140,7 +138,7 @@ class TraceStep:
     accepted: bool
     score_total: float
     score_terms: dict[str, float]
-    transform: dict[str, float]
+    transform: dict[str, Any]
     edge_ids: list[str]
 
 

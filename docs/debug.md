@@ -43,7 +43,7 @@
 
 - [backend/app/main.py](../backend/app/main.py): `app.include_router(debug_router, prefix="/api/debug", ...)`。`debug_router` は `app.debug` パッケージから import。
 
-## 最適化（グリッド探索）のトレース・結果データとデバッグ
+## 最適化（焼きなまし）のトレース・結果データとデバッグ
 
 最適化アルゴリズムの**入出力の形**とスコアの定義は [optimization.md](./optimization.md) の「実装ベースライン」に書く。**ここでは「どう保存するか・どうデバッグするか」**（運用・UI）に限定する。
 
@@ -55,14 +55,14 @@
 ### レスポンスに含まれるもの（保存時の単位）
 
 - **`candidates_geojson`**: ベスト候補 1 本の WGS84 `LineString`（再描画にそのまま使える）。
-- **`steps`**: 最適化のスナップショット（現状はベスト 1 ステップ中心）。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコアのみ。
+- **`steps`**: 焼きなましのスナップショット。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコア・温度・採択有無のみ。
 - **`trace_format_version`**: 現状 `1`。クライアントや後処理スクリプトは、この番号でスキーマ互換を判断できるようにする（形式変更時はバージョンを上げる）。
 
 ### フロント（デバッグページ）でのデバッグ
 
 1. **前処理フロー**で道路を取得し、グラフモードで `graph-preview` が成功した状態にする（[`DebugSidebar`](../frontend/src/debug/components/DebugSidebar.tsx)）。
 2. **「このグラフで形を探索」**で最適化サイドバー（[`DebugOptimizePanel`](../frontend/src/debug/components/DebugOptimizePanel.tsx)）へ遷移。
-3. 手書きストローク・評価モード・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。結果は **ページの React 状態にのみ保持**（リロードで消える）。
+3. 手書きストローク・評価モード・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。同期 API なのでサーバから逐次進捗は返さないが、UI は経過秒・時間上限・最大反復数を表示する。結果は **ページの React 状態にのみ保持**（リロードで消える）。
 4. **マップ上の表示**
    - **ベスト候補**: `candidates_geojson` をそのままオーバーレイ。
    - **トレーススライダー**: `steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
@@ -86,5 +86,5 @@
 ## 関連ドキュメント
 
 - [preprocess.md](./preprocess.md) — H0 の段階（投影・グラフ化・索引など）と検証観点。
-- [optimization.md](./optimization.md) — 最適化の要件・実装ベースライン（API フィールド・スコア項など）。**トレースの保存・UI での見方は本文書の「最適化（グリッド探索）のトレース・結果データとデバッグ」**。
+- [optimization.md](./optimization.md) — 最適化の要件・実装ベースライン（API フィールド・スコア項など）。**トレースの保存・UI での見方は本文書の「最適化（焼きなまし）のトレース・結果データとデバッグ」**。
 - [architecture.md](./architecture.md) — Overpass を FastAPI がプロキシする経路。

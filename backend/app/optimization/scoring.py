@@ -5,7 +5,7 @@ import math
 from app.preprocess.graph_model import RoadGraph
 from app.preprocess.helpers import nearest_point_on_segment
 
-from .constants import ROUTE_ARC_SAMPLES
+from .constants import ELEGANCE_GATE_THRESHOLD, ROUTE_ARC_SAMPLES, SHAPE_COVERAGE_WEIGHT
 from .snap_route import edge_geometric_length_m, sample_polyline_arc_length
 from .transform import graph_bbox_diagonal_m
 from .types import OptimizeWeights, RouteBuildResult, ScoreBreakdown, Transform
@@ -77,19 +77,31 @@ def shape_similarity_loss(
     route_polyline_xy_m: list[tuple[float, float]],
     diag_m: float,
 ) -> float:
-    """スナップ元とルートの双方向チャンファー距離（bbox 対角で無次元化）。"""
-    target_to_route = _mean_sq_dist_polyline_to_polyline_samples(
+    """順序対応の弧長サンプル距離 + coverage loss（bbox 対角で無次元化）。"""
+    target_samples = sample_polyline_arc_length(target_polyline_xy_m, ROUTE_ARC_SAMPLES)
+    route_samples = sample_polyline_arc_length(route_polyline_xy_m, ROUTE_ARC_SAMPLES)
+    if len(target_samples) != len(route_samples) or not target_samples:
+        ordered_msq = 1e12
+    else:
+        ordered_msq = 0.0
+        for a, b in zip(target_samples, route_samples, strict=True):
+            ordered_msq += (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+        ordered_msq /= len(target_samples)
+
+    coverage_target_to_route = _mean_sq_dist_polyline_to_polyline_samples(
         target_polyline_xy_m,
         route_polyline_xy_m,
         ROUTE_ARC_SAMPLES,
     )
-    route_to_target = _mean_sq_dist_polyline_to_polyline_samples(
+    coverage_route_to_target = _mean_sq_dist_polyline_to_polyline_samples(
         route_polyline_xy_m,
         target_polyline_xy_m,
         ROUTE_ARC_SAMPLES,
     )
-    rms = math.sqrt(max(0.0, 0.5 * (target_to_route + route_to_target)))
-    return rms / max(diag_m, 1.0)
+    coverage_msq = 0.5 * (coverage_target_to_route + coverage_route_to_target)
+    ordered = math.sqrt(max(0.0, ordered_msq)) / max(diag_m, 1.0)
+    coverage = math.sqrt(max(0.0, coverage_msq)) / max(diag_m, 1.0)
+    return ordered + SHAPE_COVERAGE_WEIGHT * coverage
 
 
 def _normalized_rotation_abs(theta_rad: float) -> float:
@@ -99,34 +111,29 @@ def _normalized_rotation_abs(theta_rad: float) -> float:
 
 def score_source_transform(
     transform: Transform,
-    source_mirrored: bool,
     evaluation_mode: str,
-) -> tuple[float, float, float]:
+) -> tuple[float, float]:
     """スナップ元そのものの評価項。小さいほど入力の向き・好みに近い。"""
     source_rotation = _normalized_rotation_abs(transform.theta_rad)
     if evaluation_mode == "elegant":
         source_scale = max(0.0, transform.scale)
     else:
         source_scale = abs(math.log(max(transform.scale, 1e-9)))
-    source_mirror = 1.0 if source_mirrored else 0.0
-    return source_rotation, source_scale, source_mirror
+    return source_rotation, source_scale
 
 
 def _unreachable_breakdown(
     transform: Transform,
-    source_mirrored: bool,
     evaluation_mode: str,
 ) -> ScoreBreakdown:
     big = 1e4
-    source_rotation, source_scale, source_mirror = score_source_transform(
+    source_rotation, source_scale = score_source_transform(
         transform,
-        source_mirrored,
         evaluation_mode,
     )
     return ScoreBreakdown(
         source_rotation=source_rotation,
         source_scale=source_scale,
-        source_mirror=source_mirror,
         shape_distance=big,
         route_length=big,
         edge_count=big,
@@ -142,16 +149,14 @@ def score_route(
     transform: Transform,
     weights: OptimizeWeights,
     evaluation_mode: str = "faithful",
-    source_mirrored: bool = False,
 ) -> tuple[float, ScoreBreakdown]:
     diag_m = graph_bbox_diagonal_m(graph)
-    source_rotation, source_scale, source_mirror = score_source_transform(
+    source_rotation, source_scale = score_source_transform(
         transform,
-        source_mirrored,
         evaluation_mode,
     )
     if not route.reachable or len(route.edge_ids) == 0:
-        bd = _unreachable_breakdown(transform, source_mirrored, evaluation_mode)
+        bd = _unreachable_breakdown(transform, evaluation_mode)
         return bd.total(weights), bd
 
     rlen = route_geometric_length_m(graph, route.edge_ids)
@@ -162,11 +167,16 @@ def score_route(
     edge_term = float(n_edges) / max(1, ROUTE_ARC_SAMPLES)
     n_turn_denom = max(1, len(route.polyline_xy_m) - 2)
     turn_term = turn_raw / (math.pi * float(n_turn_denom))
+    if evaluation_mode == "elegant":
+        gate = 1.0 / (1.0 + (shape_term / max(ELEGANCE_GATE_THRESHOLD, 1e-9)) ** 2)
+        source_scale *= gate
+        route_length_term *= gate
+        edge_term *= gate
+        turn_term *= gate
 
     bd = ScoreBreakdown(
         source_rotation=source_rotation,
         source_scale=source_scale,
-        source_mirror=source_mirror,
         shape_distance=shape_term,
         route_length=route_length_term,
         edge_count=edge_term,

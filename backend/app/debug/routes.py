@@ -29,7 +29,6 @@ from ..optimization.constants import (
     WEIGHT_EDGE_COUNT,
     WEIGHT_ROUTE_LENGTH,
     WEIGHT_SHAPE_DISTANCE,
-    WEIGHT_SOURCE_MIRROR,
     WEIGHT_SOURCE_ROTATION,
     WEIGHT_SOURCE_SCALE,
     WEIGHT_TURN,
@@ -37,13 +36,15 @@ from ..optimization.constants import (
 )
 from ..optimization.defaults import (
     DEFAULT_ANNEAL_SEED,
-    DEFAULT_COARSE_PRESOLVE,
-    DEFAULT_COARSE_SCALE_BINS,
-    DEFAULT_COARSE_THETA_BINS,
     DEFAULT_EVALUATION_MODE,
-    DEFAULT_INCLUDE_MIRROR_STROKE,
-    DEFAULT_NUM_RESTARTS,
+    DEFAULT_FINAL_TEMPERATURE,
+    DEFAULT_INITIAL_TEMPERATURE,
+    DEFAULT_LOG_SCALE_STEP,
+    DEFAULT_MAX_ITERATIONS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+    DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_TRACE_STRIDE,
+    DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
 from ..optimization.run import run_simulated_annealing
 from ..optimization.types import AnnealOptions, OptimizeWeights, TraceStep
@@ -97,7 +98,6 @@ class StrokePointBody(BaseModel):
 class OptimizeWeightsBody(BaseModel):
     source_rotation: float = WEIGHT_SOURCE_ROTATION
     source_scale: float = WEIGHT_SOURCE_SCALE
-    source_mirror: float = WEIGHT_SOURCE_MIRROR
     shape_distance: float = WEIGHT_SHAPE_DISTANCE
     route_length: float = WEIGHT_ROUTE_LENGTH
     edge_count: float = WEIGHT_EDGE_COUNT
@@ -106,18 +106,20 @@ class OptimizeWeightsBody(BaseModel):
 
 
 class AnnealOptionsBody(BaseModel):
-    """デバッグ UI が送る探索オプション（離散グリッド）。"""
+    """デバッグ UI が送る探索オプション（単一スタート焼きなまし）。"""
 
     optimization_budget_seconds: float = Field(
         DEFAULT_OPTIMIZATION_BUDGET_SECONDS, ge=0.05, le=120.0
     )
     seed: int = DEFAULT_ANNEAL_SEED
-    num_restarts: int = Field(DEFAULT_NUM_RESTARTS, ge=1, le=64)
-    include_mirror_stroke: bool = DEFAULT_INCLUDE_MIRROR_STROKE
-    coarse_presolve: bool = DEFAULT_COARSE_PRESOLVE
-    coarse_theta_bins: int = Field(DEFAULT_COARSE_THETA_BINS, ge=2, le=64)
-    coarse_scale_bins: int = Field(DEFAULT_COARSE_SCALE_BINS, ge=1, le=32)
     evaluation_mode: Literal["faithful", "elegant"] = DEFAULT_EVALUATION_MODE
+    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=20_000)
+    initial_temperature: float = Field(DEFAULT_INITIAL_TEMPERATURE, gt=0.0, le=10.0)
+    final_temperature: float = Field(DEFAULT_FINAL_TEMPERATURE, gt=0.0, le=10.0)
+    translation_step_m_ratio: float = Field(DEFAULT_TRANSLATION_STEP_M_RATIO, ge=0.0, le=2.0)
+    rotation_step_rad: float = Field(DEFAULT_ROTATION_STEP_RAD, ge=0.0, le=6.28319)
+    log_scale_step: float = Field(DEFAULT_LOG_SCALE_STEP, ge=0.0, le=2.0)
+    trace_stride: int = Field(DEFAULT_TRACE_STRIDE, ge=1, le=10_000)
 
 
 def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
@@ -127,12 +129,14 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         AnnealOptions(),
         optimization_budget_seconds=body.optimization_budget_seconds,
         seed=body.seed,
-        num_restarts=body.num_restarts,
-        include_mirror_stroke=body.include_mirror_stroke,
-        coarse_presolve=body.coarse_presolve,
-        coarse_theta_bins=body.coarse_theta_bins,
-        coarse_scale_bins=body.coarse_scale_bins,
         evaluation_mode=body.evaluation_mode,
+        max_iterations=body.max_iterations,
+        initial_temperature=body.initial_temperature,
+        final_temperature=body.final_temperature,
+        translation_step_m_ratio=body.translation_step_m_ratio,
+        rotation_step_rad=body.rotation_step_rad,
+        log_scale_step=body.log_scale_step,
+        trace_stride=body.trace_stride,
     )
 
 

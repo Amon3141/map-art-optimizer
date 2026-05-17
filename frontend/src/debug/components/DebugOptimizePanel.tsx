@@ -11,13 +11,15 @@ import {
 } from '../lib/graphPreview'
 import {
   DEFAULT_ANNEAL_SEED,
-  DEFAULT_COARSE_PRESOLVE,
-  DEFAULT_COARSE_SCALE_BINS,
-  DEFAULT_COARSE_THETA_BINS,
   DEFAULT_EVALUATION_MODE,
-  DEFAULT_INCLUDE_MIRROR_STROKE,
-  DEFAULT_NUM_RESTARTS,
+  DEFAULT_FINAL_TEMPERATURE,
+  DEFAULT_INITIAL_TEMPERATURE,
+  DEFAULT_LOG_SCALE_STEP,
+  DEFAULT_MAX_ITERATIONS,
   DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+  DEFAULT_ROTATION_STEP_RAD,
+  DEFAULT_TRACE_STRIDE,
+  DEFAULT_TRANSLATION_STEP_M_RATIO,
 } from '../lib/optimizationDefaults'
 import { rebuildRouteFeatureCollection } from '../lib/rebuildRouteFromTraceStep'
 
@@ -76,13 +78,17 @@ export function DebugOptimizePanel({
   const [strokePoints, setStrokePoints] = useState<Point[] | null>(null)
   const [seed, setSeed] = useState(DEFAULT_ANNEAL_SEED)
   const [budgetSeconds, setBudgetSeconds] = useState(DEFAULT_OPTIMIZATION_BUDGET_SECONDS)
-  const [numRestarts, setNumRestarts] = useState(DEFAULT_NUM_RESTARTS)
-  const [includeMirrorStroke, setIncludeMirrorStroke] = useState(DEFAULT_INCLUDE_MIRROR_STROKE)
-  const [coarsePresolve, setCoarsePresolve] = useState(DEFAULT_COARSE_PRESOLVE)
-  const [coarseThetaBins, setCoarseThetaBins] = useState(DEFAULT_COARSE_THETA_BINS)
-  const [coarseScaleBins, setCoarseScaleBins] = useState(DEFAULT_COARSE_SCALE_BINS)
   const [evaluationMode, setEvaluationMode] = useState<EvaluationMode>(DEFAULT_EVALUATION_MODE as EvaluationMode)
+  const [maxIterations, setMaxIterations] = useState(DEFAULT_MAX_ITERATIONS)
+  const [initialTemperature, setInitialTemperature] = useState(DEFAULT_INITIAL_TEMPERATURE)
+  const [finalTemperature, setFinalTemperature] = useState(DEFAULT_FINAL_TEMPERATURE)
+  const [translationStepRatio, setTranslationStepRatio] = useState(DEFAULT_TRANSLATION_STEP_M_RATIO)
+  const [rotationStepRad, setRotationStepRad] = useState(DEFAULT_ROTATION_STEP_RAD)
+  const [logScaleStep, setLogScaleStep] = useState(DEFAULT_LOG_SCALE_STEP)
+  const [traceStride, setTraceStride] = useState(DEFAULT_TRACE_STRIDE)
   const [loading, setLoading] = useState(false)
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<OptimizeApiResponse | null>(null)
   /** 'best' = API の candidates_geojson、数値 = steps のインデックス */
@@ -93,6 +99,14 @@ export function DebugOptimizePanel({
   const hasShape = Boolean(strokePoints && strokePoints.length >= 2)
   const steps = result?.steps ?? []
   const maxStepIdx = Math.max(0, steps.length - 1)
+
+  useEffect(() => {
+    if (!loading || loadingStartedAt == null) return
+    const update = () => setElapsedSeconds((Date.now() - loadingStartedAt) / 1000)
+    update()
+    const id = window.setInterval(update, 250)
+    return () => window.clearInterval(id)
+  }, [loading, loadingStartedAt])
 
   useEffect(() => {
     if (!result) {
@@ -127,6 +141,8 @@ export function DebugOptimizePanel({
       return
     }
     setLoading(true)
+    setLoadingStartedAt(Date.now())
+    setElapsedSeconds(0)
     setError(null)
     try {
       const body = {
@@ -138,12 +154,14 @@ export function DebugOptimizePanel({
         anneal: {
           optimization_budget_seconds: budgetSeconds,
           seed,
-          num_restarts: numRestarts,
-          include_mirror_stroke: includeMirrorStroke,
-          coarse_presolve: coarsePresolve,
-          coarse_theta_bins: coarseThetaBins,
-          coarse_scale_bins: coarseScaleBins,
           evaluation_mode: evaluationMode,
+          max_iterations: maxIterations,
+          initial_temperature: initialTemperature,
+          final_temperature: finalTemperature,
+          translation_step_m_ratio: translationStepRatio,
+          rotation_step_rad: rotationStepRad,
+          log_scale_step: logScaleStep,
+          trace_stride: traceStride,
         },
       }
       const res = await fetch(apiUrl('/api/debug/optimize'), {
@@ -162,6 +180,7 @@ export function DebugOptimizePanel({
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
+      setLoadingStartedAt(null)
     }
   }
 
@@ -179,8 +198,8 @@ export function DebugOptimizePanel({
         </button>
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">形の探索</h1>
         <p className="text-xs leading-relaxed text-stone-600">
-          現在のグラフと表示範囲をそのまま使い、手書きの形に近い道路ルートを<strong>離散グリッド</strong>
-          （回転・スケール・並進の総当たり）で選びます。辺数が多い bbox は前処理で範囲を絞ると応答が安定します。
+          現在のグラフと表示範囲をそのまま使い、手書きの形に近い道路ルートを<strong>焼きなまし</strong>
+          （回転・スケール・並進の遷移）で選びます。辺数が多い bbox は前処理で範囲を絞ると応答が安定します。
         </p>
       </div>
 
@@ -204,7 +223,7 @@ export function DebugOptimizePanel({
           </div>
 
           <details className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
-            <summary className="cursor-pointer text-xs py-0.5 font-medium text-stone-700">グリッド探索の設定</summary>
+            <summary className="cursor-pointer text-xs py-0.5 font-medium text-stone-700">焼きなましの設定</summary>
             <div className="mt-2.5 flex flex-col gap-2">
               <label className="text-xs text-stone-600">
                 評価モード
@@ -218,11 +237,22 @@ export function DebugOptimizePanel({
                 </select>
               </label>
               <label className="text-xs text-stone-600">
-                乱数シード（θ 位相の微調整に使用）
+                乱数シード
                 <input
                   type="number"
                   value={seed}
                   onChange={(e) => setSeed(Number(e.target.value) || 0)}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-stone-600">
+                最大反復数
+                <input
+                  type="number"
+                  min={1}
+                  max={20000}
+                  value={maxIterations}
+                  onChange={(e) => setMaxIterations(Math.min(20000, Math.max(1, Number(e.target.value) || 1)))}
                   className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                 />
               </label>
@@ -239,64 +269,75 @@ export function DebugOptimizePanel({
                 />
               </label>
               <label className="text-xs text-stone-600">
-                リスタート回数（θ 位相オフセット）
+                初期温度
                 <input
                   type="number"
-                  min={1}
-                  max={64}
-                  value={numRestarts}
-                  onChange={(e) => setNumRestarts(Math.min(64, Math.max(1, Number(e.target.value) || 1)))}
+                  min={0.000001}
+                  max={10}
+                  step={0.001}
+                  value={initialTemperature}
+                  onChange={(e) => setInitialTemperature(Math.min(10, Math.max(0.000001, Number(e.target.value) || 0.05)))}
                   className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                 />
               </label>
-              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-stone-700">
+              <label className="text-xs text-stone-600">
+                最終温度
                 <input
-                  type="checkbox"
-                  className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
-                  checked={coarsePresolve}
-                  onChange={(e) => setCoarsePresolve(e.target.checked)}
+                  type="number"
+                  min={0.000001}
+                  max={10}
+                  step={0.001}
+                  value={finalTemperature}
+                  onChange={(e) => setFinalTemperature(Math.min(10, Math.max(0.000001, Number(e.target.value) || 0.001)))}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                 />
-                <span>離散グリッドで探索（オフのときは恒等変換のみ評価）</span>
               </label>
-              {coarsePresolve ? (
-                <div className="ml-6 flex flex-col gap-2 border-l border-stone-200 pl-2">
-                  <p className="text-[11px] leading-snug text-stone-500">
-                    並進オフセット数点 ×{' '}
-                    <span className="font-mono">[0, 2π)</span> の θ 等分 × スケール区間{' '}
-                    <span className="font-mono">[0.75, 1.35]</span> の等分割を総当たりし、スコア最小の変換とルートを選びます。
-                  </p>
-                  <label className="text-xs text-stone-600">
-                    θ の分割数（bins）
-                    <input
-                      type="number"
-                      min={2}
-                      max={64}
-                      value={coarseThetaBins}
-                      onChange={(e) => setCoarseThetaBins(Math.min(64, Math.max(2, Number(e.target.value) || 3)))}
-                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
-                    />
-                  </label>
-                  <label className="text-xs text-stone-600">
-                    スケールの分割数（bins）
-                    <input
-                      type="number"
-                      min={1}
-                      max={32}
-                      value={coarseScaleBins}
-                      onChange={(e) => setCoarseScaleBins(Math.min(32, Math.max(1, Number(e.target.value) || 3)))}
-                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
-                    />
-                  </label>
-                </div>
-              ) : null}
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-700">
+              <label className="text-xs text-stone-600">
+                並進ステップ（bbox 比）
                 <input
-                  type="checkbox"
-                  className="size-4 rounded border-stone-300 text-[#4a6f8a] focus:ring-[#4a6f8a]/40"
-                  checked={includeMirrorStroke}
-                  onChange={(e) => setIncludeMirrorStroke(e.target.checked)}
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  value={translationStepRatio}
+                  onChange={(e) => setTranslationStepRatio(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                 />
-                <span>左右鏡映ストロークも試す</span>
+              </label>
+              <label className="text-xs text-stone-600">
+                回転ステップ（rad）
+                <input
+                  type="number"
+                  min={0}
+                  max={6.28319}
+                  step={0.01}
+                  value={rotationStepRad}
+                  onChange={(e) => setRotationStepRad(Math.min(6.28319, Math.max(0, Number(e.target.value) || 0)))}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-stone-600">
+                スケールステップ（log）
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  value={logScaleStep}
+                  onChange={(e) => setLogScaleStep(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-stone-600">
+                トレース間隔
+                <input
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={traceStride}
+                  onChange={(e) => setTraceStride(Math.min(10000, Math.max(1, Number(e.target.value) || 1)))}
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                />
               </label>
             </div>
           </details>
@@ -307,8 +348,20 @@ export function DebugOptimizePanel({
             onClick={() => void runOptimize()}
             className="rounded-xl bg-[#4a6f8a] px-4 py-2.5 text-sm font-medium text-white shadow-sm disabled:opacity-50"
           >
-            {loading ? '探索中…' : 'グリッド探索を実行'}
+            {loading ? '探索中…' : '焼きなましを実行'}
           </button>
+
+          {loading ? (
+            <p className="text-[11px] leading-snug text-stone-500" aria-live="polite">
+              焼きなまし中... {elapsedSeconds.toFixed(1)}s, 最大{' '}
+              {maxIterations} iterations
+            </p>
+          ) : result ? (
+            <p className="text-[11px] leading-snug text-stone-500">
+              トレース {steps.length} 件
+              {result.optimizer_meta?.deadline_hit === true ? ' / 時間上限で停止' : ''}
+            </p>
+          ) : null}
 
           {error ? <p className="text-sm text-red-700">{error}</p> : null}
 
@@ -346,7 +399,7 @@ export function DebugOptimizePanel({
                   </div>
                   {maxStepIdx === 0 ? (
                     <p className="text-[11px] leading-snug text-stone-500">
-                      トレースは 1 ステップのみです。中間のベスト更新が記録されていないため、スライダーは表示しません。
+                      トレースは 1 ステップのみです。焼きなましの中間ステップが記録されていないため、スライダーは表示しません。
                     </p>
                   ) : (
                     <input
@@ -361,7 +414,7 @@ export function DebugOptimizePanel({
                   )}
                   <p className="mt-1 font-mono text-[10px] text-stone-500">
                     {traceView === 'best' ? (
-                      <>表示: ベスト候補（スライダーはベスト 1 ステップの確認用）</>
+                      <>表示: ベスト候補（スライダーは焼きなましトレースの確認用）</>
                     ) : displayStep ? (
                       <>
                         step {displayStep.step_index} · score={displayStep.score_total.toFixed(4)}
