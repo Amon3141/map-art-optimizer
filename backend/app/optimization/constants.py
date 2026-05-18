@@ -11,6 +11,10 @@ WEIGHT_ROUTE_LENGTH: float = 0.0
 WEIGHT_EDGE_COUNT: float = 0.0
 WEIGHT_TURN: float = 0.0
 WEIGHT_UNREACHABLE: float = 1e6
+# グラフ bbox 外への逸脱ペナルティ。形がグラフ端に押し込まれた状態を罰し、SA の勾配を作る。
+WEIGHT_OUT_OF_GRAPH: float = 2.0
+# smooth DP 失敗 → Dijkstra フォールバック率のペナルティ。形状不整合の補助指標。
+WEIGHT_DIJKSTRA_FALLBACK: float = 0.3
 
 # 順序対応 shape loss と coverage loss の合成比
 SHAPE_COVERAGE_WEIGHT: float = 0.35

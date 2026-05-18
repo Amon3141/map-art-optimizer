@@ -26,7 +26,9 @@ from ..preprocess import (
     GraphPreprocessOptions,
 )
 from ..optimization.constants import (
+    WEIGHT_DIJKSTRA_FALLBACK,
     WEIGHT_EDGE_COUNT,
+    WEIGHT_OUT_OF_GRAPH,
     WEIGHT_ROUTE_LENGTH,
     WEIGHT_SHAPE_DISTANCE,
     WEIGHT_SOURCE_ROTATION,
@@ -104,6 +106,8 @@ class OptimizeWeightsBody(BaseModel):
     edge_count: float = WEIGHT_EDGE_COUNT
     turn: float = WEIGHT_TURN
     unreachable: float = WEIGHT_UNREACHABLE
+    out_of_graph: float = WEIGHT_OUT_OF_GRAPH
+    dijkstra_fallback: float = WEIGHT_DIJKSTRA_FALLBACK
 
 
 class AnnealOptionsBody(BaseModel):

@@ -21,6 +21,15 @@ import {
   DEFAULT_ROTATION_STEP_RAD,
   DEFAULT_TRACE_STRIDE,
   DEFAULT_TRANSLATION_STEP_M_RATIO,
+  DEFAULT_WEIGHT_DIJKSTRA_FALLBACK,
+  DEFAULT_WEIGHT_EDGE_COUNT,
+  DEFAULT_WEIGHT_OUT_OF_GRAPH,
+  DEFAULT_WEIGHT_ROUTE_LENGTH,
+  DEFAULT_WEIGHT_SHAPE_DISTANCE,
+  DEFAULT_WEIGHT_SOURCE_ROTATION,
+  DEFAULT_WEIGHT_SOURCE_SCALE,
+  DEFAULT_WEIGHT_TURN,
+  DEFAULT_WEIGHT_UNREACHABLE,
 } from '../lib/optimizationDefaults'
 import { rebuildRouteFeatureCollection } from '../lib/rebuildRouteFromTraceStep'
 
@@ -105,6 +114,15 @@ export function DebugOptimizePanel({
   const [rotationStepRad, setRotationStepRad] = useState(DEFAULT_ROTATION_STEP_RAD)
   const [logScaleStep, setLogScaleStep] = useState(DEFAULT_LOG_SCALE_STEP)
   const [traceStride, setTraceStride] = useState(DEFAULT_TRACE_STRIDE)
+  const [weightSourceRotation, setWeightSourceRotation] = useState(DEFAULT_WEIGHT_SOURCE_ROTATION)
+  const [weightSourceScale, setWeightSourceScale] = useState(DEFAULT_WEIGHT_SOURCE_SCALE)
+  const [weightShapeDistance, setWeightShapeDistance] = useState(DEFAULT_WEIGHT_SHAPE_DISTANCE)
+  const [weightRouteLength, setWeightRouteLength] = useState(DEFAULT_WEIGHT_ROUTE_LENGTH)
+  const [weightEdgeCount, setWeightEdgeCount] = useState(DEFAULT_WEIGHT_EDGE_COUNT)
+  const [weightTurn, setWeightTurn] = useState(DEFAULT_WEIGHT_TURN)
+  const [weightUnreachable, setWeightUnreachable] = useState(DEFAULT_WEIGHT_UNREACHABLE)
+  const [weightOutOfGraph, setWeightOutOfGraph] = useState(DEFAULT_WEIGHT_OUT_OF_GRAPH)
+  const [weightDijkstraFallback, setWeightDijkstraFallback] = useState(DEFAULT_WEIGHT_DIJKSTRA_FALLBACK)
   const [loading, setLoading] = useState(false)
   const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -186,6 +204,17 @@ export function DebugOptimizePanel({
         options: optsNorm,
         stroke_points: strokePoints.map((p) => ({ x: p.x, y: p.y })),
         record_trace: true,
+        weights: {
+          source_rotation: weightSourceRotation,
+          source_scale: weightSourceScale,
+          shape_distance: weightShapeDistance,
+          route_length: weightRouteLength,
+          edge_count: weightEdgeCount,
+          turn: weightTurn,
+          unreachable: weightUnreachable,
+          out_of_graph: weightOutOfGraph,
+          dijkstra_fallback: weightDijkstraFallback,
+        },
         anneal: {
           optimization_budget_seconds: budgetSeconds,
           seed,
@@ -400,6 +429,120 @@ export function DebugOptimizePanel({
                       step={0.01}
                       value={logScaleStep}
                       onChange={(e) => setLogScaleStep(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <p className="mt-1.5 text-[10px] font-medium text-stone-500">スコア重み</p>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>shape_distance 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={weightShapeDistance}
+                      onChange={(e) => setWeightShapeDistance(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>out_of_graph 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      グラフ bbox 外への逸脱ペナルティ。境界付近の絡まりから脱出する勾配を作る。
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={0.1}
+                      value={weightOutOfGraph}
+                      onChange={(e) => setWeightOutOfGraph(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>dijkstra_fallback 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      smooth DP 失敗率のペナルティ。形が道路グラフに乗れていない度合いを反映。
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.05}
+                      value={weightDijkstraFallback}
+                      onChange={(e) => setWeightDijkstraFallback(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>source_rotation 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.01}
+                      value={weightSourceRotation}
+                      onChange={(e) => setWeightSourceRotation(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>source_scale 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.01}
+                      value={weightSourceScale}
+                      onChange={(e) => setWeightSourceScale(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>route_length 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.01}
+                      value={weightRouteLength}
+                      onChange={(e) => setWeightRouteLength(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>edge_count 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.01}
+                      value={weightEdgeCount}
+                      onChange={(e) => setWeightEdgeCount(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>turn 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.01}
+                      value={weightTurn}
+                      onChange={(e) => setWeightTurn(Math.max(0, Number(e.target.value) || 0))}
+                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>unreachable 重み</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={weightUnreachable}
+                      onChange={(e) => setWeightUnreachable(Math.max(0, Number(e.target.value) || 0))}
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>

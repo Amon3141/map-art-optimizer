@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import (
+    WEIGHT_DIJKSTRA_FALLBACK,
     WEIGHT_EDGE_COUNT,
+    WEIGHT_OUT_OF_GRAPH,
     WEIGHT_ROUTE_LENGTH,
     WEIGHT_SHAPE_DISTANCE,
     WEIGHT_SOURCE_ROTATION,
@@ -54,6 +56,8 @@ class OptimizeWeights:
     edge_count: float = WEIGHT_EDGE_COUNT
     turn: float = WEIGHT_TURN
     unreachable: float = WEIGHT_UNREACHABLE
+    out_of_graph: float = WEIGHT_OUT_OF_GRAPH
+    dijkstra_fallback: float = WEIGHT_DIJKSTRA_FALLBACK
 
 
 @dataclass
@@ -85,6 +89,8 @@ class ScoreBreakdown:
     edge_count: float
     turn: float
     unreachable: float
+    out_of_graph: float = 0.0
+    dijkstra_fallback: float = 0.0
 
     def total(self, w: OptimizeWeights) -> float:
         return (
@@ -95,6 +101,8 @@ class ScoreBreakdown:
             + w.edge_count * self.edge_count
             + w.turn * self.turn
             + w.unreachable * self.unreachable
+            + w.out_of_graph * self.out_of_graph
+            + w.dijkstra_fallback * self.dijkstra_fallback
         )
 
     def as_dict(self) -> dict[str, float]:
@@ -106,6 +114,8 @@ class ScoreBreakdown:
             "edge_count": self.edge_count,
             "turn": self.turn,
             "unreachable": self.unreachable,
+            "out_of_graph": self.out_of_graph,
+            "dijkstra_fallback": self.dijkstra_fallback,
         }
 
 

@@ -99,6 +99,50 @@ def _record_trace_step(
     )
 
 
+_MOVE_TYPES = ("translate", "rotate", "scale")
+
+# Basin hopping: 高温期にこの確率でランダムリセットを試みる
+_JUMP_PROBABILITY: float = 0.05
+_JUMP_TEMP_THRESHOLD: float = 0.5
+
+
+def _random_transform(rng: random.Random, span_x: float, span_y: float) -> Transform:
+    """span 内で一様ランダムな変換を生成（basin hopping 用）。"""
+    log_min = math.log(max(TRANSFORM_SCALE_MIN, 1e-12))
+    log_max = math.log(max(TRANSFORM_SCALE_MAX, TRANSFORM_SCALE_MIN))
+    return Transform(
+        tx_m=rng.uniform(-max(span_x, 1.0), max(span_x, 1.0)),
+        ty_m=rng.uniform(-max(span_y, 1.0), max(span_y, 1.0)),
+        theta_rad=rng.uniform(-math.pi, math.pi),
+        scale=math.exp(rng.uniform(log_min, log_max)),
+    )
+
+
+def _apply_single_move(
+    t: Transform,
+    move: str,
+    rng: random.Random,
+    opt: AnnealOptions,
+    span_x: float,
+    span_y: float,
+    step_scale: float,
+) -> None:
+    """t を in-place で 1 種類の摂動を適用する。"""
+    if move == "translate":
+        step_x = max(1.0, span_x) * max(0.0, opt.translation_step_m_ratio) * step_scale
+        step_y = max(1.0, span_y) * max(0.0, opt.translation_step_m_ratio) * step_scale
+        t.tx_m = _clamp_shift(t.tx_m + rng.gauss(0.0, step_x), span_x)
+        t.ty_m = _clamp_shift(t.ty_m + rng.gauss(0.0, step_y), span_y)
+    elif move == "rotate":
+        t.theta_rad += rng.gauss(0.0, max(0.0, opt.rotation_step_rad) * step_scale)
+    else:  # scale
+        log_scale = math.log(max(t.scale, 1e-12)) + rng.gauss(
+            0.0,
+            max(0.0, opt.log_scale_step) * step_scale,
+        )
+        t.scale = _clamp_scale(math.exp(log_scale))
+
+
 def _propose_state(
     current: AnnealState,
     rng: random.Random,
@@ -110,20 +154,15 @@ def _propose_state(
     t = current.transform
     next_t = Transform(t.tx_m, t.ty_m, t.theta_rad, t.scale)
 
-    move = rng.choice(("translate", "rotate", "scale"))
-    if move == "translate":
-        step_x = max(1.0, span_x) * max(0.0, opt.translation_step_m_ratio) * step_scale
-        step_y = max(1.0, span_y) * max(0.0, opt.translation_step_m_ratio) * step_scale
-        next_t.tx_m = _clamp_shift(next_t.tx_m + rng.gauss(0.0, step_x), span_x)
-        next_t.ty_m = _clamp_shift(next_t.ty_m + rng.gauss(0.0, step_y), span_y)
-    elif move == "rotate":
-        next_t.theta_rad += rng.gauss(0.0, max(0.0, opt.rotation_step_rad) * step_scale)
+    # 1/4 の確率で compound move（3 種から 2 種をランダムに選んで同時摂動）
+    move_type = rng.choice((*_MOVE_TYPES, "compound"))
+    if move_type == "compound":
+        moves = rng.sample(_MOVE_TYPES, 2)
     else:
-        log_scale = math.log(max(next_t.scale, 1e-12)) + rng.gauss(
-            0.0,
-            max(0.0, opt.log_scale_step) * step_scale,
-        )
-        next_t.scale = _clamp_scale(math.exp(log_scale))
+        moves = (move_type,)
+
+    for move in moves:
+        _apply_single_move(next_t, move, rng, opt, span_x, span_y, step_scale)
 
     return AnnealState(next_t)
 
@@ -202,7 +241,11 @@ def simulated_annealing_search(
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
         step_scale = 0.2 + 0.8 * math.sqrt(max(0.0, min(1.0, temp_ratio)))
-        proposal_state = _propose_state(current.state, rng, opt, span_x, span_y, step_scale)
+        # Basin hopping: 高温期に低確率でランダムリセットを提案する
+        if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
+            proposal_state = AnnealState(_random_transform(rng, span_x, span_y))
+        else:
+            proposal_state = _propose_state(current.state, rng, opt, span_x, span_y, step_scale)
         proposal = evaluate(proposal_state)
         delta = proposal.score - current.score
         accepted = delta <= 0.0

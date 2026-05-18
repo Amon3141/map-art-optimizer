@@ -12,7 +12,7 @@ from .constants import (
     SOURCE_ROTATION_NORMALIZATION_DEG,
 )
 from .snap_route import edge_geometric_length_m, sample_polyline_arc_length
-from .transform import graph_bbox_diagonal_m
+from .transform import graph_bbox_diagonal_m, graph_xy_bounds
 from .types import OptimizeWeights, RouteBuildResult, ScoreBreakdown, Transform
 
 
@@ -109,6 +109,25 @@ def shape_similarity_loss(
     return ordered + SHAPE_COVERAGE_WEIGHT * coverage
 
 
+def _out_of_graph_penalty(
+    pts: list[tuple[float, float]],
+    gx0: float,
+    gy0: float,
+    gx1: float,
+    gy1: float,
+    diag_m: float,
+) -> float:
+    """各点の bbox 外逸脱距離の平均を bbox 対角で正規化。グラフ内なら 0。"""
+    if not pts or diag_m < 1e-9:
+        return 0.0
+    total = 0.0
+    for x, y in pts:
+        dx = max(0.0, gx0 - x, x - gx1)
+        dy = max(0.0, gy0 - y, y - gy1)
+        total += math.hypot(dx, dy)
+    return (total / len(pts)) / diag_m
+
+
 def _normalized_rotation_abs(theta_rad: float, ignore_source_rotation: bool = False) -> float:
     if ignore_source_rotation:
         return 0.0
@@ -130,6 +149,7 @@ def score_source_transform(
 
 def _unreachable_breakdown(
     transform: Transform,
+    out_of_graph: float,
     ignore_source_rotation: bool = False,
 ) -> ScoreBreakdown:
     big = 1e4
@@ -145,6 +165,8 @@ def _unreachable_breakdown(
         edge_count=big,
         turn=big,
         unreachable=1.0,
+        out_of_graph=out_of_graph,
+        dijkstra_fallback=1.0,
     )
 
 
@@ -157,12 +179,15 @@ def score_route(
     ignore_source_rotation: bool = False,
 ) -> tuple[float, ScoreBreakdown]:
     diag_m = graph_bbox_diagonal_m(graph)
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
     source_rotation, source_scale = score_source_transform(
         transform,
         ignore_source_rotation,
     )
+    out_of_graph = _out_of_graph_penalty(target_polyline_xy_m, gx0, gy0, gx1, gy1, diag_m)
+
     if not route.reachable or len(route.edge_ids) == 0:
-        bd = _unreachable_breakdown(transform, ignore_source_rotation)
+        bd = _unreachable_breakdown(transform, out_of_graph, ignore_source_rotation)
         return bd.total(weights), bd
 
     rlen = route_geometric_length_m(graph, route.edge_ids)
@@ -173,6 +198,7 @@ def score_route(
     edge_term = float(n_edges) / max(1, ROUTE_ARC_SAMPLES)
     n_turn_denom = max(1, len(route.polyline_xy_m) - 2)
     turn_term = turn_raw / (math.pi * float(n_turn_denom))
+    dijkstra_fallback_term = route.dijkstra_failures / max(1, ROUTE_ARC_SAMPLES - 1)
 
     bd = ScoreBreakdown(
         source_rotation=source_rotation,
@@ -182,5 +208,7 @@ def score_route(
         edge_count=edge_term,
         turn=turn_term,
         unreachable=0.0,
+        out_of_graph=out_of_graph,
+        dijkstra_fallback=dijkstra_fallback_term,
     )
     return bd.total(weights), bd
