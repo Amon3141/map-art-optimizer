@@ -27,9 +27,7 @@ from ..preprocess import (
 )
 from ..optimization.constants import (
     WEIGHT_DIJKSTRA_FALLBACK,
-    WEIGHT_EDGE_COUNT,
     WEIGHT_OUT_OF_GRAPH,
-    WEIGHT_ROUTE_LENGTH,
     WEIGHT_SHAPE_DISTANCE,
     WEIGHT_SOURCE_ROTATION,
     WEIGHT_SOURCE_SCALE,
@@ -39,6 +37,7 @@ from ..optimization.constants import (
 from ..optimization.defaults import (
     DEFAULT_ANNEAL_SEED,
     DEFAULT_FINAL_TEMPERATURE,
+    DEFAULT_IGNORE_OPTIMIZATION_BUDGET,
     DEFAULT_IGNORE_SOURCE_ROTATION,
     DEFAULT_INITIAL_TEMPERATURE,
     DEFAULT_LOG_SCALE_STEP,
@@ -102,8 +101,6 @@ class OptimizeWeightsBody(BaseModel):
     source_rotation: float = WEIGHT_SOURCE_ROTATION
     source_scale: float = WEIGHT_SOURCE_SCALE
     shape_distance: float = WEIGHT_SHAPE_DISTANCE
-    route_length: float = WEIGHT_ROUTE_LENGTH
-    edge_count: float = WEIGHT_EDGE_COUNT
     turn: float = WEIGHT_TURN
     unreachable: float = WEIGHT_UNREACHABLE
     out_of_graph: float = WEIGHT_OUT_OF_GRAPH
@@ -119,6 +116,7 @@ class AnnealOptionsBody(BaseModel):
     seed: int = DEFAULT_ANNEAL_SEED
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=20_000)
     restart_count: int = Field(DEFAULT_RESTART_COUNT, ge=1, le=64)
+    ignore_optimization_budget: bool = DEFAULT_IGNORE_OPTIMIZATION_BUDGET
     ignore_source_rotation: bool = DEFAULT_IGNORE_SOURCE_ROTATION
     initial_temperature: float = Field(DEFAULT_INITIAL_TEMPERATURE, gt=0.0, le=10.0)
     final_temperature: float = Field(DEFAULT_FINAL_TEMPERATURE, gt=0.0, le=10.0)
@@ -137,6 +135,7 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         seed=body.seed,
         max_iterations=body.max_iterations,
         restart_count=body.restart_count,
+        ignore_optimization_budget=body.ignore_optimization_budget,
         ignore_source_rotation=body.ignore_source_rotation,
         initial_temperature=body.initial_temperature,
         final_temperature=body.final_temperature,

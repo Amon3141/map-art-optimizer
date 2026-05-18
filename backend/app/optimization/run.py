@@ -8,11 +8,18 @@ from typing import Any
 from app.osm.projection import xy_m_to_lon_lat
 from app.preprocess.graph_model import RoadGraph
 
-from .constants import TRANSFORM_SCALE_MAX, TRANSFORM_SCALE_MIN
+from .constants import ROUTE_ARC_SAMPLES, SOURCE_ROTATION_FREE_DEG, TRANSFORM_SCALE_MAX, TRANSFORM_SCALE_MIN
 from .anneal import simulated_annealing_search
-from .snap_route import build_adjacency, build_edge_snap_index, build_node_spatial_index
-from .scoring import route_geometric_length_m
-from .transform import graph_xy_bounds
+from .snap_route import (
+    AnyEdgeSnapIndex,
+    NodeSpatialIndexGrid,
+    build_adjacency,
+    build_edge_snap_index,
+    build_node_spatial_index,
+    build_route_from_polyline,
+)
+from .scoring import route_geometric_length_m, score_route
+from .transform import apply_transform, graph_center_m, graph_xy_bounds, stroke_to_base_polyline_m
 from .types import (
     AnnealOptions,
     OptimizeResult,
@@ -21,6 +28,14 @@ from .types import (
     StrokePoint,
     Transform,
 )
+
+# グリッド探索の設定（ハードコード）
+# 4×4 位置 × 3 角度 × 1 スケール = 最大 48 評価点
+_GRID_POS_STEPS: int = 4        # 位置グリッドの一辺の点数（4×4 = 16 位置）
+_GRID_ANGLE_STEPS: int = 3      # 角度グリッドの点数（[0, 2π/3, 4π/3] | [-π/6, 0, π/6]）
+_GRID_SCALE_STEPS: int = 1      # スケール点数（1 = scale=1.0 固定）
+_GRID_BUDGET_FRACTION: float = 0.15  # グリッド探索に充てる時間予算の割合
+_DIVERSITY_FILL_TRIES: int = 10  # 補完時の diversity-aware ランダム試行数
 
 
 def _route_to_feature(
@@ -64,6 +79,120 @@ def _random_initial_transform(
     )
 
 
+def _coarse_grid_search(
+    graph: RoadGraph,
+    adj: dict[str, list[tuple[str, str, float]]],
+    snap_index: AnyEdgeSnapIndex,
+    node_index: NodeSpatialIndexGrid,
+    stroke: list[StrokePoint],
+    weights: OptimizeWeights,
+    opt: AnnealOptions,
+    span_x: float,
+    span_y: float,
+    grid_deadline: float,
+) -> list[tuple[float, Transform]]:
+    """
+    (tx, ty, theta, scale) の粗いグリッドで評価し、スコア昇順の (score, transform) リストを返す。
+    grid_deadline に達した時点で評価途中でも打ち切る。
+    """
+    base = stroke_to_base_polyline_m(stroke, graph)
+    if len(base) < 2:
+        return []
+    center = graph_center_m(graph)
+
+    # 位置グリッド: [-span, span] を _GRID_POS_STEPS 点で等間隔
+    n = _GRID_POS_STEPS
+    if n >= 2:
+        tx_vals = [span_x * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
+        ty_vals = [span_y * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
+    else:
+        tx_vals = [0.0]
+        ty_vals = [0.0]
+
+    # 角度: 回転ペナルティが有効なら無罰範囲（±SOURCE_ROTATION_FREE_DEG）周辺に集中、
+    #      無効なら全方向を均等にカバーする。
+    if opt.ignore_source_rotation:
+        theta_vals = [2.0 * math.pi * i / max(1, _GRID_ANGLE_STEPS) for i in range(_GRID_ANGLE_STEPS)]
+    else:
+        free_rad = math.radians(SOURCE_ROTATION_FREE_DEG)
+        theta_vals = [-free_rad, 0.0, free_rad]
+
+    # スケール: log-uniform で _GRID_SCALE_STEPS 点
+    log_min = math.log(max(TRANSFORM_SCALE_MIN, 1e-12))
+    log_max = math.log(max(TRANSFORM_SCALE_MAX, TRANSFORM_SCALE_MIN))
+    if _GRID_SCALE_STEPS >= 2:
+        scale_vals = [
+            math.exp(log_min + (log_max - log_min) * i / (_GRID_SCALE_STEPS - 1))
+            for i in range(_GRID_SCALE_STEPS)
+        ]
+    else:
+        scale_vals = [1.0]
+
+    results: list[tuple[float, Transform]] = []
+    for theta in theta_vals:
+        for scale in scale_vals:
+            for tx in tx_vals:
+                for ty in ty_vals:
+                    if time.monotonic() >= grid_deadline:
+                        results.sort(key=lambda x: x[0])
+                        return results
+                    t = Transform(tx_m=tx, ty_m=ty, theta_rad=theta, scale=scale)
+                    poly = apply_transform(base, t, center)
+                    route = build_route_from_polyline(
+                        graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index
+                    )
+                    score, _ = score_route(
+                        graph, poly, route, t, weights,
+                        ignore_source_rotation=opt.ignore_source_rotation,
+                    )
+                    results.append((score, t))
+
+    results.sort(key=lambda x: x[0])
+    return results
+
+
+def _normalized_transform_dist(
+    t1: Transform,
+    t2: Transform,
+    span_x: float,
+    span_y: float,
+) -> float:
+    """正規化パラメータ空間での距離（各次元 [0, 1] にスケール）。"""
+    raw_angle = abs(t1.theta_rad - t2.theta_rad)
+    dt = min(raw_angle, 2.0 * math.pi - raw_angle) / math.pi
+    log_range = math.log(max(TRANSFORM_SCALE_MAX, 1e-12)) - math.log(max(TRANSFORM_SCALE_MIN, 1e-12))
+    ds = abs(math.log(max(t1.scale, 1e-12)) - math.log(max(t2.scale, 1e-12))) / max(log_range, 1e-9)
+    dx = abs(t1.tx_m - t2.tx_m) / max(2.0 * span_x, 1.0)
+    dy = abs(t1.ty_m - t2.ty_m) / max(2.0 * span_y, 1.0)
+    return math.sqrt(dt ** 2 + ds ** 2 + dx ** 2 + dy ** 2)
+
+
+def _select_diverse_initial_transforms(
+    candidates: list[tuple[float, Transform]],
+    count: int,
+    span_x: float,
+    span_y: float,
+) -> list[Transform]:
+    """
+    スコア昇順の候補リストから count 個を maximin diversity 貪欲法で選択する。
+    先頭（最良スコア）を固定し、以降は既選択との最小距離が最大の候補を貪欲に選ぶ。
+    """
+    if not candidates:
+        return []
+    selected: list[Transform] = [candidates[0][1]]
+    pool = [t for _, t in candidates[1:]]
+    while len(selected) < count and pool:
+        best_min_dist = -1.0
+        best_idx = 0
+        for i, t in enumerate(pool):
+            min_dist = min(_normalized_transform_dist(t, s, span_x, span_y) for s in selected)
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_idx = i
+        selected.append(pool.pop(best_idx))
+    return selected
+
+
 def _restart_to_dict(r: RestartResult) -> dict[str, Any]:
     return {
         "restart_index": r.restart_index,
@@ -101,24 +230,67 @@ def run_simulated_annealing(
     snap_index = build_edge_snap_index(graph)
     node_index = build_node_spatial_index(graph)
 
-    deadline = time.monotonic() + max(0.05, float(o.optimization_budget_seconds))
+    budget = max(0.05, float(o.optimization_budget_seconds))
+    start_time = time.monotonic()
+    if o.ignore_optimization_budget:
+        deadline = math.inf
+        grid_deadline = math.inf
+    else:
+        deadline = start_time + budget
+        grid_deadline = start_time + budget * _GRID_BUDGET_FRACTION
 
     gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
     span_x = max(gx1 - gx0, 1.0)
     span_y = max(gy1 - gy0, 1.0)
     restart_count = max(1, int(o.restart_count))
     iterations_per_restart = max(0, int(o.max_iterations))
+
+    # restart seed を先に確定（grid search より前に生成して再現性を保つ）
     master_rng = random.Random(o.seed)
+    restart_seeds = [master_rng.randrange(0, 2**31) for _ in range(restart_count)]
+
+    # 粗いグリッド探索で初期解候補を取得
+    grid_candidates = _coarse_grid_search(
+        graph, adj, snap_index, node_index, stroke, w, o, span_x, span_y, grid_deadline,
+    )
+    n_grid_candidates = len(grid_candidates)
+
+    # maximin diversity で初期解を選択
+    initial_transforms = _select_diverse_initial_transforms(
+        grid_candidates, restart_count, span_x, span_y,
+    )
+
+    # 候補不足の場合は diversity-aware ランダムで補完
+    while len(initial_transforms) < restart_count:
+        best_t = _random_initial_transform(master_rng, span_x, span_y)
+        if initial_transforms:
+            best_min_dist = min(
+                _normalized_transform_dist(best_t, s, span_x, span_y) for s in initial_transforms
+            )
+        else:
+            best_min_dist = math.inf
+        for _ in range(_DIVERSITY_FILL_TRIES - 1):
+            t = _random_initial_transform(master_rng, span_x, span_y)
+            min_dist = (
+                min(_normalized_transform_dist(t, s, span_x, span_y) for s in initial_transforms)
+                if initial_transforms
+                else math.inf
+            )
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_t = t
+        initial_transforms.append(best_t)
 
     restart_results: list[RestartResult] = []
     for restart_index in range(restart_count):
-        restart_seed = master_rng.randrange(0, 2**31)
-        initial_transform = _random_initial_transform(master_rng, span_x, span_y)
+        restart_seed = restart_seeds[restart_index]
+        initial_transform = initial_transforms[restart_index]
         restart_opt = AnnealOptions(
             optimization_budget_seconds=o.optimization_budget_seconds,
             seed=restart_seed,
             max_iterations=iterations_per_restart,
             restart_count=1,
+            ignore_optimization_budget=o.ignore_optimization_budget,
             ignore_source_rotation=o.ignore_source_rotation,
             initial_temperature=o.initial_temperature,
             final_temperature=o.final_temperature,
@@ -187,7 +359,11 @@ def run_simulated_annealing(
         "log_scale_step": o.log_scale_step,
         "trace_stride": o.trace_stride,
         "optimization_budget_seconds": o.optimization_budget_seconds,
-        "deadline_hit": time.monotonic() >= deadline or any(r.deadline_hit for r in restart_results),
+        "ignore_optimization_budget": o.ignore_optimization_budget,
+        "deadline_hit": (not o.ignore_optimization_budget and time.monotonic() >= deadline)
+        or any(r.deadline_hit for r in restart_results),
+        "grid_search_candidates": n_grid_candidates,
+        "grid_budget_fraction": _GRID_BUDGET_FRACTION,
     }
     props: dict[str, Any] = {
         "length_km": round(length_m / 1000.0, 6),

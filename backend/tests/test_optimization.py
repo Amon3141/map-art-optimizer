@@ -1,3 +1,5 @@
+"""最適化焼きなましロジックのテスト。"""
+
 from __future__ import annotations
 
 import math
@@ -107,6 +109,31 @@ def test_sa_smoke_low_iterations() -> None:
     assert "FeatureCollection" == result.candidates_geojson.get("type")
     assert result.optimizer_meta.get("search") == "multistart_simulated_annealing"
     assert result.optimizer_meta.get("max_iterations") == 8
+
+
+def test_ignore_optimization_budget_completes_iteration_cap() -> None:
+    """極小の時間予算でも ignore 時は反復上限まで進む（時間打ち切りなし）。"""
+    g = _line_graph()
+    n_iter = 120
+    opt = AnnealOptions(
+        seed=0,
+        max_iterations=n_iter,
+        restart_count=1,
+        optimization_budget_seconds=0.05,
+        ignore_optimization_budget=True,
+        trace_stride=10_000,
+    )
+    result = run_simulated_annealing(
+        g,
+        [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
+        0.0,
+        0.0,
+        opt=opt,
+        record_trace=False,
+    )
+    assert result.optimizer_meta.get("deadline_hit") is False
+    assert result.optimizer_meta.get("ignore_optimization_budget") is True
+    assert result.restart_results[0].iterations_completed == n_iter
 
 
 def test_optimizer_meta_multistart_simulated_annealing() -> None:

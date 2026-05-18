@@ -7,8 +7,6 @@ ROUTE_ARC_SAMPLES: int = 16
 WEIGHT_SOURCE_ROTATION: float = 0.38
 WEIGHT_SOURCE_SCALE: float = 0.02
 WEIGHT_SHAPE_DISTANCE: float = 1.0
-WEIGHT_ROUTE_LENGTH: float = 0.0
-WEIGHT_EDGE_COUNT: float = 0.0
 WEIGHT_TURN: float = 0.0
 WEIGHT_UNREACHABLE: float = 1e6
 # グラフ bbox 外への逸脱ペナルティ。形がグラフ端に押し込まれた状態を罰し、SA の勾配を作る。

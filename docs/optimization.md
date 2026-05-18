@@ -151,7 +151,7 @@
 - リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points` を付与。
 - 任意: `weights`, `anneal`, `record_trace`
   - `weights`: `source_rotation`, `source_scale`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
-  - `anneal`: `optimization_budget_seconds`, `seed`, `max_iterations`, `restart_count`（初期解の数・試行数）, `ignore_source_rotation`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
+  - `anneal`: `optimization_budget_seconds`, `seed`, `max_iterations`, `restart_count`（初期解の数・試行数）, `ignore_optimization_budget`（`true` のとき時間予算による打ち切りを行わない）, `ignore_source_rotation`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
 - サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
 
 ### 8.3 探索（焼きなまし）
@@ -160,8 +160,8 @@
 - **初期解**: 各試行ごとにランダム生成する。`theta` は `[-pi, pi]`、`scale` はクリップ範囲内の log-uniform、`tx/ty` はグラフ span に応じた範囲からサンプリングする。
 - **遷移**: 回転・対数スケール・並進を小さく摂動する。遷移幅は温度に連動し、終盤ほど局所探索へ寄る。
 - **採択**: 改善は必ず採択、悪化は `exp(-delta / temperature)` で採択する。温度は `initial_temperature` から `final_temperature` へ幾何冷却。
-- **計算量管理**: `max_iterations` は**各試行（初期解）ごと**にそのまま適用する（試行数で割らない）。試行数を増やすと反復は概ね線形に増える。`optimization_budget_seconds` は全試行で共有し、時間切れの試行は途中で打ち切られる。
-- **打ち切り**: 各試行では `max_iterations` または共有 `optimization_budget_seconds` の早い方。
+- **計算量管理**: `max_iterations` は**各試行（初期解）ごと**にそのまま適用する（試行数で割らない）。試行数を増やすと反復は概ね線形に増える。`optimization_budget_seconds` は全試行で共有し、時間切れの試行は途中で打ち切られる（`ignore_optimization_budget` が `true` のときは時間予算を使わず、`max_iterations` のみで打ち切る）。
+- **打ち切り**: 各試行では `max_iterations` または共有 `optimization_budget_seconds` の早い方（`ignore_optimization_budget` 時は反復上限のみ）。
 - **`optimizer_meta.search`**: `multistart_simulated_annealing`。
 
 ### 8.4 ターゲット折れ線 → グラフ上ルート

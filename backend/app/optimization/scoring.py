@@ -161,8 +161,6 @@ def _unreachable_breakdown(
         source_rotation=source_rotation,
         source_scale=source_scale,
         shape_distance=big,
-        route_length=big,
-        edge_count=big,
         turn=big,
         unreachable=1.0,
         out_of_graph=out_of_graph,
@@ -190,12 +188,8 @@ def score_route(
         bd = _unreachable_breakdown(transform, out_of_graph, ignore_source_rotation)
         return bd.total(weights), bd
 
-    rlen = route_geometric_length_m(graph, route.edge_ids)
-    n_edges = len(route.edge_ids)
     turn_raw = turn_penalty_from_polyline(route.polyline_xy_m)
     shape_term = shape_similarity_loss(target_polyline_xy_m, route.polyline_xy_m, diag_m)
-    route_length_term = rlen / max(diag_m, 1.0)
-    edge_term = float(n_edges) / max(1, ROUTE_ARC_SAMPLES)
     n_turn_denom = max(1, len(route.polyline_xy_m) - 2)
     turn_term = turn_raw / (math.pi * float(n_turn_denom))
     dijkstra_fallback_term = route.dijkstra_failures / max(1, ROUTE_ARC_SAMPLES - 1)
@@ -204,8 +198,6 @@ def score_route(
         source_rotation=source_rotation,
         source_scale=source_scale,
         shape_distance=shape_term,
-        route_length=route_length_term,
-        edge_count=edge_term,
         turn=turn_term,
         unreachable=0.0,
         out_of_graph=out_of_graph,

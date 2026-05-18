@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_ANNEAL_SEED,
   DEFAULT_FINAL_TEMPERATURE,
+  DEFAULT_IGNORE_OPTIMIZATION_BUDGET,
   DEFAULT_IGNORE_SOURCE_ROTATION,
   DEFAULT_INITIAL_TEMPERATURE,
   DEFAULT_LOG_SCALE_STEP,
@@ -22,9 +23,7 @@ import {
   DEFAULT_TRACE_STRIDE,
   DEFAULT_TRANSLATION_STEP_M_RATIO,
   DEFAULT_WEIGHT_DIJKSTRA_FALLBACK,
-  DEFAULT_WEIGHT_EDGE_COUNT,
   DEFAULT_WEIGHT_OUT_OF_GRAPH,
-  DEFAULT_WEIGHT_ROUTE_LENGTH,
   DEFAULT_WEIGHT_SHAPE_DISTANCE,
   DEFAULT_WEIGHT_SOURCE_ROTATION,
   DEFAULT_WEIGHT_SOURCE_SCALE,
@@ -32,6 +31,7 @@ import {
   DEFAULT_WEIGHT_UNREACHABLE,
 } from '../lib/optimizationDefaults'
 import { rebuildRouteFeatureCollection } from '../lib/rebuildRouteFromTraceStep'
+import { DebugAnnealingTraceSlider } from './DebugAnnealingTraceSlider'
 
 export type OptimizeTraceStep = {
   step_index: number
@@ -93,6 +93,20 @@ export type DebugOptimizePanelProps = {
   onRouteOverlayChange: (fc: GeoJSON.FeatureCollection | null) => void
 }
 
+/** トレース内で score_total が最小のステップ番号（その試行内ベスト） */
+function bestTraceStepIndex(trace: OptimizeTraceStep[]): number {
+  if (trace.length === 0) return 0
+  let bestIdx = 0
+  let bestScore = Infinity
+  for (let i = 0; i < trace.length; i++) {
+    if (trace[i].score_total < bestScore) {
+      bestScore = trace[i].score_total
+      bestIdx = i
+    }
+  }
+  return bestIdx
+}
+
 export function DebugOptimizePanel({
   geojson,
   graphOptions,
@@ -108,6 +122,7 @@ export function DebugOptimizePanel({
   const [maxIterations, setMaxIterations] = useState(DEFAULT_MAX_ITERATIONS)
   const [restartCount, setRestartCount] = useState(DEFAULT_RESTART_COUNT)
   const [ignoreSourceRotation, setIgnoreSourceRotation] = useState(DEFAULT_IGNORE_SOURCE_ROTATION)
+  const [ignoreTimeLimit, setIgnoreTimeLimit] = useState(DEFAULT_IGNORE_OPTIMIZATION_BUDGET)
   const [initialTemperature, setInitialTemperature] = useState(DEFAULT_INITIAL_TEMPERATURE)
   const [finalTemperature, setFinalTemperature] = useState(DEFAULT_FINAL_TEMPERATURE)
   const [translationStepRatio, setTranslationStepRatio] = useState(DEFAULT_TRANSLATION_STEP_M_RATIO)
@@ -117,8 +132,6 @@ export function DebugOptimizePanel({
   const [weightSourceRotation, setWeightSourceRotation] = useState(DEFAULT_WEIGHT_SOURCE_ROTATION)
   const [weightSourceScale, setWeightSourceScale] = useState(DEFAULT_WEIGHT_SOURCE_SCALE)
   const [weightShapeDistance, setWeightShapeDistance] = useState(DEFAULT_WEIGHT_SHAPE_DISTANCE)
-  const [weightRouteLength, setWeightRouteLength] = useState(DEFAULT_WEIGHT_ROUTE_LENGTH)
-  const [weightEdgeCount, setWeightEdgeCount] = useState(DEFAULT_WEIGHT_EDGE_COUNT)
   const [weightTurn, setWeightTurn] = useState(DEFAULT_WEIGHT_TURN)
   const [weightUnreachable, setWeightUnreachable] = useState(DEFAULT_WEIGHT_UNREACHABLE)
   const [weightOutOfGraph, setWeightOutOfGraph] = useState(DEFAULT_WEIGHT_OUT_OF_GRAPH)
@@ -128,7 +141,7 @@ export function DebugOptimizePanel({
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<OptimizeApiResponse | null>(null)
-  /** true のとき全体ベストの GeoJSON、false のとき選択試行のトレース 1 ステップを地図に重ねる */
+  /** true のとき全体ベストの GeoJSON（最良試行を選んでいるときのみ UI 上も「ベスト候補」） */
   const [showBestRoute, setShowBestRoute] = useState(true)
   const [selectedRestartIndex, setSelectedRestartIndex] = useState(0)
   const [selectedTraceIndex, setSelectedTraceIndex] = useState(0)
@@ -179,6 +192,15 @@ export function DebugOptimizePanel({
     )
   }, [result])
 
+  /** グローバルベスト表示は最良試行を選んでいるときだけ有効 */
+  useEffect(() => {
+    if (!result) return
+    if (!showBestRoute) return
+    if (selectedRestartIndex !== result.best_restart_index) {
+      setShowBestRoute(false)
+    }
+  }, [result, showBestRoute, selectedRestartIndex])
+
   useEffect(() => {
     setSelectedTraceIndex((current) => Math.min(current, maxStepIdx))
   }, [selectedRestartIndex, maxStepIdx])
@@ -208,8 +230,6 @@ export function DebugOptimizePanel({
           source_rotation: weightSourceRotation,
           source_scale: weightSourceScale,
           shape_distance: weightShapeDistance,
-          route_length: weightRouteLength,
-          edge_count: weightEdgeCount,
           turn: weightTurn,
           unreachable: weightUnreachable,
           out_of_graph: weightOutOfGraph,
@@ -220,6 +240,7 @@ export function DebugOptimizePanel({
           seed,
           max_iterations: maxIterations,
           restart_count: restartCount,
+          ignore_optimization_budget: ignoreTimeLimit,
           ignore_source_rotation: ignoreSourceRotation,
           initial_temperature: initialTemperature,
           final_temperature: finalTemperature,
@@ -240,8 +261,10 @@ export function DebugOptimizePanel({
       }
       const data = (await res.json()) as OptimizeApiResponse
       setResult(data)
-      setSelectedRestartIndex(data.best_restart_index)
-      setSelectedTraceIndex(0)
+      const br = data.best_restart_index
+      setSelectedRestartIndex(br)
+      const bestRun = data.restarts.find((r) => r.restart_index === br)
+      setSelectedTraceIndex(bestTraceStepIndex(bestRun?.trace_steps ?? []))
       setShowBestRoute(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -251,13 +274,9 @@ export function DebugOptimizePanel({
     }
   }
 
-  const displayStep = showBestRoute ? null : steps[selectedTraceIndex]
+  const bestTraceIndex = useMemo(() => bestTraceStepIndex(steps), [steps])
 
-  const goTraceStep = (next: number) => {
-    const clamped = Math.max(0, Math.min(maxStepIdx, next))
-    setSelectedTraceIndex(clamped)
-    setShowBestRoute(false)
-  }
+  const traceSliderValue = showBestRoute ? bestTraceIndex : selectedTraceIndex
 
   return (
     <aside className="flex min-h-0 w-full flex-1 flex-col gap-4.5 overflow-hidden p-5 pb-4 lg:max-w-sm lg:h-full lg:flex-none lg:min-h-0 lg:overflow-visible lg:shrink-0 lg:py-5 lg:pl-5 lg:pr-0">
@@ -295,7 +314,7 @@ export function DebugOptimizePanel({
             ) : null}
           </div>
 
-          <details className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
+          <details open className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
             <summary className="cursor-pointer text-xs py-0.5 font-medium text-stone-700">焼きなましの設定</summary>
             <div className="mt-2.5 flex flex-col gap-2">
               <label className="text-xs text-stone-600">
@@ -309,16 +328,17 @@ export function DebugOptimizePanel({
                   className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                 />
               </label>
-              <label className="text-xs text-stone-600">
-                最適化の時間上限（秒・サーバ側）
+              <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                <span>時間上限（秒）</span>
                 <input
                   type="number"
-                  min={0.05}
+                  min={0.5}
                   max={120}
                   step={0.5}
                   value={budgetSeconds}
+                  disabled={ignoreTimeLimit}
                   onChange={(e) => setBudgetSeconds(Math.min(120, Math.max(0.05, Number(e.target.value) || 10)))}
-                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
+                  className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm disabled:opacity-40"
                 />
               </label>
               <label className="text-xs text-stone-600">
@@ -341,6 +361,15 @@ export function DebugOptimizePanel({
                 />
                 角度は気にしない
               </label>
+              <label className="flex items-center gap-2 text-xs text-stone-700">
+                <input
+                  type="checkbox"
+                  checked={ignoreTimeLimit}
+                  onChange={(e) => setIgnoreTimeLimit(e.target.checked)}
+                  className="h-4 w-4 accent-[#4a6f8a]"
+                />
+                実行時間上限を無視する
+              </label>
               <details className="mt-1.5 rounded-lg border border-stone-200/80 bg-white/70 p-2">
                 <summary className="cursor-pointer text-xs py-0.5 text-stone-700">
                   開発者向けの詳細設定
@@ -348,9 +377,6 @@ export function DebugOptimizePanel({
                 <div className="mt-2.5 flex flex-col gap-2">
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>乱数シード</span>
-                    <span className="text-[10px] font-normal leading-snug text-stone-500">
-                      マルチスタートの試行サブシードを決めるマスター。再現したいときに固定します。
-                    </span>
                     <input
                       type="number"
                       value={seed}
@@ -361,7 +387,7 @@ export function DebugOptimizePanel({
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>最大反復数</span>
                     <span className="text-[10px] font-normal leading-snug text-stone-500">
-                      各試行（初期解）ごとにこの回数まで実行します。試行数で割りません。
+                      各試行（初期解）ごとに実行するステップ数の上限。
                     </span>
                     <input
                       type="number"
@@ -372,8 +398,8 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <label className="text-xs text-stone-600">
-                    初期温度
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>初期温度</span>
                     <input
                       type="number"
                       min={0.000001}
@@ -384,8 +410,8 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <label className="text-xs text-stone-600">
-                    最終温度
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>最終温度</span>
                     <input
                       type="number"
                       min={0.000001}
@@ -396,8 +422,12 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <label className="text-xs text-stone-600">
-                    並進ステップ（bbox 比）
+                  <p className="mt-2 text-[10px] font-medium text-stone-500">遷移ステップ</p>
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>並進ステップ（bbox 比）</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      1ステップの平行移動量の標準偏差をグラフ幅・高さの何倍にするか。大きいほど1ステップで遠くに移動します。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -408,8 +438,11 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <label className="text-xs text-stone-600">
-                    回転ステップ（rad）
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>回転ステップ（rad）</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      1ステップの回転量の標準偏差（ラジアン）。π≈3.14 で半回転相当のステップ幅になります。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -420,8 +453,11 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <label className="text-xs text-stone-600">
-                    スケールステップ（log）
+                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
+                    <span>スケールステップ（log）</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      1ステップのスケール変化の標準偏差（log スケール）。log(scale) に加算されます。0.12 で約 1 段階のスケール変化に相当します。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -432,9 +468,12 @@ export function DebugOptimizePanel({
                       className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
                     />
                   </label>
-                  <p className="mt-1.5 text-[10px] font-medium text-stone-500">スコア重み</p>
+                  <p className="mt-2 text-[10px] font-medium text-stone-500">スコア重み</p>
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>shape_distance 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      ターゲット折れ線とルートの形状類似度（弧長対応距離＋coverage、bbox 対角で正規化）に乗じる重み。最も重要なスコア項です。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -448,7 +487,7 @@ export function DebugOptimizePanel({
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>out_of_graph 重み</span>
                     <span className="text-[10px] font-normal leading-snug text-stone-500">
-                      グラフ bbox 外への逸脱ペナルティ。境界付近の絡まりから脱出する勾配を作る。
+                      グラフ bbox 外への逸脱ペナルティ。形がグラフ境界付近に押し込まれた状態（絡まりの原因）から脱出する勾配を生み出します。
                     </span>
                     <input
                       type="number"
@@ -463,7 +502,7 @@ export function DebugOptimizePanel({
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>dijkstra_fallback 重み</span>
                     <span className="text-[10px] font-normal leading-snug text-stone-500">
-                      smooth DP 失敗率のペナルティ。形が道路グラフに乗れていない度合いを反映。
+                      smooth DP スナップが失敗して Dijkstra 最短路にフォールバックした区間の割合に乗じる重み。形が道路グラフに乗れていない度合いを反映します。
                     </span>
                     <input
                       type="number"
@@ -477,6 +516,9 @@ export function DebugOptimizePanel({
                   </label>
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>source_rotation 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      入力ストロークの向きからの回転角ペナルティに乗じる重み。30° 以内は無罰で、超過分を正規化します。「角度は気にしない」ON で無効化されます。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -489,6 +531,9 @@ export function DebugOptimizePanel({
                   </label>
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>source_scale 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      スケール変形の大きさ（|log(scale)|）に乗じる重み。元のサイズ（scale=1）から離れるほどペナルティが増えます。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -500,31 +545,10 @@ export function DebugOptimizePanel({
                     />
                   </label>
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
-                    <span>route_length 重み</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={5}
-                      step={0.01}
-                      value={weightRouteLength}
-                      onChange={(e) => setWeightRouteLength(Math.max(0, Number(e.target.value) || 0))}
-                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
-                    <span>edge_count 重み</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={5}
-                      step={0.01}
-                      value={weightEdgeCount}
-                      onChange={(e) => setWeightEdgeCount(Math.max(0, Number(e.target.value) || 0))}
-                      className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-sm"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>turn 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      曲がり角の絶対値和を正規化した項に乗じる重み。上げると折り返しや急カーブが少ないルートを優先します。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -537,6 +561,9 @@ export function DebugOptimizePanel({
                   </label>
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>unreachable 重み</span>
+                    <span className="text-[10px] font-normal leading-snug text-stone-500">
+                      ルートが連結できなかった（到達不能）場合のペナルティに乗じる重み。既定 1e6 で実質必須の罰則となります。
+                    </span>
                     <input
                       type="number"
                       min={0}
@@ -562,12 +589,15 @@ export function DebugOptimizePanel({
 
           {loading ? (
             <p className="text-[11px] leading-snug text-stone-500" aria-live="polite">
-              焼きなまし中... {elapsedSeconds.toFixed(1)}s, 最大{' '}
-              {maxIterations} iterations / {restartCount} 試行
+              焼きなまし中... {elapsedSeconds.toFixed(1)}s{ignoreTimeLimit ? ' (時間上限なし)' : `, 上限 ${budgetSeconds}s`},{' '}
+              最大 {maxIterations} iterations / {restartCount} 試行
             </p>
           ) : result ? (
             <p className="text-[11px] leading-snug text-stone-500">
               試行 {restarts.length} 件 / 選択中トレース {steps.length} 件
+              {typeof result.optimizer_meta?.grid_search_candidates === 'number'
+                ? ` / グリッド ${result.optimizer_meta.grid_search_candidates as number} 点評価`
+                : ''}
               {result.optimizer_meta?.deadline_hit === true ? ' / 時間上限で停止' : ''}
             </p>
           ) : null}
@@ -619,9 +649,11 @@ export function DebugOptimizePanel({
                     <select
                       value={selectedRestartIndex}
                       onChange={(e) => {
-                        setSelectedRestartIndex(Number(e.target.value))
-                        setSelectedTraceIndex(0)
-                        setShowBestRoute(true)
+                        const next = Number(e.target.value)
+                        const r = restarts.find((rr) => rr.restart_index === next)
+                        setSelectedRestartIndex(next)
+                        setSelectedTraceIndex(bestTraceStepIndex(r?.trace_steps ?? []))
+                        setShowBestRoute(false)
                       }}
                       className="mt-0.5 w-full rounded border border-stone-200 bg-white px-2 py-1 text-sm"
                     >
@@ -633,90 +665,25 @@ export function DebugOptimizePanel({
                       ))}
                     </select>
                   </label>
-                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-stone-700">トレース表示</span>
-                    <button
-                      type="button"
-                      className="text-[11px] font-medium text-[#4a6f8a] hover:underline"
-                      onClick={() => setShowBestRoute(true)}
-                    >
-                      ベスト候補に戻す
-                    </button>
-                  </div>
-                  {steps.length === 0 ? (
-                    <p className="text-[11px] leading-snug text-stone-500">この試行のトレースがありません。</p>
-                  ) : maxStepIdx === 0 ? (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-[11px] leading-snug text-stone-500">
-                        トレースは 1 ステップのみです。必要なら下のボタンで地図に重ねられます。
-                      </p>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[11px] font-medium text-stone-800 hover:bg-stone-50"
-                        onClick={() => {
-                          setSelectedTraceIndex(0)
-                          setShowBestRoute(false)
-                        }}
-                      >
-                        このステップを地図に表示
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <input
-                        id="trace-slider"
-                        type="range"
-                        min={0}
-                        max={maxStepIdx}
-                        value={selectedTraceIndex}
-                        onChange={(e) => {
-                          setSelectedTraceIndex(Number(e.target.value))
-                          setShowBestRoute(false)
-                        }}
-                        className="w-full accent-[#4a6f8a]"
-                      />
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          className="rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-800 hover:bg-stone-50"
-                          onClick={() => goTraceStep(0)}
-                        >
-                          最初
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-800 hover:bg-stone-50"
-                          onClick={() => goTraceStep(selectedTraceIndex - 1)}
-                        >
-                          前へ
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-800 hover:bg-stone-50"
-                          onClick={() => goTraceStep(selectedTraceIndex + 1)}
-                        >
-                          次へ
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-800 hover:bg-stone-50"
-                          onClick={() => goTraceStep(maxStepIdx)}
-                        >
-                          最後
-                        </button>
-                      </div>
-                    </>
-                  )}
-                  <p className="mt-1 font-mono text-[10px] text-stone-500">
-                    {showBestRoute ? (
-                      <>表示: 全体ベスト候補（試行 #{result.best_restart_index}）</>
-                    ) : displayStep ? (
-                      <>
-                        試行 #{selectedRestart.restart_index} · トレース {selectedTraceIndex + 1}/{steps.length} · step{' '}
-                        {displayStep.step_index} · score={displayStep.score_total.toFixed(4)}
-                      </>
-                    ) : null}
-                  </p>
+                  <DebugAnnealingTraceSlider
+                    steps={steps}
+                    bestRestartIndex={result.best_restart_index}
+                    selectedRestartIndex={selectedRestart.restart_index}
+                    showBestRoute={showBestRoute}
+                    onShowBestRoute={() => {
+                      const br = result.best_restart_index
+                      const bestRun = result.restarts.find((r) => r.restart_index === br)
+                      setSelectedRestartIndex(br)
+                      setSelectedTraceIndex(bestTraceStepIndex(bestRun?.trace_steps ?? []))
+                      setShowBestRoute(true)
+                    }}
+                    selectedTraceIndex={selectedTraceIndex}
+                    traceSliderValue={traceSliderValue}
+                    onTraceSliderChange={(index) => {
+                      setSelectedTraceIndex(index)
+                      setShowBestRoute(false)
+                    }}
+                  />
                 </div>
               ) : null}
             </div>
