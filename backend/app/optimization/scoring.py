@@ -5,7 +5,12 @@ import math
 from app.preprocess.graph_model import RoadGraph
 from app.preprocess.helpers import nearest_point_on_segment
 
-from .constants import ELEGANCE_GATE_THRESHOLD, ROUTE_ARC_SAMPLES, SHAPE_COVERAGE_WEIGHT
+from .constants import (
+    ROUTE_ARC_SAMPLES,
+    SHAPE_COVERAGE_WEIGHT,
+    SOURCE_ROTATION_FREE_DEG,
+    SOURCE_ROTATION_NORMALIZATION_DEG,
+)
 from .snap_route import edge_geometric_length_m, sample_polyline_arc_length
 from .transform import graph_bbox_diagonal_m
 from .types import OptimizeWeights, RouteBuildResult, ScoreBreakdown, Transform
@@ -104,32 +109,33 @@ def shape_similarity_loss(
     return ordered + SHAPE_COVERAGE_WEIGHT * coverage
 
 
-def _normalized_rotation_abs(theta_rad: float) -> float:
+def _normalized_rotation_abs(theta_rad: float, ignore_source_rotation: bool = False) -> float:
+    if ignore_source_rotation:
+        return 0.0
     wrapped = (theta_rad + math.pi) % (2.0 * math.pi) - math.pi
-    return abs(wrapped) / math.pi
+    abs_angle_deg = math.degrees(abs(wrapped))
+    excess_deg = max(0.0, abs_angle_deg - SOURCE_ROTATION_FREE_DEG)
+    return excess_deg / max(SOURCE_ROTATION_NORMALIZATION_DEG, 1e-9)
 
 
 def score_source_transform(
     transform: Transform,
-    evaluation_mode: str,
+    ignore_source_rotation: bool = False,
 ) -> tuple[float, float]:
     """スナップ元そのものの評価項。小さいほど入力の向き・好みに近い。"""
-    source_rotation = _normalized_rotation_abs(transform.theta_rad)
-    if evaluation_mode == "elegant":
-        source_scale = max(0.0, transform.scale)
-    else:
-        source_scale = abs(math.log(max(transform.scale, 1e-9)))
+    source_rotation = _normalized_rotation_abs(transform.theta_rad, ignore_source_rotation)
+    source_scale = abs(math.log(max(transform.scale, 1e-9)))
     return source_rotation, source_scale
 
 
 def _unreachable_breakdown(
     transform: Transform,
-    evaluation_mode: str,
+    ignore_source_rotation: bool = False,
 ) -> ScoreBreakdown:
     big = 1e4
     source_rotation, source_scale = score_source_transform(
         transform,
-        evaluation_mode,
+        ignore_source_rotation,
     )
     return ScoreBreakdown(
         source_rotation=source_rotation,
@@ -148,15 +154,15 @@ def score_route(
     route: RouteBuildResult,
     transform: Transform,
     weights: OptimizeWeights,
-    evaluation_mode: str = "faithful",
+    ignore_source_rotation: bool = False,
 ) -> tuple[float, ScoreBreakdown]:
     diag_m = graph_bbox_diagonal_m(graph)
     source_rotation, source_scale = score_source_transform(
         transform,
-        evaluation_mode,
+        ignore_source_rotation,
     )
     if not route.reachable or len(route.edge_ids) == 0:
-        bd = _unreachable_breakdown(transform, evaluation_mode)
+        bd = _unreachable_breakdown(transform, ignore_source_rotation)
         return bd.total(weights), bd
 
     rlen = route_geometric_length_m(graph, route.edge_ids)
@@ -167,12 +173,6 @@ def score_route(
     edge_term = float(n_edges) / max(1, ROUTE_ARC_SAMPLES)
     n_turn_denom = max(1, len(route.polyline_xy_m) - 2)
     turn_term = turn_raw / (math.pi * float(n_turn_denom))
-    if evaluation_mode == "elegant":
-        gate = 1.0 / (1.0 + (shape_term / max(ELEGANCE_GATE_THRESHOLD, 1e-9)) ** 2)
-        source_scale *= gate
-        route_length_term *= gate
-        edge_term *= gate
-        turn_term *= gate
 
     bd = ScoreBreakdown(
         source_rotation=source_rotation,

@@ -14,12 +14,13 @@ from .constants import (
 )
 from .defaults import (
     DEFAULT_ANNEAL_SEED,
-    DEFAULT_EVALUATION_MODE,
     DEFAULT_FINAL_TEMPERATURE,
+    DEFAULT_IGNORE_SOURCE_ROTATION,
     DEFAULT_INITIAL_TEMPERATURE,
     DEFAULT_LOG_SCALE_STEP,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+    DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
@@ -55,29 +56,16 @@ class OptimizeWeights:
     unreachable: float = WEIGHT_UNREACHABLE
 
 
-def weights_for_evaluation_mode(mode: str) -> OptimizeWeights:
-    """評価モードごとの既定重み。faithful は形状、elegant は簡潔さも弱く見る。"""
-    if mode == "elegant":
-        return OptimizeWeights(
-            source_rotation=0.12,
-            source_scale=0.10,
-            shape_distance=1.0,
-            route_length=0.06,
-            edge_count=0.04,
-            turn=0.06,
-            unreachable=WEIGHT_UNREACHABLE,
-        )
-    return OptimizeWeights()
-
-
 @dataclass
 class AnnealOptions:
-    """デバッグ API / UI から渡す探索パラメータ（単一スタート焼きなまし）。"""
+    """デバッグ API / UI から渡す探索パラメータ（マルチスタート焼きなまし）。"""
 
     optimization_budget_seconds: float = DEFAULT_OPTIMIZATION_BUDGET_SECONDS
     seed: int = DEFAULT_ANNEAL_SEED
-    evaluation_mode: str = DEFAULT_EVALUATION_MODE
+    # 各試行（初期解）ごとにこの回数まで。試行数で割り振らない。
     max_iterations: int = DEFAULT_MAX_ITERATIONS
+    restart_count: int = DEFAULT_RESTART_COUNT
+    ignore_source_rotation: bool = DEFAULT_IGNORE_SOURCE_ROTATION
     initial_temperature: float = DEFAULT_INITIAL_TEMPERATURE
     final_temperature: float = DEFAULT_FINAL_TEMPERATURE
     translation_step_m_ratio: float = DEFAULT_TRANSLATION_STEP_M_RATIO
@@ -143,14 +131,53 @@ class TraceStep:
 
 
 @dataclass
+class AnnealRunResult:
+    transform: Transform
+    route: RouteBuildResult
+    breakdown: ScoreBreakdown
+    score: float
+    trace_steps: list[TraceStep]
+    iterations_planned: int
+    iterations_completed: int
+    accepted_moves: int
+    deadline_hit: bool
+
+    @property
+    def acceptance_rate(self) -> float:
+        if self.iterations_completed <= 0:
+            return 0.0
+        return self.accepted_moves / float(self.iterations_completed)
+
+
+@dataclass
+class RestartResult:
+    restart_index: int
+    seed: int
+    initial_transform: Transform
+    best_transform: Transform
+    best_edge_ids: list[str]
+    best_polyline_xy_m: list[tuple[float, float]]
+    best_score: float
+    best_breakdown: ScoreBreakdown
+    best_route_length_m: float
+    iterations_planned: int
+    iterations_completed: int
+    accepted_moves: int
+    acceptance_rate: float
+    deadline_hit: bool
+    trace_steps: list[TraceStep] = field(default_factory=list)
+
+
+@dataclass
 class OptimizeResult:
     best_transform: Transform
     best_edge_ids: list[str]
     best_polyline_xy_m: list[tuple[float, float]]
     best_score: float
     best_breakdown: ScoreBreakdown
+    best_restart_index: int
     """ベストルートのグラフ上幾何長（メートル）。到達不能時は 0 に近い値の可能性あり。"""
     best_route_length_m: float = 0.0
-    trace_steps: list[TraceStep] = field(default_factory=list)
+    restart_results: list[RestartResult] = field(default_factory=list)
     candidates_geojson: dict[str, Any] = field(default_factory=dict)
     optimizer_meta: dict[str, Any] = field(default_factory=dict)

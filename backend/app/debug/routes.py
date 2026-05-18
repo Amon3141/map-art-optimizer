@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -36,18 +36,19 @@ from ..optimization.constants import (
 )
 from ..optimization.defaults import (
     DEFAULT_ANNEAL_SEED,
-    DEFAULT_EVALUATION_MODE,
     DEFAULT_FINAL_TEMPERATURE,
+    DEFAULT_IGNORE_SOURCE_ROTATION,
     DEFAULT_INITIAL_TEMPERATURE,
     DEFAULT_LOG_SCALE_STEP,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
+    DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
 from ..optimization.run import run_simulated_annealing
-from ..optimization.types import AnnealOptions, OptimizeWeights, TraceStep
+from ..optimization.types import AnnealOptions, OptimizeWeights, RestartResult, TraceStep, Transform
 from .preview import ways_raw_preview
 
 router = APIRouter()
@@ -106,14 +107,15 @@ class OptimizeWeightsBody(BaseModel):
 
 
 class AnnealOptionsBody(BaseModel):
-    """デバッグ UI が送る探索オプション（単一スタート焼きなまし）。"""
+    """デバッグ UI が送る探索オプション（マルチスタート焼きなまし）。"""
 
     optimization_budget_seconds: float = Field(
         DEFAULT_OPTIMIZATION_BUDGET_SECONDS, ge=0.05, le=120.0
     )
     seed: int = DEFAULT_ANNEAL_SEED
-    evaluation_mode: Literal["faithful", "elegant"] = DEFAULT_EVALUATION_MODE
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=20_000)
+    restart_count: int = Field(DEFAULT_RESTART_COUNT, ge=1, le=64)
+    ignore_source_rotation: bool = DEFAULT_IGNORE_SOURCE_ROTATION
     initial_temperature: float = Field(DEFAULT_INITIAL_TEMPERATURE, gt=0.0, le=10.0)
     final_temperature: float = Field(DEFAULT_FINAL_TEMPERATURE, gt=0.0, le=10.0)
     translation_step_m_ratio: float = Field(DEFAULT_TRANSLATION_STEP_M_RATIO, ge=0.0, le=2.0)
@@ -129,8 +131,9 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         AnnealOptions(),
         optimization_budget_seconds=body.optimization_budget_seconds,
         seed=body.seed,
-        evaluation_mode=body.evaluation_mode,
         max_iterations=body.max_iterations,
+        restart_count=body.restart_count,
+        ignore_source_rotation=body.ignore_source_rotation,
         initial_temperature=body.initial_temperature,
         final_temperature=body.final_temperature,
         translation_step_m_ratio=body.translation_step_m_ratio,
@@ -161,6 +164,35 @@ def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
         "score_terms": t.score_terms,
         "transform": t.transform,
         "edge_ids": t.edge_ids,
+    }
+
+
+def _transform_to_dict(t: Transform) -> dict[str, float]:
+    return {
+        "tx_m": t.tx_m,
+        "ty_m": t.ty_m,
+        "theta_rad": t.theta_rad,
+        "scale": t.scale,
+    }
+
+
+def _restart_result_to_dict(r: RestartResult) -> dict[str, Any]:
+    return {
+        "restart_index": r.restart_index,
+        "seed": r.seed,
+        "initial_transform": _transform_to_dict(r.initial_transform),
+        "best_transform": _transform_to_dict(r.best_transform),
+        "best_edge_ids": r.best_edge_ids,
+        "best_score": r.best_score,
+        "best_breakdown": r.best_breakdown.as_dict(),
+        "route_length_m": r.best_route_length_m,
+        "route_length_km": round(r.best_route_length_m / 1000.0, 6),
+        "iterations_planned": r.iterations_planned,
+        "iterations_completed": r.iterations_completed,
+        "accepted_moves": r.accepted_moves,
+        "acceptance_rate": r.acceptance_rate,
+        "deadline_hit": r.deadline_hit,
+        "trace_steps": [_trace_step_to_dict(s) for s in r.trace_steps],
     }
 
 
@@ -275,9 +307,8 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
     projection_summary = (
         "表示範囲の中心を原点とした平面座標（メートル換算）でグラフを構築しました。"
     )
-    steps = [_trace_step_to_dict(s) for s in opt_result.trace_steps]
     return {
-        "trace_format_version": 1,
+        "trace_format_version": 2,
         "projection": {
             "lon0": lon0,
             "lat0": lat0,
@@ -289,8 +320,9 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         "candidates_geojson": opt_result.candidates_geojson,
         "best_score": opt_result.best_score,
         "best_breakdown": opt_result.best_breakdown.as_dict(),
+        "best_restart_index": opt_result.best_restart_index,
         "route_length_m": opt_result.best_route_length_m,
         "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
         "optimizer_meta": opt_result.optimizer_meta,
-        "steps": steps,
+        "restarts": [_restart_result_to_dict(r) for r in opt_result.restart_results],
     }

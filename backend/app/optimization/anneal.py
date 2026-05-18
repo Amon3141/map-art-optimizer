@@ -24,6 +24,7 @@ from .transform import (
     stroke_to_base_polyline_m,
 )
 from .types import (
+    AnnealRunResult,
     AnnealOptions,
     OptimizeWeights,
     RouteBuildResult,
@@ -138,8 +139,8 @@ def simulated_annealing_search(
     snap_index: AnyEdgeSnapIndex | None = None,
     node_index: NodeSpatialIndexGrid | None = None,
     deadline: float | None = None,
-) -> tuple[Transform, RouteBuildResult, ScoreBreakdown, list[TraceStep]]:
-    """スナップ元の変換パラメータを状態にした単一スタート焼きなまし。"""
+) -> AnnealRunResult:
+    """スナップ元の変換パラメータを状態にした 1 restart 分の焼きなまし。"""
     if adj is None:
         adj = build_adjacency(graph)
     if snap_index is None:
@@ -151,14 +152,24 @@ def simulated_annealing_search(
     if len(base) < 2:
         empty = RouteBuildResult([], [], False, 0)
         z = ScoreBreakdown(0.0, 0.0, 1e4, 1e4, 1e4, 1e4, 1.0)
-        return Transform(), empty, z, []
+        return AnnealRunResult(
+            transform=Transform(),
+            route=empty,
+            breakdown=z,
+            score=z.total(weights),
+            trace_steps=[],
+            iterations_planned=0,
+            iterations_completed=0,
+            accepted_moves=0,
+            deadline_hit=_over_deadline(deadline),
+        )
 
     center = graph_center_m(graph)
     gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
     span_x = max(gx1 - gx0, 1.0)
     span_y = max(gy1 - gy0, 1.0)
     rng = random.Random(opt.seed)
-    max_iterations = max(1, int(opt.max_iterations))
+    max_iterations = max(0, int(opt.max_iterations))
     trace_stride = max(1, int(opt.trace_stride))
 
     def evaluate(state: AnnealState) -> EvaluatedState:
@@ -170,7 +181,7 @@ def simulated_annealing_search(
             route,
             state.transform,
             weights,
-            evaluation_mode=opt.evaluation_mode,
+            ignore_source_rotation=opt.ignore_source_rotation,
         )
         return EvaluatedState(state, route, breakdown, score)
 
@@ -178,6 +189,8 @@ def simulated_annealing_search(
     current = evaluate(initial_state)
     best = current
     trace: list[TraceStep] = []
+    iterations_completed = 0
+    accepted_moves = 0
     if record_trace:
         _record_trace_step(trace, 0, _temperature_at(0, max_iterations, opt), True, current)
 
@@ -185,6 +198,7 @@ def simulated_annealing_search(
         if _over_deadline(deadline):
             break
 
+        iterations_completed += 1
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
         step_scale = 0.2 + 0.8 * math.sqrt(max(0.0, min(1.0, temp_ratio)))
@@ -197,6 +211,7 @@ def simulated_annealing_search(
             accepted = rng.random() < probability
 
         if accepted:
+            accepted_moves += 1
             current = proposal
             if current.score < best.score:
                 best = current
@@ -204,6 +219,16 @@ def simulated_annealing_search(
         best_updated = accepted and current is best
         should_record = record_trace and (step % trace_stride == 0 or best_updated)
         if should_record:
-            _record_trace_step(trace, len(trace), temperature, accepted, current)
+            _record_trace_step(trace, step, temperature, accepted, current)
 
-    return best.state.transform, best.route, best.breakdown, trace
+    return AnnealRunResult(
+        transform=best.state.transform,
+        route=best.route,
+        breakdown=best.breakdown,
+        score=best.score,
+        trace_steps=trace,
+        iterations_planned=max_iterations,
+        iterations_completed=iterations_completed,
+        accepted_moves=accepted_moves,
+        deadline_hit=_over_deadline(deadline),
+    )

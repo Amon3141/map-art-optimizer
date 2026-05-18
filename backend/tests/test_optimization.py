@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 
 from app.optimization.anneal import AnnealState, _propose_state
@@ -67,10 +68,10 @@ def test_build_route_from_horizontal_polyline() -> None:
     assert len(route.polyline_xy_m) >= 2
 
 
-def test_simulated_annealing_trace_edge_ids() -> None:
+def test_multistart_simulated_annealing_trace_edge_ids() -> None:
     g = _line_graph()
     stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=200.0, y=0.0)]
-    opt = AnnealOptions(seed=0, max_iterations=20, trace_stride=2)
+    opt = AnnealOptions(seed=0, max_iterations=20, restart_count=2, trace_stride=2)
     result = run_simulated_annealing(
         g,
         [{"x": p.x, "y": p.y} for p in stroke],
@@ -80,11 +81,12 @@ def test_simulated_annealing_trace_edge_ids() -> None:
         opt=opt,
         record_trace=True,
     )
-    steps = result.trace_steps
+    assert len(result.restart_results) == 2
+    steps = result.restart_results[result.best_restart_index].trace_steps
     assert steps
     assert len(steps) > 1
-    for i, step in enumerate(steps):
-        assert step.step_index == i
+    for step in steps:
+        assert step.step_index >= 0
         assert step.temperature > 0.0
         assert isinstance(step.accepted, bool)
         for eid in step.edge_ids:
@@ -103,13 +105,13 @@ def test_sa_smoke_low_iterations() -> None:
     )
     assert result.best_score == result.best_breakdown.total(OptimizeWeights())
     assert "FeatureCollection" == result.candidates_geojson.get("type")
-    assert result.optimizer_meta.get("search") == "simulated_annealing"
+    assert result.optimizer_meta.get("search") == "multistart_simulated_annealing"
     assert result.optimizer_meta.get("max_iterations") == 8
 
 
-def test_optimizer_meta_single_start_simulated_annealing() -> None:
+def test_optimizer_meta_multistart_simulated_annealing() -> None:
     g = _line_graph()
-    opt = AnnealOptions(seed=3, max_iterations=12, trace_stride=1)
+    opt = AnnealOptions(seed=3, max_iterations=12, restart_count=3, trace_stride=1)
     result = run_simulated_annealing(
         g,
         [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
@@ -118,8 +120,12 @@ def test_optimizer_meta_single_start_simulated_annealing() -> None:
         opt=opt,
         record_trace=True,
     )
-    assert result.optimizer_meta["search"] == "simulated_annealing"
+    assert result.optimizer_meta["search"] == "multistart_simulated_annealing"
     assert result.optimizer_meta["max_iterations"] == 12
+    assert result.optimizer_meta["max_iterations_per_restart"] == 12
+    assert result.optimizer_meta["restart_count"] == 3
+    assert len(result.restart_results) == 3
+    assert result.best_restart_index in {0, 1, 2}
 
 
 def test_score_route_normalized_smoke() -> None:
@@ -174,17 +180,6 @@ def test_ordered_shape_loss_penalizes_reversed_route_order() -> None:
     )
 
 
-def test_elegant_simplicity_terms_are_gated_by_shape_quality() -> None:
-    g = _line_graph()
-    adj = build_adjacency(g)
-    route = build_route_from_polyline(g, adj, [(0.0, 0.0), (200.0, 0.0)], arc_samples=12)
-    w = OptimizeWeights()
-    _, good = score_route(g, [(0.0, 0.0), (200.0, 0.0)], route, Transform(), w, "elegant")
-    _, bad = score_route(g, [(0.0, 600.0), (200.0, 600.0)], route, Transform(), w, "elegant")
-    assert bad.shape_distance > good.shape_distance
-    assert bad.route_length < good.route_length
-
-
 def test_temperature_scaled_proposal_shrinks_step_width() -> None:
     opt = AnnealOptions(translation_step_m_ratio=0.1, rotation_step_rad=0.3, log_scale_step=0.1)
     current = AnnealState(Transform())
@@ -202,8 +197,53 @@ def test_source_rotation_penalty_prefers_input_angle() -> None:
     route = build_route_from_polyline(g, adj, target, arc_samples=12)
     w = OptimizeWeights()
     _, bd_zero = score_route(g, target, route, Transform(theta_rad=0.0), w)
-    _, bd_rotated = score_route(g, target, route, Transform(theta_rad=1.0), w)
+    _, bd_within_free_angle = score_route(
+        g,
+        target,
+        route,
+        Transform(theta_rad=math.radians(20.0)),
+        w,
+    )
+    _, bd_rotated = score_route(g, target, route, Transform(theta_rad=math.radians(45.0)), w)
+    assert bd_zero.source_rotation == 0.0
+    assert bd_within_free_angle.source_rotation == 0.0
     assert bd_zero.source_rotation < bd_rotated.source_rotation
+
+
+def test_source_rotation_penalty_can_be_disabled() -> None:
+    g = _line_graph()
+    adj = build_adjacency(g)
+    target = [(0.0, 0.0), (200.0, 0.0)]
+    route = build_route_from_polyline(g, adj, target, arc_samples=12)
+    w = OptimizeWeights()
+    _, bd = score_route(
+        g,
+        target,
+        route,
+        Transform(theta_rad=math.pi),
+        w,
+        ignore_source_rotation=True,
+    )
+    assert bd.source_rotation == 0.0
+
+
+def test_multistart_each_restart_uses_full_max_iterations() -> None:
+    g = _line_graph()
+    opt = AnnealOptions(seed=5, max_iterations=10, restart_count=3, trace_stride=1)
+    result = run_simulated_annealing(
+        g,
+        [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
+        0.0,
+        0.0,
+        opt=opt,
+        record_trace=True,
+    )
+    assert len(result.restart_results) == 3
+    assert all(r.iterations_planned == 10 for r in result.restart_results)
+    assert result.optimizer_meta["max_iterations_per_restart"] == 10
+    for restart in result.restart_results:
+        assert restart.trace_steps
+        assert 0.0 <= restart.acceptance_rate <= 1.0
 
 
 def test_unreachable_route_gets_large_penalty() -> None:

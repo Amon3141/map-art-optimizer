@@ -1,6 +1,6 @@
 # 最適化（設計メモ）
 
-**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用にスナップ元の単一スタート焼きなましが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
+**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用にスナップ元のマルチスタート焼きなましが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
 
 ---
 
@@ -130,7 +130,7 @@
 
 ## 8. 実装ベースライン（現状）
 
-デバッグ検証用。スナップ元の状態 `(theta, scale, tx, ty)` を単一スタートの**焼きなまし**で遷移させ、各状態を smooth DP スナップ後に評価してベスト候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
+デバッグ検証用。スナップ元の状態 `(theta, scale, tx, ty)` を複数のランダム初期解から始める**マルチスタート焼きなまし**で遷移させ、各状態を smooth DP スナップ後に評価してベスト候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
 
 ### 8.1 コード配置
 
@@ -140,9 +140,9 @@
 | `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult` |
 | `backend/app/optimization/transform.py` | ストロークをグラフ内にフィットした基準折れ線 → 中心周りの回転・等方スケール・平行移動 |
 | `backend/app/optimization/snap_route.py` | 最近傍スナップ、辺ごとの smooth DP スナップ、Dijkstra フォールバック、折れ線連結 |
-| `backend/app/optimization/scoring.py` | スナップ元評価・順序対応形状項・coverage 形状項・ゲート付き簡潔さ項・到達不能の加重和 |
-| `backend/app/optimization/anneal.py` | `simulated_annealing_search`（単一スタート焼きなまし） |
-| `backend/app/optimization/run.py` | `run_simulated_annealing`（焼きなまし）、GeoJSON 化 |
+| `backend/app/optimization/scoring.py` | スナップ元評価・順序対応形状項・coverage 形状項・到達不能の加重和 |
+| `backend/app/optimization/anneal.py` | `simulated_annealing_search`（1 試行分の焼きなまし） |
+| `backend/app/optimization/run.py` | `run_simulated_annealing`（マルチスタート orchestration）、GeoJSON 化 |
 | `backend/tests/test_optimization.py` | スモーク |
 
 ### 8.2 API（デバッグのみ）
@@ -151,16 +151,18 @@
 - リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points` を付与。
 - 任意: `weights`, `anneal`, `record_trace`
   - `weights`: `source_rotation`, `source_scale`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
-  - `anneal`: `optimization_budget_seconds`, `seed`, `evaluation_mode`（`faithful` / `elegant`）, `max_iterations`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
+  - `anneal`: `optimization_budget_seconds`, `seed`, `max_iterations`, `restart_count`（初期解の数・試行数）, `ignore_source_rotation`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
 - サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
 
 ### 8.3 探索（焼きなまし）
 
 - **状態**: `theta_rad`, `scale`, `tx_m`, `ty_m`。
+- **初期解**: 各試行ごとにランダム生成する。`theta` は `[-pi, pi]`、`scale` はクリップ範囲内の log-uniform、`tx/ty` はグラフ span に応じた範囲からサンプリングする。
 - **遷移**: 回転・対数スケール・並進を小さく摂動する。遷移幅は温度に連動し、終盤ほど局所探索へ寄る。
 - **採択**: 改善は必ず採択、悪化は `exp(-delta / temperature)` で採択する。温度は `initial_temperature` から `final_temperature` へ幾何冷却。
-- **打ち切り**: `max_iterations` または `optimization_budget_seconds` の早い方。
-- **`optimizer_meta.search`**: `simulated_annealing`。
+- **計算量管理**: `max_iterations` は**各試行（初期解）ごと**にそのまま適用する（試行数で割らない）。試行数を増やすと反復は概ね線形に増える。`optimization_budget_seconds` は全試行で共有し、時間切れの試行は途中で打ち切られる。
+- **打ち切り**: 各試行では `max_iterations` または共有 `optimization_budget_seconds` の早い方。
+- **`optimizer_meta.search`**: `multistart_simulated_annealing`。
 
 ### 8.4 ターゲット折れ線 → グラフ上ルート
 
@@ -170,35 +172,43 @@
 
 | 項 | 意味（概要） |
 |----|----------------|
-| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。 |
-| `source_scale` | スナップ元のスケール評価。`faithful` では 1 倍からのズレ、`elegant` では shape が良い時だけ小ささを弱く好む。 |
+| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。絶対角度 30 度までは 0、超過分を `SOURCE_ROTATION_NORMALIZATION_DEG` で正規化する。`ignore_source_rotation` で無効化可能。 |
+| `source_scale` | スナップ元のスケール評価。`abs(log(scale))`（1 倍からの相対ズレ）。 |
 | `shape_distance` | スナップ元とルートの **弧長順序対応距離 + coverage 距離**（無次元化）。 |
-| `route_length` | 実ルート長 ÷ bbox 対角。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
-| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
-| `turn` | 旋回ペナルティ。`elegant` で shape が良い時だけ寄与する簡潔さ項。 |
+| `route_length` | 実ルート長 ÷ bbox 対角。既定重みは 0 で、必要なら `weights` で上げる。 |
+| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。既定重みは 0。 |
+| `turn` | 旋回ペナルティ（折れ角の正規化）。既定重みは 0。 |
 | `unreachable` | 連結失敗時 1。 |
 
 ### 8.6 トレース
 
-- 初期 step、`trace_stride` ごとの step、best 更新 step を保存する。各 step は `temperature`, `accepted`, `score_total`, `score_terms`, `transform`, `edge_ids` を持つ。
+- 各試行ごとに、初期 step、`trace_stride` ごとの step、best 更新 step を保存する。各 step は `temperature`, `accepted`, `score_total`, `score_terms`, `transform`, `edge_ids` を持つ。
+- 各試行の summary には `initial_transform`, `best_transform`, `best_score`, `best_breakdown`, `iterations_planned`, `iterations_completed`, `accepted_moves`, `acceptance_rate` を含める。
 
 ### 8.7 レスポンス（デバッグ）
 
-- `candidates_geojson`, `best_score`, `best_breakdown`, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `steps[]`。
+- `candidates_geojson`, `best_score`, `best_breakdown`, `best_restart_index`, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `restarts[]`。
+- `optimizer_meta` には `max_iterations_per_restart`（`anneal.max_iterations` を各試行にそのまま適用したときの計画反復数）などを含む。
+- `restarts[]` は各試行の summary と `trace_steps[]` を持つ。旧 `steps[]` 互換は持たない。
 
 ### 8.8 フロント（デバッグ UI）
 
-- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましの温度・反復数・遷移幅オプション、実行中の経過秒表示、結果表示。
+- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましの温度・反復数・初期解の数・角度無視・遷移幅オプション、実行中の経過秒表示、ベスト試行と試行別 trace 表示。
 
 ### 8.9 あえて未実装／プロダクト要件との差
 
 - **複数候補のランキング提示**（現状はベスト 1 本のみ）。
-- **マルチスタート焼きなまし**（現状は単一スタートのみ）。
+- **複数候補の同時提示**（現状はマルチスタートの best 1 本のみを GeoJSON 表示）。
 - **本番用 `/api` エンドポイント**（`/api/debug` のみ）。
 - **反転・一般アフィン変形**（現状は回転・等方スケール・平行移動のみ）。
 - **許容幅付きの距離制約**（±km 帯の完全な二段階最適化など）。
 - **移動モードに沿ったタグ解釈**（Dijkstra は現状幾何距離のみ）。
 - **オイラー路等の厳しい一筆書き制約**。
+- **形状評価の追加候補**（DTW / Fréchet）。
+- **`smooth_dp` の corridor 幅・コスト係数の調整しやすい定数化**。
+- **複合 proposal / 試行ごとの初期分布の改善**。
+- **acceptance rate を使った温度・遷移幅チューニング**。
+- **空 route / 到達不能 route が多い場合の初期解生成・proposal 範囲制約改善**。
 
 ---
 

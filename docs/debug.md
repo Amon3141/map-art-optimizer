@@ -55,17 +55,18 @@
 ### レスポンスに含まれるもの（保存時の単位）
 
 - **`candidates_geojson`**: ベスト候補 1 本の WGS84 `LineString`（再描画にそのまま使える）。
-- **`steps`**: 焼きなましのスナップショット。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコア・温度・採択有無のみ。
-- **`trace_format_version`**: 現状 `1`。クライアントや後処理スクリプトは、この番号でスキーマ互換を判断できるようにする（形式変更時はバージョンを上げる）。
+- **`restarts`**: 試行ごとの summary と `trace_steps`。ここでいう試行は、ランダムに作った別々の初期解から焼きなましを始める 1 回分の探索。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコア・温度・採択有無のみ。summary には `initial_transform`, `best_score`, `best_breakdown`, `acceptance_rate` などを含む。
+- **`best_restart_index`**: 全試行のうち、最良スコアを出した試行。
+- **`trace_format_version`**: 現状 `2`。クライアントや後処理スクリプトは、この番号でスキーマ互換を判断できるようにする（形式変更時はバージョンを上げる）。
 
 ### フロント（デバッグページ）でのデバッグ
 
 1. **前処理フロー**で道路を取得し、グラフモードで `graph-preview` が成功した状態にする（[`DebugSidebar`](../frontend/src/debug/components/DebugSidebar.tsx)）。
 2. **「このグラフで形を探索」**で最適化サイドバー（[`DebugOptimizePanel`](../frontend/src/debug/components/DebugOptimizePanel.tsx)）へ遷移。
-3. 手書きストローク・評価モード・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。同期 API なのでサーバから逐次進捗は返さないが、UI は経過秒・時間上限・最大反復数を表示する。結果は **ページの React 状態にのみ保持**（リロードで消える）。
+3. 手書きストローク・評価モード・探索設定（`anneal` は [optimization.md](./optimization.md) 8.2 の公開フィールドのみ）を入れ、**実行**。同期 API なのでサーバから逐次進捗は返さないが、UI は経過秒・時間上限・最大反復数（試行ごと）・初期解の数を表示する。結果は **ページの React 状態にのみ保持**（リロードで消える）。
 4. **マップ上の表示**
    - **ベスト候補**: `candidates_geojson` をそのままオーバーレイ。
-   - **トレーススライダー**: `steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
+   - **試行 / トレーススライダー**: `restarts[n].trace_steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
      → トレースを見るには **同じセッションで取得済みのグラフ GeoJSON** が必要。保存した JSON だけでは、edges が別途必要。
 
 ### オフラインでトレースを再現するとき
