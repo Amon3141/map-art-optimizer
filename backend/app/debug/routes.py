@@ -154,11 +154,8 @@ class DebugOptimizeBody(BaseModel):
     geojson: dict[str, Any]
     bbox: BBoxBody
     options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
-    # 旧フォーマット（後退互換）
-    stroke_points: list[StrokePointBody] = Field(default_factory=list)
-    # 新フォーマット: buildSinglePath 済みコンポーネントのリスト
-    stroke_components: list[list[StrokePointBody]] | None = None
-    stroke_mode: str = "single_path"
+    # buildSinglePath 済みコンポーネントのリスト（1件以上必須）
+    stroke_components: list[list[StrokePointBody]]
     weights: OptimizeWeightsBody | None = None
     anneal: AnnealOptionsBody | None = None
     record_trace: bool = True
@@ -319,8 +316,10 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         "stats": built.stats,
     }
 
-    # マルチコンポーネント（ジョイント SA）パス
-    if body.stroke_components is not None and len(body.stroke_components) > 1:
+    if len(body.stroke_components) < 1:
+        raise HTTPException(status_code=400, detail="stroke_components must be non-empty")
+
+    if len(body.stroke_components) > 1:
         components_payload = [
             [p.model_dump() for p in comp] for comp in body.stroke_components
         ]
@@ -362,14 +361,7 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
             ],
         }
 
-    # シングルコンポーネントパス（既存ロジック）
-    if body.stroke_components is not None and len(body.stroke_components) == 1:
-        stroke_payload = [p.model_dump() for p in body.stroke_components[0]]
-    elif body.stroke_points:
-        stroke_payload = [p.model_dump() for p in body.stroke_points]
-    else:
-        raise HTTPException(status_code=400, detail="stroke_components or stroke_points is required")
-
+    stroke_payload = [p.model_dump() for p in body.stroke_components[0]]
     opt_result = run_simulated_annealing(
         built.graph,
         stroke_payload,

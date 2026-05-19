@@ -106,25 +106,3 @@ export function findConnectedComponents(strokes: Point[][]): number[][] {
   return Array.from(groups.values())
 }
 
-/** 孤立しているストロークのインデックス集合を返す（自分以外の全ストロークと接触していない） */
-export function isolatedStrokeIndices(strokes: Point[][]): Set<number> {
-  if (strokes.length <= 1) return new Set()
-  const components = findConnectedComponents(strokes)
-  if (components.length === 1) return new Set()
-
-  // 最大 component 以外のストロークを孤立扱いにする
-  const largest = components.reduce((a, b) => (a.length >= b.length ? a : b))
-  const mainSet = new Set(largest)
-  const isolated = new Set<number>()
-  for (let i = 0; i < strokes.length; i++) {
-    if (!mainSet.has(i)) isolated.add(i)
-  }
-  return isolated
-}
-
-/** 全ストロークが1つの connected component に属しているか */
-export function isFullyConnected(strokes: Point[][]): boolean {
-  if (strokes.length <= 1) return true
-  const components = findConnectedComponents(strokes)
-  return components.length === 1
-}

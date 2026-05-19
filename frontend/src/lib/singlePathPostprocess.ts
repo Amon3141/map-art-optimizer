@@ -1,5 +1,9 @@
 import type { Point } from './simplify'
-import { GEOMETRY_EPS, segmentIntersectionParam } from './strokeConnectivity'
+import {
+  findConnectedComponents,
+  GEOMETRY_EPS,
+  segmentIntersectionParam,
+} from './strokeConnectivity'
 
 // ピクセル座標系での同一点判定閾値（GEOMETRY_EPS は線形代数用なので別途設定）
 const POINT_MERGE_EPS = 1e-6
@@ -468,9 +472,15 @@ function hierholzer(mg: AugGraph, start: number): number[] {
 // エントリポイント
 // ---------------------------------------------------------------------------
 
+/** 各 connected component を Chinese Postman で一筆書き化した点列の配列 */
+export function strokesToProcessedComponents(strokes: Point[][]): Point[][] {
+  return findConnectedComponents(strokes).map((indices) =>
+    buildSinglePath(indices.map((i) => strokes[i])),
+  )
+}
+
 /**
- * single_path モード用後処理。
- * 空間的に connected な複数ストロークを Chinese Postman で一本の順序付き頂点リストに変換する。
+ * connected component 内の複数ストロークを Chinese Postman で一本の順序付き頂点リストに変換する。
  * 全エッジを最小コストで辿る（一部エッジを往復する場合あり）。
  */
 export function buildSinglePath(strokes: Point[][]): Point[] {

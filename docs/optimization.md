@@ -29,7 +29,7 @@
 ### 3.1 インプット
 
 - フロントで簡略化・前処理済みの点列（キャンバス正規化座標）。
-- 1本の一筆書きパス（`single_path`）または複数の独立コンポーネント（`free_draw`）。
+- 1 つ以上の connected component（各 component は `buildSinglePath` 済みの点列）。component 数でシングル / ジョイント SA を切り替える。
 - 探索エリア（bbox）と道路グラフ（Overpass 由来）。
 
 詳しいフロント側の前処理（Chinese Postman、connected components）は [`input_shape.md`](./input_shape.md) を参照。
@@ -119,24 +119,17 @@
 
 ```jsonc
 {
-  // 新フォーマット（優先）
   "stroke_components": [
     [{"x": 0.1, "y": 0.3}, ...],  // buildSinglePath 済み Point[]
-    [{"x": 0.8, "y": 0.2}, ...]   // コンポーネント数は 1 以上
+    [{"x": 0.8, "y": 0.2}, ...]   // 1 件以上必須。2 件以上でジョイント SA
   ],
-  "stroke_mode": "single_path" | "free_draw",
-
-  // 旧フォーマット（後退互換。stroke_components が null のとき参照）
-  "stroke_points": [{"x": ..., "y": ...}, ...],
-
-  // 省略可
   "weights": { /* OptimizeWeightsBody */ },
   "anneal":  { /* AnnealOptionsBody  */ },
   "record_trace": true
 }
 ```
 
-`stroke_components` が `null` かつ `stroke_points` が空の場合は 400 エラー。
+`stroke_components` が空の場合は 400 エラー。1 件のとき `run_simulated_annealing`、2 件以上のとき `run_joint_simulated_annealing`。
 
 #### `AnnealOptionsBody` フィールド
 
@@ -184,7 +177,7 @@
 - **状態**: グローバル変換 `(theta_rad, scale, tx_m, ty_m)` + コンポーネントごとのローカルオフセット `(dx_m, dy_m)`。
 - **評価**: `apply_transform(base, global_t, center)` → 各コンポーネントに `(dx, dy)` を加算 → スナップ → `score_route`。スコアは弧長で正規化した加重平均 + ローカルオフセットペナルティ（`local_offset` 重み）。
 - **遷移関数（ジョイント）**:
-  1. `_propose_global_t`: グローバル変換のみを摂動（`single_path` と同じ move selection）。ローカルは動かさない。
+  1. `_propose_global_t`: グローバル変換のみを摂動（シングル SA と同じ move selection）。ローカルは動かさない。
   2. **n_local_trials**: その global 変換を固定したまま、ローカルオフセットを `n_local_trials`（既定 4）回独立にサンプル（各軸 `N(0, local_sigma)`, `local_sigma = max(span_x, span_y) * 0.02`）し、最良スコアを proposal として採択判定に使う。
 
   > **設計意図**: global 位置が良くても local offset の 1 サンプルが外れると不当に reject されていた問題を解消する（Rao-Blackwellization 的アプローチ）。`n_local_trials=1` にすれば従来と等価。

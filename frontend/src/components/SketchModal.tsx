@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MdOutlineDraw, MdEdit, MdTextFields } from 'react-icons/md'
 import { simplifyStroke } from '../lib/simplify'
 import type { Point } from '../lib/simplify'
-import { isFullyConnected, isolatedStrokeIndices } from '../lib/strokeConnectivity'
 import { textToStrokes } from '../lib/textToStrokes'
-import { MAX_STROKE_POINTS, type InputMode, type StrokeData, type StrokeMode } from '../lib/strokeTypes'
+import { MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
 import { SketchPreview } from './SketchPreview'
 
 export type SketchModalProps = {
@@ -23,7 +22,6 @@ const GHOST_DASH = [6, 4]
 function drawAllStrokes(
   ctx: CanvasRenderingContext2D,
   strokes: Point[][],
-  isolated: Set<number>,
   currentPts: Point[],
   ghostPt: Point | null,
   isPenMode: boolean,
@@ -37,7 +35,7 @@ function drawAllStrokes(
   for (let i = 0; i < strokes.length; i++) {
     const pts = strokes[i]
     if (pts.length < 2) continue
-    ctx.strokeStyle = isolated.has(i) ? '#d97706' : '#2d4a5e'
+    ctx.strokeStyle = '#2d4a5e'
     ctx.setLineDash([])
     ctx.beginPath()
     ctx.moveTo(pts[0].x, pts[0].y)
@@ -79,11 +77,7 @@ function drawAllStrokes(
 // 説明文（1-2文、動的に変わる）
 // ────────────────────────────────────────────────────
 
-function descriptionText(
-  inputMode: InputMode,
-  strokeMode: StrokeMode,
-  textLength: number,
-): string {
+function descriptionText(inputMode: InputMode, textLength: number): string {
   if (inputMode === 'text') {
     if (textLength >= 2) {
       return 'テキストを入力すると文字の輪郭がストロークになります。文字間スペースを調整できます。'
@@ -91,9 +85,6 @@ function descriptionText(
     return 'テキストを入力すると文字の輪郭がストロークになります。'
   }
   const tool = inputMode === 'freehand' ? '指やマウスでなぞって' : 'クリックで点を追加して'
-  if (strokeMode === 'single_path') {
-    return `${tool}形を描きます。複数ストロークを使う場合は、すべてが接触・交差している必要があります。`
-  }
   return `${tool}形を描きます。複数回に分けて描いた形もそのまま使えます。`
 }
 
@@ -122,7 +113,6 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   const [exiting, setExiting] = useState(false)
   const [backdropBlurred, setBackdropBlurred] = useState(() => !shouldAnimateMobileSheet)
   const [inputMode, setInputMode] = useState<InputMode>('freehand')
-  const [strokeMode, setStrokeMode] = useState<StrokeMode>('free_draw')
   const [strokes, setStrokes] = useState<Point[][]>([])
   const [hint, setHint] = useState<string | null>(null)
 
@@ -151,28 +141,11 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     return () => cancelAnimationFrame(id)
   }, [shouldAnimateMobileSheet])
 
-  const isolated = useMemo(
-    () =>
-      strokeMode === 'single_path' && inputMode !== 'text'
-        ? isolatedStrokeIndices(strokes)
-        : new Set<number>(),
-    [strokeMode, inputMode, strokes],
-  )
-
-  const fullyConnected = useMemo(() => {
-    if (strokeMode !== 'single_path' || inputMode === 'text') return true
-    if (strokes.length <= 1) return true
-    return isFullyConnected(strokes)
-  }, [strokeMode, inputMode, strokes])
-
   const totalPoints = strokes.reduce((s, st) => s + st.length, 0)
   const displayPointCount =
     totalPoints + (inputMode === 'pen' ? penCurrentPts.length : 0)
   const pointsOverLimit = displayPointCount > MAX_STROKE_POINTS
-  const canConfirm =
-    totalPoints >= 2 &&
-    (strokeMode !== 'single_path' || fullyConnected) &&
-    !pointsOverLimit
+  const canConfirm = totalPoints >= 2 && !pointsOverLimit
 
   // ────────────────────────────────────────────────────
   // キャンバス再描画
@@ -188,8 +161,8 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    drawAllStrokes(ctx, strokes, isolated, penCurrentPts, penGhostPt, inputMode === 'pen')
-  }, [strokes, isolated, penCurrentPts, penGhostPt, inputMode])
+    drawAllStrokes(ctx, strokes, penCurrentPts, penGhostPt, inputMode === 'pen')
+  }, [strokes, penCurrentPts, penGhostPt, inputMode])
 
   // ────────────────────────────────────────────────────
   // 入力モード切り替え
@@ -204,7 +177,6 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     currentRawPts.current = []
     setPenCurrentPts([])
     setPenGhostPt(null)
-    if (mode === 'text') setStrokeMode('free_draw')
   }
 
   // ────────────────────────────────────────────────────
@@ -263,7 +235,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!ctx || !canvas) return
-    drawAllStrokes(ctx, strokes, isolated, [], null, false)
+    drawAllStrokes(ctx, strokes, [], null, false)
     const raw = currentRawPts.current
     if (raw.length >= 2) {
       ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3
@@ -310,14 +282,20 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     setPenGhostPt(null)
   }, [])
 
+  const deletePreviousPenPoint = useCallback(
+    () => setPenCurrentPts((prev) => prev.slice(0, -1)),
+    [],
+  )
+
   useEffect(() => {
     if (inputMode !== 'pen') return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Enter') { e.preventDefault(); commitPenStroke() }
+      if (e.key === 'Backspace') { e.preventDefault(); deletePreviousPenPoint() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [inputMode, commitPenStroke])
+  }, [inputMode, commitPenStroke, deletePreviousPenPoint])
 
   // ────────────────────────────────────────────────────
   // 削除
@@ -328,7 +306,6 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     currentRawPts.current = []; setHint(null)
   }
   const deletePreviousStroke = () => setStrokes((prev) => prev.slice(0, -1))
-  const deletePreviousPenPoint = () => setPenCurrentPts((prev) => prev.slice(0, -1))
 
   const requestClose = useCallback(() => {
     if (shouldAnimateMobileSheet) {
@@ -352,14 +329,12 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     if (!canConfirm) {
       if (pointsOverLimit) {
         setHint(`点の数は ${MAX_STROKE_POINTS} 以下にしてください。`)
-      } else if (totalPoints < 2) {
-        setHint(inputMode === 'text' ? 'テキストを入力してください。' : '線を描いてから決定してください。')
       } else {
-        setHint('全てのストロークを繋げてから決定してください。')
+        setHint(inputMode === 'text' ? 'テキストを入力してください。' : '線を描いてから決定してください。')
       }
       return
     }
-    onConfirm({ inputMode, strokeMode: inputMode === 'text' ? 'free_draw' : strokeMode, strokes })
+    onConfirm({ inputMode, strokes })
     requestClose()
   }
 
@@ -428,9 +403,8 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
             </button>
           </div>
 
-          {/* 入力モード + ストロークモード（同一行） */}
+          {/* 入力モード */}
           <div className="mt-3 flex items-center gap-2">
-            {/* 入力モードタブ */}
             <div className="flex gap-0.5 overflow-hidden rounded-lg border border-stone-200/80 p-0.5">
               {inputModeOptions.map(({ mode, label, icon }) => (
                 <button
@@ -449,32 +423,10 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
                 </button>
               ))}
             </div>
-
-            {/* ストロークモード（テキスト時は非表示、スペースは確保しない） */}
-            {inputMode !== 'text' && (
-              <div className="ml-auto flex overflow-hidden rounded-md border border-stone-200">
-                {(['single_path', 'free_draw'] as StrokeMode[]).map((mode, idx) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setStrokeMode(mode)}
-                    className={[
-                      'px-2 py-1 text-xs font-medium transition-colors',
-                      idx === 0 ? '' : 'border-l border-stone-200',
-                      strokeMode === mode
-                        ? 'bg-stone-100 text-[#2d4a5e]'
-                        : 'bg-white text-stone-500 hover:bg-stone-50 hover:text-stone-700',
-                    ].join(' ')}
-                  >
-                    {mode === 'single_path' ? '一筆書き' : '自由描画'}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-stone-500">
-            {descriptionText(inputMode, strokeMode, textInput.length)}
+            {descriptionText(inputMode, textInput.length)}
           </p>
         </div>
 

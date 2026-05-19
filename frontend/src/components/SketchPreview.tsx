@@ -4,7 +4,6 @@ type SketchPreviewProps = {
   strokes: Point[][]
   /** SVG プレビューの線幅（px）。最適化パスデータには影響しない */
   strokeWidth?: number
-  isolatedStrokeIndices?: Set<number>
   className?: string
 }
 
@@ -12,7 +11,6 @@ type SketchPreviewProps = {
 export function SketchPreview({
   strokes,
   strokeWidth = 2,
-  isolatedStrokeIndices,
   className = '',
 }: SketchPreviewProps) {
   const totalPoints = strokes.reduce((s, stroke) => s + stroke.length, 0)
@@ -52,12 +50,11 @@ export function SketchPreview({
       >
         {strokes.map((stroke, i) => {
           if (stroke.length < 2) return null
-          const isIsolated = isolatedStrokeIndices?.has(i) ?? false
           return (
             <polyline
               key={i}
               fill="none"
-              stroke={isIsolated ? '#d97706' : '#2d4a5e'}
+              stroke="#2d4a5e"
               strokeWidth={strokeWidth}
               vectorEffect="non-scaling-stroke"
               strokeLinecap="round"

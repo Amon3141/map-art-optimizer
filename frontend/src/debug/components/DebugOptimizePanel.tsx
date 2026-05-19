@@ -3,9 +3,7 @@ import { MdOutlineDraw } from 'react-icons/md'
 import { SketchModal } from '../../components/SketchModal'
 import { SketchPreview } from '../../components/SketchPreview'
 import { apiUrl } from '../../lib/api'
-import type { Point } from '../../lib/simplify'
-import { buildSinglePath } from '../../lib/singlePathPostprocess'
-import { findConnectedComponents } from '../../lib/strokeConnectivity'
+import { strokesToProcessedComponents } from '../../lib/singlePathPostprocess'
 import type { StrokeData } from '../../lib/strokeTypes'
 import { SinglePathDebugPreview } from './SinglePathDebugPreview'
 import {
@@ -89,7 +87,7 @@ export type OptimizeApiResponse = {
   route_length_km?: number
   optimizer_meta?: Record<string, unknown>
   restarts: OptimizeRestartResult[]
-  /** コンポーネントごとの結果（single_path では1要素） */
+  /** コンポーネントごとの結果（シングルコンポーネント時は1要素） */
   components?: OptimizeComponentResult[]
 }
 
@@ -132,7 +130,10 @@ export function DebugOptimizePanel({
 }: DebugOptimizePanelProps) {
   const [sketchOpen, setSketchOpen] = useState(false)
   const [strokeData, setStrokeData] = useState<StrokeData | null>(null)
-  const [processedComponents, setProcessedComponents] = useState<Point[][] | null>(null)
+  const processedComponents = useMemo(
+    () => (strokeData ? strokesToProcessedComponents(strokeData.strokes) : null),
+    [strokeData],
+  )
   const [showDebugPreview, setShowDebugPreview] = useState(true)
   const [seed, setSeed] = useState(DEFAULT_ANNEAL_SEED)
   const [budgetSeconds, setBudgetSeconds] = useState(DEFAULT_OPTIMIZATION_BUDGET_SECONDS)
@@ -255,7 +256,6 @@ export function DebugOptimizePanel({
         bbox,
         options: optsNorm,
         stroke_components: strokeComponents.map((comp) => comp.map((p) => ({ x: p.x, y: p.y }))),
-        stroke_mode: strokeData.strokeMode,
         record_trace: true,
         weights: {
           source_rotation: weightSourceRotation,
@@ -339,12 +339,6 @@ export function DebugOptimizePanel({
             </button>
             {hasShape && strokeData ? (
               <>
-                {strokeData.strokeMode === 'free_draw' &&
-                  (processedComponents?.length ?? 0) > 1 && (
-                    <p className="text-[11px] text-stone-500">
-                      自由描画モード: {processedComponents?.length} コンポーネントをジョイント最適化
-                    </p>
-                  )}
                 {processedComponents ? (
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center justify-between">
@@ -767,14 +761,6 @@ export function DebugOptimizePanel({
           onClose={() => setSketchOpen(false)}
           onConfirm={(data) => {
             setStrokeData(data)
-            if (data.strokeMode === 'single_path') {
-              setProcessedComponents([buildSinglePath(data.strokes)])
-            } else {
-              const comps = findConnectedComponents(data.strokes)
-              setProcessedComponents(
-                comps.map((indices) => buildSinglePath(indices.map((i) => data.strokes[i]))),
-              )
-            }
             setSketchOpen(false)
           }}
         />

@@ -7,12 +7,10 @@
 ## 1. 型定義（`frontend/src/lib/strokeTypes.ts`）
 
 ```typescript
-type InputMode  = 'freehand' | 'pen' | 'text'
-type StrokeMode = 'single_path' | 'free_draw'
+type InputMode = 'freehand' | 'pen' | 'text'
 
 type StrokeData = {
-  inputMode:  InputMode
-  strokeMode: StrokeMode  // テキスト入力時は常に 'free_draw'
+  inputMode: InputMode
   strokes:    Point[][]   // 描画順のストローク列
 }
 
@@ -27,18 +25,13 @@ const MAX_STROKE_POINTS = 150  // 全ストローク合計点数の上限（全�
 | `pen` | 折れ線ツールでクリックごとに頂点追加 |
 | `text` | opentype.js でグリフアウトラインを `Point[][]` に変換（`frontend/src/lib/textToStrokes.ts`） |
 
-### ストロークモード
-
-| `strokeMode` | 意味 |
-|---|---|
-| `single_path` | 全ストロークが1つの connected component を成す前提で、一筆書き化してからバックエンドへ送る |
-| `free_draw` | 複数の独立した connected component をそれぞれ一筆書き化し、コンポーネントごとに個別最適化する |
+複数の独立したストローク（接触・交差していないもの）はそのまま許容する。後処理で connected component ごとに分割される。
 
 ---
 
-## 2. 「決定」ボタン押下時の前処理フロー
+## 2. 前処理フロー
 
-`DebugOptimizePanel.tsx` の送信処理で実行される。
+`strokesToProcessedComponents`（[`frontend/src/lib/singlePathPostprocess.ts`](../frontend/src/lib/singlePathPostprocess.ts)）が最適化送信直前に実行される（`DebugOptimizePanel` では `strokeData` から `useMemo` で導出）。
 
 ```
 strokes: Point[][]
@@ -53,19 +46,9 @@ processedComponents: Point[][]
     ↓ バックエンドへ
 POST /api/debug/optimize
   stroke_components: processedComponents
-  stroke_mode: "single_path" | "free_draw"
 ```
 
-### `single_path` モードの場合
-
-- `isFullyConnected(strokes)` で事前チェック（UI 側で非 connected なら警告表示）
-- `processedComponents` は長さ 1 の配列になる（全ストロークを1本に統合）
-
-### `free_draw` モードの場合
-
-- `findConnectedComponents` で独立したコンポーネントに分割
-- 各コンポーネントを `buildSinglePath` で一筆書き化
-- `processedComponents` の長さ = コンポーネント数
+- `processedComponents` の長さ = connected component 数（1 ならシングル SA、2 以上ならジョイント SA）
 
 ---
 
@@ -74,18 +57,17 @@ POST /api/debug/optimize
 ストローク間の「接続」はエッジの交差判定で決める。
 
 - **`segmentIntersectionParam`**: 2線分の交差判定（パラメトリック）。精度閾値 `GEOMETRY_EPS` 以内で交差とみなす。
-- **`findConnectedComponents`**: 各ストロークをノード、交差を辺としてグラフを構築し、Union-Find または DFS で connected component を列挙する。
-- **`isFullyConnected`**: `findConnectedComponents` の結果が1成分かどうかを返す（`single_path` モードのバリデーションに使用）。
+- **`findConnectedComponents`**: 各ストロークをノード、交差を辺としてグラフを構築し、Union-Find で connected component を列挙する。
 
 ---
 
 ## 4. `buildSinglePath`（`frontend/src/lib/singlePathPostprocess.ts`）
 
-**Chinese Postman アルゴリズム**により、複数ストロークを一筆書き順の `Point[]` に変換する。
+**Chinese Postman アルゴリズム**により、1つの connected component 内の複数ストロークを一筆書き順の `Point[]` に変換する。
 
 ### 入力・出力
 
-- **入力**: 1つの connected component に属するストロークの集合 `Point[][]`。全ストロークが1つの connected component であることが前提（`isFullyConnected` チェック済み）。
+- **入力**: 1つの connected component に属するストロークの集合 `Point[][]`。
 - **出力**: `Point[]`（一筆書き順の点列）。
 
 ### 処理ステップ
@@ -120,15 +102,14 @@ POST /api/debug/optimize
 ```json
 {
   "stroke_components": [
-    [{"x": 0.1, "y": 0.3}, ...],   // component 0（buildSinglePath 済み Point[]）
-    [{"x": 0.8, "y": 0.2}, ...]    // component 1（同上）
-  ],
-  "stroke_mode": "free_draw"
+    [{"x": 0.1, "y": 0.3}, ...],
+    [{"x": 0.8, "y": 0.2}, ...]
+  ]
 }
 ```
 
 - `x`, `y` はキャンバス正規化座標（[0, 1] 付近）
 - 各 component はすでに `buildSinglePath` による **一筆書き済みの `Point[]`** なので、バックエンドでの順序再構成は不要
-- 旧フォーマット `stroke_points: [...]`（`stroke_components` が null のとき）も後退互換として受け付ける
+- `stroke_components` は 1 件以上必須
 
 詳細な API スキーマとルーティングは [`debug.md`](./debug.md)、バックエンド側の最適化ロジックは [`optimization.md`](./optimization.md) を参照。
