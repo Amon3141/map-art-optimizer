@@ -3,7 +3,11 @@ import { MdOutlineDraw } from 'react-icons/md'
 import { SketchModal } from '../../components/SketchModal'
 import { SketchPreview } from '../../components/SketchPreview'
 import { apiUrl } from '../../lib/api'
+import type { Point } from '../../lib/simplify'
+import { buildSinglePath } from '../../lib/singlePathPostprocess'
+import { findConnectedComponents } from '../../lib/strokeConnectivity'
 import type { StrokeData } from '../../lib/strokeTypes'
+import { SinglePathDebugPreview } from './SinglePathDebugPreview'
 import {
   normalizeGraphBuildOptions,
   type GraphBuildOptionsPayload,
@@ -117,6 +121,8 @@ export function DebugOptimizePanel({
 }: DebugOptimizePanelProps) {
   const [sketchOpen, setSketchOpen] = useState(false)
   const [strokeData, setStrokeData] = useState<StrokeData | null>(null)
+  const [processedComponents, setProcessedComponents] = useState<Point[][] | null>(null)
+  const [showDebugPreview, setShowDebugPreview] = useState(true)
   const [seed, setSeed] = useState(DEFAULT_ANNEAL_SEED)
   const [budgetSeconds, setBudgetSeconds] = useState(DEFAULT_OPTIMIZATION_BUDGET_SECONDS)
   const [maxIterations, setMaxIterations] = useState(DEFAULT_MAX_ITERATIONS)
@@ -210,11 +216,8 @@ export function DebugOptimizePanel({
       setError('道路データ・手書きの形の両方が必要です。')
       return
     }
-    // 一筆書きモード: 全ストロークを描画順に結合。自由描画モード: 最初のストロークのみ送信
-    const strokeForBackend =
-      strokeData.strokeMode === 'single_path'
-        ? strokeData.strokes.flat()
-        : (strokeData.strokes[0] ?? [])
+    // 各コンポーネントを後処理済みの一筆書きパスに変換済み。バックエンドは最初のコンポーネントのみ送信
+    const strokeForBackend = processedComponents?.[0] ?? strokeData.strokes[0] ?? []
     if (strokeForBackend.length < 2) {
       setError('有効なストロークがありません。')
       return
@@ -317,15 +320,42 @@ export function DebugOptimizePanel({
             </button>
             {hasShape && strokeData ? (
               <>
-                {strokeData.strokeMode === 'free_draw' && strokeData.strokes.length > 1 && (
-                  <p className="text-[11px] text-stone-500">
-                    自由描画モード: 最初のコンポーネントのみ送信します（マルチコンポーネント対応は準備中）
-                  </p>
+                {strokeData.strokeMode === 'free_draw' &&
+                  (processedComponents?.length ?? 0) > 1 && (
+                    <p className="text-[11px] text-stone-500">
+                      自由描画モード: 最初のコンポーネントのみ送信します（マルチコンポーネント対応は準備中）
+                    </p>
+                  )}
+                {processedComponents ? (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] text-stone-500">後処理済みパス</p>
+                      <button
+                        type="button"
+                        className="rounded px-1.5 py-0.5 text-[10px] font-medium text-stone-400 hover:bg-stone-100 hover:text-stone-600"
+                        onClick={() => setShowDebugPreview((v) => !v)}
+                      >
+                        {showDebugPreview ? '通常表示' : '巡回順'}
+                      </button>
+                    </div>
+                    {showDebugPreview ? (
+                      <SinglePathDebugPreview
+                        paths={processedComponents}
+                        className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                      />
+                    ) : (
+                      <SketchPreview
+                        strokes={processedComponents}
+                        className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <SketchPreview
+                    strokes={strokeData.strokes}
+                    className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                  />
                 )}
-                <SketchPreview
-                  strokes={strokeData.strokes}
-                  className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
-                />
               </>
             ) : null}
           </div>
@@ -718,6 +748,14 @@ export function DebugOptimizePanel({
           onClose={() => setSketchOpen(false)}
           onConfirm={(data) => {
             setStrokeData(data)
+            if (data.strokeMode === 'single_path') {
+              setProcessedComponents([buildSinglePath(data.strokes)])
+            } else {
+              const comps = findConnectedComponents(data.strokes)
+              setProcessedComponents(
+                comps.map((indices) => buildSinglePath(indices.map((i) => data.strokes[i]))),
+              )
+            }
             setSketchOpen(false)
           }}
         />

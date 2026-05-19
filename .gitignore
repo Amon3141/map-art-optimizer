@@ -14,3 +14,5 @@ backend/__pycache__/
 
 .cursor/
 .claude/
+
+CLAUDE.md

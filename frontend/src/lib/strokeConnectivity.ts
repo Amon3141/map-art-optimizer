@@ -1,33 +1,48 @@
 import type { Point } from './simplify'
 
-/** 2線分 [a1,a2] と [b1,b2] が交差または接しているか（端点含む） */
-function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
+export const GEOMETRY_EPS = 1e-10
+
+/**
+ * 2線分 [a1,a2] と [b1,b2] の交差パラメータを返す。
+ * 平行 or 非交差なら null。t は線分A、u は線分B 上のパラメータ（0..1）。
+ * 端点交差も含む（eps を考慮）。
+ */
+export function segmentIntersectionParam(
+  a1: Point,
+  a2: Point,
+  b1: Point,
+  b2: Point,
+): { t: number; u: number } | null {
   const dx1 = a2.x - a1.x
   const dy1 = a2.y - a1.y
   const dx2 = b2.x - b1.x
   const dy2 = b2.y - b1.y
 
   const denom = dx1 * dy2 - dy1 * dx2
-  const eps = 1e-10
-
-  if (Math.abs(denom) < eps) {
-    // 平行・重なりは端点チェックのみ（距離ゼロ判定）
-    return (
-      pointOnSegment(a1, b1, b2) ||
-      pointOnSegment(a2, b1, b2) ||
-      pointOnSegment(b1, a1, a2) ||
-      pointOnSegment(b2, a1, a2)
-    )
-  }
+  if (Math.abs(denom) < GEOMETRY_EPS) return null
 
   const t = ((b1.x - a1.x) * dy2 - (b1.y - a1.y) * dx2) / denom
   const u = ((b1.x - a1.x) * dy1 - (b1.y - a1.y) * dx1) / denom
 
-  return t >= -eps && t <= 1 + eps && u >= -eps && u <= 1 + eps
+  if (t < -GEOMETRY_EPS || t > 1 + GEOMETRY_EPS || u < -GEOMETRY_EPS || u > 1 + GEOMETRY_EPS)
+    return null
+  return { t, u }
+}
+
+/** 2線分 [a1,a2] と [b1,b2] が交差または接しているか（端点含む） */
+function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
+  if (segmentIntersectionParam(a1, a2, b1, b2) !== null) return true
+  // 平行・重なりの場合は端点チェック
+  return (
+    pointOnSegment(a1, b1, b2) ||
+    pointOnSegment(a2, b1, b2) ||
+    pointOnSegment(b1, a1, a2) ||
+    pointOnSegment(b2, a1, a2)
+  )
 }
 
 function pointOnSegment(p: Point, a: Point, b: Point): boolean {
-  const eps = 1e-10
+  const eps = GEOMETRY_EPS
   const minX = Math.min(a.x, b.x) - eps
   const maxX = Math.max(a.x, b.x) + eps
   const minY = Math.min(a.y, b.y) - eps
