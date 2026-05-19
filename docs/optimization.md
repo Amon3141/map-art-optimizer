@@ -1,221 +1,319 @@
 # 最適化（設計メモ）
 
-**現状:** プロダクト用の本番 API は未着手だが、**デバッグ用にスナップ元のマルチスタート焼きなましが実装済み**（`backend/app/optimization/`、`POST /api/debug/optimize`）。要件・懸念・未決定のメモに加え、**セクション 8 に現行実装**を書く。確定判断の時系列は `docs/decisions.md` にも追記する。
+**現状:** デバッグ用にスナップ元のマルチスタート焼きなましが実装済み（`backend/app/optimization/`、`POST /api/debug/optimize`）。シングルコンポーネント（1本のパス）とマルチコンポーネント（複数の独立ストローク）の両方をサポートする。
 
 ---
 
 ## 1. この文書の位置づけ
 
 | 書くこと | まだ書かないこと |
-|----------|------------------|
-| プロダクトとして満たしたい性質、制約、データの出所 | 本番向けの確定版としての性能保証 |
-| API の形（GeoJSON 等）、`properties` の方針 | 評価関数の最終的な重み調整の結論 |
-| 懸念（形の一致と走行性など） | 実装完了の保証や性能見積り |
-| **セクション 8:** 現行ベースライン実装の要約 | 上記ベースライン以外の未実装範囲の細目 |
+|---|---|
+| 最適化アルゴリズムの要件・制約 | 本番向けの性能保証 |
+| API スキーマ・スコア項の定義 | 評価関数の最終的な重み調整の結論 |
+| セクション 8: 現行実装の詳細 | 本番 `/api` エンドポイントの詳細 |
 
 ---
 
 ## 2. プロダクト上の狙い（最適化に関わる部分）
 
-- **入力**: キャンバス上の**単一ストローク（手書き）のみ**。探索エリア内で **位置・回転・スケール** を調べ、道路ネット上で「絵」に近い**一連のルート**を探す。
-- **出力**: **複数候補**をユーザーに提示できるようにする（ランキングや選択の余地）。
-- **距離**: 目安として整数 km（**±2 km 程度**のゆるさは将来目標。実装段階で要検証）。
+- **入力**: キャンバス上の形（手書き・ペン・テキスト）。探索エリア内で**位置・回転・スケール**を調べ、道路ネット上で「絵」に近い一連のルートを探す。複数の独立したストロークコンポーネントも対応。
+- **出力**: 候補ルートの GeoJSON（現状はベスト 1 本）。将来は複数候補のランキング提示を予定。
+- **距離**: 目安として整数 km（±2 km 程度の許容は将来目標）。
 
-詳細のスコープ／非目標は `docs/product.md` を参照。
+詳細スコープは `docs/product.md` を参照。
 
 ---
 
 ## 3. 要件（機能）
 
-### 3.1 インプット（想定）
+### 3.1 インプット
 
-- フロントで **Douglas–Peucker 等により簡略化済みの点列**（キャンバス上の正規化座標など）、**探索エリア**（bbox または中心＋半径）、**距離の目安**。
+- フロントで簡略化・前処理済みの点列（キャンバス正規化座標）。
+- 1本の一筆書きパス（`single_path`）または複数の独立コンポーネント（`free_draw`）。
+- 探索エリア（bbox）と道路グラフ（Overpass 由来）。
+
+詳しいフロント側の前処理（Chinese Postman、connected components）は [`input_shape.md`](./input_shape.md) を参照。
 
 ### 3.2 アウトプット（API）
 
-- **正（canonical）**: **GeoJSON `FeatureCollection`**（WGS84）。
-- **ジオメトリ**: 候補ごとに **`LineString`**、座標は **`[経度, 緯度]`**。
-- **候補と Feature の対応**: **ルート候補 1 本につき `Feature` を 1 つ**。
+- **正（canonical）**: GeoJSON `FeatureCollection`（WGS84）。
+- **ジオメトリ**: 候補ごとに `LineString`、座標は `[経度, 緯度]`。
+- **候補と Feature の対応**: ルート候補 1 本につき `Feature` を 1 つ。マルチコンポーネント時は全コンポーネントのルートを結合した `LineString` が返る。
 
 ### 3.3 `properties` の方針
 
-- **目的**: 最適化の**結果を追跡・デバッグ・UI 表示**に使う。スキーマの細目はアルゴリズム確定後に固める。
-- **載せたい情報の例**（レベル感の合意のみ）:
-  - 適用した幾何変換（例: 回転角、スケール、平行移動）
-  - 評価スコア（定義はアルゴリズム依存）
-  - ルート長（例: `length_km`、**単位を明示**）
-- **検討課題**: `rank` / `candidate_id` の要否など。
-
-### 3.4 地図・他フォーマットとの関係
-
-- **Google マップ等での表示**: **折れ線オーバーレイ**（Directions API のルート形式に寄せる必要はない）。GeoJSON の `LineString` をクライアントで Polyline／Data レイヤに載せればよい。
-- **KML / GPX**: **後処理で GeoJSON から変換可能**（`ogr2ogr`、言語別ライブラリなど）。座標は GeoJSON が `[lon, lat]`、KML は多くの場合 `lat,lon` 順なので変換時に注意。スタイルは別途。
-- プロダクト上、GPX／KML の**製品仕様としての確定**はまだ先でも、**内部表現を GeoJSON に統一**しておけばエクスポートは差し替えやすい。
-
-**GeoJSON → KML の後処理例（参考）**
-
-- GDAL: `ogr2ogr -f KML out.kml in.geojson`
-- Python: `fiona` / `geopandas` 等
-- Node: GeoJSON → KML 用ライブラリ、または `LineString` を `<Placemark>` にマップ
+スキーマの細目はアルゴリズム確定後に固める。含めたい情報: 幾何変換（回転角・スケール・並進）、評価スコア、ルート長（単位明示）。
 
 ---
 
-## 4. 制約条件（考えるべき点）
+## 4. 制約条件
 
 ### 4.1 道路ネットのみ
 
-- **ルートは「地図上で通行可能な線」に沿う**必要がある（徒歩・自転車・走行のどれを主対象にするかは未確定）。
-- **データの出所**: 本リポジトリでは **OpenStreetMap を Overpass で取得し、FastAPI がプロキシ**する方針（`docs/architecture.md`）。最適化バックエンドも同系統のデータをグラフ化して使う想定。
-- **保持形式（イメージ）**: **グラフ**（交差点＝ノード、道路セグメント＝エッジ）。エッジに OSM の **`highway=*`** 等を載せ、許可する道路種別・ペナルティを後から調整できるようにする。
-- **座標系**: 幾何計算（距離・スナップ・類似度）は **局所平面座標（メートル）** に投影してから行うと安定しやすい（実装詳細は未確定）。
+ルートは地図上で通行可能な線に沿う。データは OSM を Overpass で取得し FastAPI がプロキシ（`docs/architecture.md`）。
 
-### 4.2 「一筆書き」
+### 4.2 一筆書き
 
-- **意図**: ユーザーが描いたのと同様、**切れ目のない一本の連続パス**として表現されること。
-- **厳しさの段階**: グラフ理論の **オイラー路・全域走査**まで要求すると制約が極端に硬くなる可能性がある。**初期スコープは「単一の連続パス（開いた線でよい）」**に寄せ、必要なら後から制約を強める、という切り分けを検討する。
+各コンポーネント内のルートは切れ目のない連続パスとする。フロントの `buildSinglePath`（Chinese Postman）で一筆書き化済みの点列を受け取る前提であり、バックエンドでの再構成は行わない。
 
 ### 4.3 距離
 
-- ユーザー指定の**目標長さ**に対し、実際のグラフ上の長さが**許容範囲に入る**こと。閾値は実装・調整で決める。
+ユーザー指定の目標長さに対し、グラフ上の実長が許容範囲に入ること（閾値は未確定）。
 
 ---
 
-## 5. 評価・目的関数まわりの懸念（重要）
+## 5. 評価・目的関数まわりの懸念
 
 ### 5.1 「形が近い」と「走るのに適している」は別軸
 
-- ヒューリスティックで**ターゲット形状に幾何的に近い**ルートが出ても、**現実に走りたいルート**とは限らない。
-- **例**: 曲がり角が多すぎる、極端に細い道・非推奨タグの道を踏みすぎる、など。
-
-→ **対策の方向性（未確定・併用可）**
-
-- 目的関数を **複数項**に分ける（形状類似度、長さ違反ペナルティ、**旋回・曲がり角ペナルティ**、**道路種別コスト** 等）。
-- または **段階的**: まず候補を生成し、**走行性でフィルタ／再ランキング**する。
+- 目的関数は複数項に分ける（形状類似度・旋回ペナルティ・道路種別コスト等）。
+- または段階的: まず候補を生成し、走行性でフィルタ／再ランキング。
 
 ### 5.2 完全一致より「人間の認識に近い柔軟さ」
 
-- 人間はしばしば、**頂点の角度・辺の長さが少し違っても**、**つながりと大まかな配置**が同じなら**同じ形**として認識する。
-- **ピクセル級・座標級に一致させすぎる**と、探索空間が狭くなり、**制約の中で歪んだだけのルート**になりやすい懸念がある。
-
-→ **対策の方向性（未確定）**
-
-- 形状類似度は **粗いサンプリング・トポロジ／順序を保った対応**・曲線距離（Fréchet / DTW 等）など、**過度に細かい一致を強制しない**設計を検討する。
-- **認識（似ているか）**と**走行性**を**別レイヤ**で考え、あとで重み付けする発想。
+- 形状類似度は粗いサンプリング・順序対応距離など、過度な一致を強制しない設計を検討。
+- 認識（似ているか）と走行性を別レイヤで考え、後から重み付け。
 
 ---
 
-## 6. メタヒューリスティック・探索の方向（確定ではない）
+## 6. メタヒューリスティック・探索の方向
 
-- **焼きなまし法をメインにする**案は、**状態と近傍の定義がはっきりすれば**現実的な候補の一つ。
-- **状態**の例: 平面の **平行移動・回転・スケール** と、**道路グラフ上のパスやスナップ結果**の組み合わせ。
-- **近傍**の例: 変換パラメータの摂動、別エッジ列への差し替え、など。
-- **制約**（通行可能辺のみ・連続パス・長さ）は、**ペナルティ法**で緩く入れてから絞る手法も検討余地あり。
-
-具体的な擬似コード・冷却スケジュールは **アルゴリズム選定後**に本ファイルまたは実装とともに追記する。**デバッグ用ベースラインの概要はセクション 8。**
+- **焼きなまし法**: 状態 `(theta, scale, tx, ty)` を摂動し、スナップ後評価でベスト候補を探索。マルチスタート（ランダム初期解を複数試す）で多様性を確保。
+- **マルチコンポーネント（ジョイント SA）**: グローバル変換 1 本と、コンポーネントごとのローカルオフセット `(dx, dy)` を joint に最適化。
 
 ---
 
 ## 7. 実装フェーズで試すアルゴリズムの方向性（メモ・未確定）
 
-確定採用ではなく、**足がかり**として挙げていた案。
-
-1. **離散探索（グリッド／サンプリング）** — 位置・角度・スケールを粗く総当たりし、スナップ後にスコア。デバッグしやすい。
-2. **道路グラフ上の形状マッチング（粗い版）** — Fréchet / DTW、点とグラフの距離の和 等。
+1. **離散探索（グリッド／サンプリング）** — 位置・角度・スケールを粗く総当たりし、スナップ後にスコア。
+2. **道路グラフ上の形状マッチング（粗い版）** — Fréchet / DTW、点とグラフの距離の和等。
 3. **貪欲スナップ＋ローカル探索** — 最近傍スナップ後に変換のみ焼きなまし等。
-4. **（長期的）ルーティング埋め込み** — セグメント間を最短経路で埋める。グラフ基盤が整ってから。
-
-**推奨進め方**: **小さい bbox・辺数が少ないデータ**で、**可視化・長さ制約・連続パス**が通るパイプラインを先に作り、評価項を段階的に足す。
+4. **（長期的）ルーティング埋め込み** — セグメント間を最短経路で埋める。
 
 ---
 
 ## 8. 実装ベースライン（現状）
 
-デバッグ検証用。スナップ元の状態 `(theta, scale, tx, ty)` を複数のランダム初期解から始める**マルチスタート焼きなまし**で遷移させ、各状態を smooth DP スナップ後に評価してベスト候補を 1 本返す。`docs/debug.md` の方針どおり **`app/optimization/` に本体**、`app/debug/routes.py` は薄い POST のみ。
-
 ### 8.1 コード配置
 
 | パス | 役割 |
-|------|------|
-| `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、スケールクリップ域、評価重みの既定 |
-| `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult` |
-| `backend/app/optimization/transform.py` | ストロークをグラフ内にフィットした基準折れ線 → 中心周りの回転・等方スケール・平行移動 |
-| `backend/app/optimization/snap_route.py` | 最近傍スナップ、辺ごとの smooth DP スナップ、Dijkstra フォールバック、折れ線連結 |
+|---|---|
+| `backend/app/optimization/constants.py` | `ROUTE_ARC_SAMPLES`、スケールクリップ域、評価重みの既定、`N_LOCAL_TRIALS_PER_GLOBAL` |
+| `backend/app/optimization/defaults.py` | `AnnealOptions` の既定値（フロントの `optimizationDefaults.ts` と同値を保つこと） |
+| `backend/app/optimization/types.py` | `Transform`, `OptimizeWeights`, `AnnealOptions`, `ScoreBreakdown`, `TraceStep`, `OptimizeResult`, `JointOptimizeResult` 等 |
+| `backend/app/optimization/transform.py` | ストローク → グラフ内基準折れ線変換、`apply_transform`、`graph_center_m` 等 |
+| `backend/app/optimization/snap_route.py` | 最近傍スナップ、smooth DP スナップ、Dijkstra フォールバック、折れ線連結 |
 | `backend/app/optimization/scoring.py` | スナップ元評価・順序対応形状項・coverage 形状項・到達不能の加重和 |
-| `backend/app/optimization/anneal.py` | `simulated_annealing_search`（1 試行分の焼きなまし） |
-| `backend/app/optimization/run.py` | `run_simulated_annealing`（マルチスタート orchestration）、GeoJSON 化 |
-| `backend/tests/test_optimization.py` | スモーク |
+| `backend/app/optimization/anneal.py` | `simulated_annealing_search`（シングル 1 試行）、`joint_simulated_annealing_search`（マルチコンポーネント 1 試行） |
+| `backend/app/optimization/run.py` | `run_simulated_annealing`（シングル・マルチスタート）、`run_joint_simulated_annealing`（ジョイント・マルチスタート）、GeoJSON 化 |
+| `backend/app/debug/routes.py` | `POST /api/debug/optimize`（薄い層として上記を呼ぶ） |
+| `backend/tests/test_optimization.py` | スモークテスト |
 
 ### 8.2 API（デバッグのみ）
 
-- **`POST /api/debug/optimize`**（[`backend/app/debug/routes.py`](backend/app/debug/routes.py)）
-- リクエストは **`POST /api/debug/graph-preview` と同型**に加え、`stroke_points` を付与。
-- 任意: `weights`, `anneal`, `record_trace`
-  - `weights`: `source_rotation`, `source_scale`, `shape_distance`, `route_length`, `edge_count`, `turn`, `unreachable`
-  - `anneal`: `optimization_budget_seconds`, `seed`, `max_iterations`, `restart_count`（初期解の数・試行数）, `ignore_optimization_budget`（`true` のとき時間予算による打ち切りを行わない）, `ignore_source_rotation`, `initial_temperature`, `final_temperature`, `translation_step_m_ratio`, `rotation_step_rad`, `log_scale_step`, `trace_stride`
-- サーバ内で `build_graph_from_geojson` を再度実行し、**同一条件なら `graph-preview` と同一 `RoadGraph`**。
+**`POST /api/debug/optimize`**
+
+#### リクエスト
+
+グラフ入力（`graph-preview` と同型）に加えて:
+
+```jsonc
+{
+  // 新フォーマット（優先）
+  "stroke_components": [
+    [{"x": 0.1, "y": 0.3}, ...],  // buildSinglePath 済み Point[]
+    [{"x": 0.8, "y": 0.2}, ...]   // コンポーネント数は 1 以上
+  ],
+  "stroke_mode": "single_path" | "free_draw",
+
+  // 旧フォーマット（後退互換。stroke_components が null のとき参照）
+  "stroke_points": [{"x": ..., "y": ...}, ...],
+
+  // 省略可
+  "weights": { /* OptimizeWeightsBody */ },
+  "anneal":  { /* AnnealOptionsBody  */ },
+  "record_trace": true
+}
+```
+
+`stroke_components` が `null` かつ `stroke_points` が空の場合は 400 エラー。
+
+#### `AnnealOptionsBody` フィールド
+
+| フィールド | 既定 | 説明 |
+|---|---|---|
+| `optimization_budget_seconds` | 10.0 | 全試行の合計時間上限（秒） |
+| `seed` | 0 | RNG シード |
+| `max_iterations` | 250 | 試行ごとの最大反復数 |
+| `restart_count` | 1 | 初期解（試行）の数 |
+| `ignore_optimization_budget` | false | true のとき時間打ち切りなし |
+| `ignore_source_rotation` | false | true のとき `source_rotation` 項を無視 |
+| `initial_temperature` | 0.05 | 温度スケジュールの初期温度 |
+| `final_temperature` | 0.001 | 温度スケジュールの最終温度 |
+| `translation_step_m_ratio` | 0.08 | 並進摂動幅 ÷ グラフ span |
+| `rotation_step_rad` | 0.35 | 回転摂動幅（ラジアン） |
+| `log_scale_step` | 0.12 | 対数スケール摂動幅 |
+| `trace_stride` | 5 | トレース記録間隔（ステップ数） |
+
+> **注意:** `n_local_trials`（後述）は現状 `AnnealOptionsBody` に公開されていない。バックエンド内部で `DEFAULT_N_LOCAL_TRIALS = 4` が使われる。
+
+#### `OptimizeWeightsBody` フィールド
+
+| フィールド | 既定 | 説明 |
+|---|---|---|
+| `source_rotation` | 0.38 | 入力の向きを保つ回転角ペナルティ |
+| `source_scale` | 0.02 | `abs(log(scale))`（スケールずれ） |
+| `shape_distance` | 1.0 | 順序対応距離 + coverage 距離（双方向） |
+| `turn` | 0.0 | 旋回ペナルティ（現在は無効） |
+| `unreachable` | 1e6 | 連結失敗ペナルティ |
+| `out_of_graph` | 2.0 | グラフ bbox 外への逸脱ペナルティ |
+| `dijkstra_fallback` | 0.3 | Dijkstra フォールバック率ペナルティ |
+| `local_offset` | 0.5 | ローカルオフセットのノルムペナルティ（マルチコンポーネント時のみ有効） |
 
 ### 8.3 探索（焼きなまし）
 
-- **状態**: `theta_rad`, `scale`, `tx_m`, `ty_m`。
-- **初期解**: 各試行ごとにランダム生成する。`theta` は `[-pi, pi]`、`scale` はクリップ範囲内の log-uniform、`tx/ty` はグラフ span に応じた範囲からサンプリングする。
-- **遷移**: 回転・対数スケール・並進を小さく摂動する。遷移幅は温度に連動し、終盤ほど局所探索へ寄る。
-- **採択**: 改善は必ず採択、悪化は `exp(-delta / temperature)` で採択する。温度は `initial_temperature` から `final_temperature` へ幾何冷却。
-- **計算量管理**: `max_iterations` は**各試行（初期解）ごと**にそのまま適用する（試行数で割らない）。試行数を増やすと反復は概ね線形に増える。`optimization_budget_seconds` は全試行で共有し、時間切れの試行は途中で打ち切られる（`ignore_optimization_budget` が `true` のときは時間予算を使わず、`max_iterations` のみで打ち切る）。
-- **打ち切り**: 各試行では `max_iterations` または共有 `optimization_budget_seconds` の早い方（`ignore_optimization_budget` 時は反復上限のみ）。
+#### シングルコンポーネント（`simulated_annealing_search`）
+
+- **状態**: グローバル変換 `(theta_rad, scale, tx_m, ty_m)`。
+- **遷移関数** `_propose_state`: translate / rotate / scale の中からランダムに 1 種（または 2 種の compound）を選び、Gaussian ノイズを加える。摂動幅は温度比に連動（`step_scale = 0.2 + 0.8 * sqrt(temp_ratio)`）。
+- **採択**: 改善は必ず採択。悪化は `exp(-delta / temperature)` で確率採択。温度は初期 → 最終へ幾何冷却。
+- **Basin hopping**: 温度比 > 0.5 かつ確率 5% でランダム変換に飛ぶ。
+
+#### マルチコンポーネント・ジョイント SA（`joint_simulated_annealing_search`）
+
+- **状態**: グローバル変換 `(theta_rad, scale, tx_m, ty_m)` + コンポーネントごとのローカルオフセット `(dx_m, dy_m)`。
+- **評価**: `apply_transform(base, global_t, center)` → 各コンポーネントに `(dx, dy)` を加算 → スナップ → `score_route`。スコアは弧長で正規化した加重平均 + ローカルオフセットペナルティ（`local_offset` 重み）。
+- **遷移関数（ジョイント）**:
+  1. `_propose_global_t`: グローバル変換のみを摂動（`single_path` と同じ move selection）。ローカルは動かさない。
+  2. **n_local_trials**: その global 変換を固定したまま、ローカルオフセットを `n_local_trials`（既定 4）回独立にサンプル（各軸 `N(0, local_sigma)`, `local_sigma = max(span_x, span_y) * 0.02`）し、最良スコアを proposal として採択判定に使う。
+
+  > **設計意図**: global 位置が良くても local offset の 1 サンプルが外れると不当に reject されていた問題を解消する（Rao-Blackwellization 的アプローチ）。`n_local_trials=1` にすれば従来と等価。
+
+- **Basin hopping（ジョイント）**: ランダムな global 変換 + ゼロオフセット（ローカル trials なし）。
+
+#### 共通
+
+- **計算量管理**: `max_iterations` は各試行ごとにそのまま適用（試行数で割らない）。`optimization_budget_seconds` は全試行で共有し、時間切れの試行は途中打ち切り（`ignore_optimization_budget=true` のときは反復上限のみ）。
 - **`optimizer_meta.search`**: `multistart_simulated_annealing`。
 
-### 8.4 ターゲット折れ線 → グラフ上ルート
+### 8.4 初期解生成（グリッド探索）
 
-1. 変換後の平面折れ線。2. ノード空間 index からスナップ元の各辺周辺のグラフ頂点を抽出。3. 辺方向の射影順に DAG として扱い、角度ズレ・横方向ズレ・長さをコストに smooth DP。4. 失敗時のみ区間 **Dijkstra** にフォールバック。5. 到達不能はペナルティ。
+全試行の前に、`optimization_budget_seconds * 0.15` の時間を使って粗いグリッド探索を行い、スコア上位の変換を初期解候補とする（`run.py: _coarse_grid_search`）。
 
-### 8.5 スコア（最小化）
+- 4×4 位置グリッド × 3 角度 × 1 スケール = 最大 48 評価点
+- 多様性を保つ diversity-aware 選択で `restart_count` 個に絞る
+- ジョイント SA では最大弧長のコンポーネントを基準にグリッド探索
 
-| 項 | 意味（概要） |
-|----|----------------|
-| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。絶対角度 30 度までは 0、超過分を `SOURCE_ROTATION_NORMALIZATION_DEG` で正規化する。`ignore_source_rotation` で無効化可能。 |
-| `source_scale` | スナップ元のスケール評価。`abs(log(scale))`（1 倍からの相対ズレ）。 |
-| `shape_distance` | スナップ元とルートの **弧長順序対応距離 + coverage 距離**（無次元化）。 |
-| `route_length` | 実ルート長 ÷ bbox 対角。既定重みは 0 で、必要なら `weights` で上げる。 |
-| `edge_count` | 辺数 ÷ `ROUTE_ARC_SAMPLES`。既定重みは 0。 |
-| `turn` | 旋回ペナルティ（折れ角の正規化）。既定重みは 0。 |
+### 8.5 ターゲット折れ線 → グラフ上ルート
+
+1. 変換後の平面折れ線。
+2. ノード空間 index から辺周辺のグラフ頂点を抽出。
+3. 辺方向の射影順に DAG として扱い、角度ズレ・横方向ズレ・長さをコストに smooth DP。
+4. 失敗時のみ区間 Dijkstra にフォールバック。
+5. 到達不能はペナルティ。
+
+### 8.6 スコア項（最小化）
+
+| 項 | 説明 |
+|---|---|
+| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。絶対角度 30° までは 0、超過分を `SOURCE_ROTATION_NORMALIZATION_DEG`（= 150°）で正規化。`ignore_source_rotation` で無効化可能。 |
+| `source_scale` | `abs(log(scale))`（1 倍からの相対ズレ）。 |
+| `shape_distance` | スナップ元とルートの双方向チャンファー距離（弧長順序対応 + coverage）。 |
+| `turn` | 旋回ペナルティ。既定重みは 0（無効）。 |
 | `unreachable` | 連結失敗時 1。 |
+| `out_of_graph` | 変換後折れ線がグラフ bbox 外へ出た割合（SA の勾配として機能）。 |
+| `dijkstra_fallback` | ルート構築で Dijkstra フォールバックした区間の割合。 |
+| `local_offset`（ジョイントのみ） | ローカルオフセットの合計ノルム ÷ グラフ対角。相対位置のずれすぎを抑制する。 |
 
-### 8.6 トレース
+### 8.7 トレース
 
-- 各試行ごとに、初期 step、`trace_stride` ごとの step、best 更新 step を保存する。各 step は `temperature`, `accepted`, `score_total`, `score_terms`, `transform`, `edge_ids` を持つ。
-- 各試行の summary には `initial_transform`, `best_transform`, `best_score`, `best_breakdown`, `iterations_planned`, `iterations_completed`, `accepted_moves`, `acceptance_rate` を含める。
+各試行ごとに以下を保存（`record_trace=true` のとき）:
+- 初期 step、`trace_stride` ごとの step、best 更新 step。
+- 各 step は `temperature`, `accepted`, `score_total`, `score_terms`, `transform`, `edge_ids` を持つ。
+- **マルチコンポーネント時**: `edge_ids_per_component`（コンポーネントごとの edge_ids リスト）も付与される。
 
-### 8.7 レスポンス（デバッグ）
+各試行 summary: `initial_transform`, `best_transform`, `best_score`, `best_breakdown`, `iterations_planned`, `iterations_completed`, `accepted_moves`, `acceptance_rate`, `deadline_hit`。
 
-- `candidates_geojson`, `best_score`, `best_breakdown`, `best_restart_index`, **`route_length_m` / `route_length_km`**（ベストルートのグラフ上幾何長・実距離）, `optimizer_meta`, `restarts[]`。
-- `optimizer_meta` には `max_iterations_per_restart`（`anneal.max_iterations` を各試行にそのまま適用したときの計画反復数）などを含む。
-- `restarts[]` は各試行の summary と `trace_steps[]` を持つ。旧 `steps[]` 互換は持たない。
+トレースの UI 表示・保存方法は [`debug.md`](./debug.md) を参照。
 
-### 8.8 フロント（デバッグ UI）
+### 8.8 レスポンス（デバッグ）
 
-- [`DebugOptimizePanel.tsx`](frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましの温度・反復数・初期解の数・角度無視・遷移幅オプション、実行中の経過秒表示、ベスト試行と試行別 trace 表示。
+```jsonc
+{
+  "trace_format_version": 2,
+  "projection": { "lon0": ..., "lat0": ..., "mode": "local_tangent_plane" },
+  "stats": { /* グラフ統計 */ },
 
-### 8.9 あえて未実装／プロダクト要件との差
+  "candidates_geojson": { /* LineString FeatureCollection */ },
+  "best_score": 0.123,
+  "best_breakdown": { "shape_distance": ..., "source_rotation": ..., ... },
+  "best_restart_index": 0,
+  "route_length_m": 4200.0,
+  "route_length_km": 4.2,
+  "optimizer_meta": { "search": "multistart_simulated_annealing", ... },
 
-- **複数候補のランキング提示**（現状はベスト 1 本のみ）。
-- **複数候補の同時提示**（現状はマルチスタートの best 1 本のみを GeoJSON 表示）。
-- **本番用 `/api` エンドポイント**（`/api/debug` のみ）。
-- **反転・一般アフィン変形**（現状は回転・等方スケール・平行移動のみ）。
-- **許容幅付きの距離制約**（±km 帯の完全な二段階最適化など）。
-- **移動モードに沿ったタグ解釈**（Dijkstra は現状幾何距離のみ）。
-- **オイラー路等の厳しい一筆書き制約**。
-- **形状評価の追加候補**（DTW / Fréchet）。
-- **`smooth_dp` の corridor 幅・コスト係数の調整しやすい定数化**。
-- **複合 proposal / 試行ごとの初期分布の改善**。
-- **acceptance rate を使った温度・遷移幅チューニング**。
-- **空 route / 到達不能 route が多い場合の初期解生成・proposal 範囲制約改善**。
+  // 試行ごとの summary + trace
+  "restarts": [
+    {
+      "restart_index": 0,
+      "seed": 42,
+      "initial_transform": { "tx_m": ..., "ty_m": ..., "theta_rad": ..., "scale": ... },
+      "best_transform": { ... },
+      "best_score": 0.123,
+      "best_breakdown": { ... },
+      "route_length_m": 4200.0,
+      "route_length_km": 4.2,
+      "iterations_planned": 250,
+      "iterations_completed": 250,
+      "accepted_moves": 87,
+      "acceptance_rate": 0.348,
+      "deadline_hit": false,
+      "trace_steps": [ /* TraceStep[] */ ]
+    }
+  ],
+
+  // コンポーネントごとのスコア内訳（シングルでも component_index=0 として返す）
+  "components": [
+    {
+      "component_index": 0,
+      "best_score": 0.11,
+      "best_breakdown": { ... },
+      "route_length_m": 2100.0,
+      "route_length_km": 2.1
+    },
+    {
+      "component_index": 1,
+      "best_score": 0.14,
+      "best_breakdown": { ... },
+      "route_length_m": 2100.0,
+      "route_length_km": 2.1
+    }
+  ]
+}
+```
+
+### 8.9 フロント（デバッグ UI）
+
+- [`DebugOptimizePanel.tsx`](../frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましパラメータ入力、実行中の経過秒表示、ベスト試行と試行別 trace 表示、`processedComponents` の管理と送信ロジック。
+- [`SinglePathDebugPreview.tsx`](../frontend/src/debug/components/SinglePathDebugPreview.tsx): 巡回順デバッグ表示（矢印・始終点・交点番号）。
+
+### 8.10 あえて未実装／プロダクト要件との差
+
+- 複数候補のランキング提示（現状はベスト 1 本のみ）
+- 本番用 `/api` エンドポイント（`/api/debug` のみ）
+- 反転・一般アフィン変形（現状は回転・等方スケール・平行移動のみ）
+- 許容幅付きの距離制約
+- 移動モードに沿ったタグ解釈（Dijkstra は幾何距離のみ）
+- 形状評価の追加候補（DTW / Fréchet）
+- `n_local_trials` を UI から調整可能にする
+- acceptance rate を使った温度・遷移幅の自動チューニング
 
 ---
 
-## 9. 未決定・`docs/decisions.md`／本ファイルへ追記するもの
+## 9. 未決定・追記予定
 
-- 徒歩／自転車／車など **どの移動モードを第一に**タグ解釈するか。
-- **形状類似度**と**走行性**の具体的な式と重み。
-- **一筆書き**をどの厳密さ（連続パスのみか、オイラー性までか）で課すか。
+- 徒歩／自転車／車などどの移動モードを第一にタグ解釈するか。
+- 形状類似度と走行性の具体的な式と重み。
+- 一筆書きをどの厳密さ（連続パスのみか、オイラー性までか）で課すか。
 
 確定事項は時系列で `docs/decisions.md` に残し、本ファイルにも短く反映する。

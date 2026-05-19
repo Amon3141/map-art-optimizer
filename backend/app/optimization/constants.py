@@ -13,6 +13,8 @@ WEIGHT_UNREACHABLE: float = 1e6
 WEIGHT_OUT_OF_GRAPH: float = 2.0
 # smooth DP 失敗 → Dijkstra フォールバック率のペナルティ。形状不整合の補助指標。
 WEIGHT_DIJKSTRA_FALLBACK: float = 0.3
+# マルチコンポーネント時のローカルオフセットペナルティ（|offset| / graph_diagonal を正規化済み）。
+WEIGHT_LOCAL_OFFSET: float = 0.5
 
 # 順序対応 shape loss と coverage loss の合成比
 SHAPE_COVERAGE_WEIGHT: float = 0.35
@@ -24,3 +26,6 @@ SOURCE_ROTATION_NORMALIZATION_DEG: float = 150.0
 # 焼きなまし中の等方スケールのクリップ域
 TRANSFORM_SCALE_MIN: float = 0.15
 TRANSFORM_SCALE_MAX: float = 8.0
+
+# ジョイント SA: global perturbation ごとに試す local offset サンプル数
+N_LOCAL_TRIALS_PER_GLOBAL: int = 4

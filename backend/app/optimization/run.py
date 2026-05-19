@@ -9,7 +9,7 @@ from app.osm.projection import xy_m_to_lon_lat
 from app.preprocess.graph_model import RoadGraph
 
 from .constants import ROUTE_ARC_SAMPLES, SOURCE_ROTATION_FREE_DEG, TRANSFORM_SCALE_MAX, TRANSFORM_SCALE_MIN
-from .anneal import simulated_annealing_search
+from .anneal import JointAnnealRunResult, joint_simulated_annealing_search, simulated_annealing_search
 from .snap_route import (
     AnyEdgeSnapIndex,
     NodeSpatialIndexGrid,
@@ -19,9 +19,11 @@ from .snap_route import (
     build_route_from_polyline,
 )
 from .scoring import route_geometric_length_m, score_route
-from .transform import apply_transform, graph_center_m, graph_xy_bounds, stroke_to_base_polyline_m
+from .transform import apply_transform, graph_center_m, graph_xy_bounds, stroke_to_base_polyline_m, strokes_to_base_polylines_m_shared
 from .types import (
     AnnealOptions,
+    ComponentOptimizeResult,
+    JointOptimizeResult,
     OptimizeResult,
     OptimizeWeights,
     RestartResult,
@@ -407,4 +409,229 @@ def run_simulated_annealing(
             **optimizer_meta,
             "restart_summaries": [_restart_to_dict(r) for r in restart_results],
         },
+    )
+
+
+# ---- ジョイント SA（マルチコンポーネント） ----
+
+def _joint_run_to_restart_result(
+    restart_index: int,
+    seed: int,
+    initial_transform: Transform,
+    run: JointAnnealRunResult,
+    graph: RoadGraph,
+) -> RestartResult:
+    """JointAnnealRunResult を既存の RestartResult に変換（デバッグ UI 互換）。
+    スコアと breakdown は最初のコンポーネントのものを使用。"""
+    from .scoring import route_geometric_length_m
+    length_m = route_geometric_length_m(graph, run.routes[0].edge_ids) if run.routes else 0.0
+    bd = run.breakdowns[0] if run.breakdowns else run.breakdowns[0] if run.breakdowns else None
+    from .types import ScoreBreakdown
+    if bd is None:
+        bd = ScoreBreakdown(0.0, 0.0, 1e4, 1e4, 1e4, 1e4, 1.0)
+    return RestartResult(
+        restart_index=restart_index,
+        seed=seed,
+        initial_transform=initial_transform,
+        best_transform=run.global_transform,
+        best_edge_ids=list(run.routes[0].edge_ids) if run.routes else [],
+        best_polyline_xy_m=list(run.routes[0].polyline_xy_m) if run.routes else [],
+        best_score=run.joint_score,
+        best_breakdown=bd,
+        best_route_length_m=length_m,
+        iterations_planned=run.iterations_planned,
+        iterations_completed=run.iterations_completed,
+        accepted_moves=run.accepted_moves,
+        acceptance_rate=run.acceptance_rate,
+        deadline_hit=run.deadline_hit,
+        trace_steps=run.trace_steps,
+    )
+
+
+def run_joint_simulated_annealing(
+    graph: RoadGraph,
+    stroke_components: list[list[dict[str, float]]],
+    lon0: float,
+    lat0: float,
+    weights: OptimizeWeights | None = None,
+    opt: AnnealOptions | None = None,
+    record_trace: bool = True,
+) -> JointOptimizeResult:
+    """複数コンポーネントをジョイント焼きなましで最適化し、JointOptimizeResult を返す。"""
+    o = opt or AnnealOptions()
+    w = weights or OptimizeWeights()
+
+    components = [
+        [StrokePoint(x=float(p["x"]), y=float(p["y"])) for p in comp]
+        for comp in stroke_components
+    ]
+
+    adj = build_adjacency(graph)
+    snap_index = build_edge_snap_index(graph)
+    node_index = build_node_spatial_index(graph)
+
+    budget = max(0.05, float(o.optimization_budget_seconds))
+    start_time = time.monotonic()
+    if o.ignore_optimization_budget:
+        deadline = math.inf
+        grid_deadline = math.inf
+    else:
+        deadline = start_time + budget
+        grid_deadline = start_time + budget * _GRID_BUDGET_FRACTION
+
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    span_x = max(gx1 - gx0, 1.0)
+    span_y = max(gy1 - gy0, 1.0)
+    restart_count = max(1, int(o.restart_count))
+    iterations_per_restart = max(0, int(o.max_iterations))
+
+    # 全コンポーネント共有スケールの base polyline を生成
+    base_polylines = strokes_to_base_polylines_m_shared(components, graph)
+
+    # グリッド探索は最大 arc length のコンポーネントで実施
+    from .anneal import _polyline_arc_length
+    arc_lengths = [_polyline_arc_length(bp) for bp in base_polylines]
+    base_idx = int(max(range(len(arc_lengths)), key=lambda i: arc_lengths[i]))
+    base_stroke = components[base_idx]
+
+    master_rng = random.Random(o.seed)
+    restart_seeds = [master_rng.randrange(0, 2**31) for _ in range(restart_count)]
+
+    grid_candidates = _coarse_grid_search(
+        graph, adj, snap_index, node_index, base_stroke, w, o, span_x, span_y, grid_deadline,
+    )
+    n_grid_candidates = len(grid_candidates)
+
+    _SCORE_FILTER_MARGIN: float = 0.5
+    diverse_candidates = grid_candidates
+    if grid_candidates:
+        best_score = grid_candidates[0][0]
+        cutoff = best_score + _SCORE_FILTER_MARGIN
+        filtered = [(s, t) for s, t in grid_candidates if s <= cutoff]
+        if len(filtered) >= restart_count:
+            diverse_candidates = filtered
+        elif len(grid_candidates) > 1:
+            diverse_candidates = grid_candidates[: max(restart_count, len(grid_candidates) // 2)]
+
+    initial_transforms = _select_diverse_initial_transforms(
+        diverse_candidates, restart_count, span_x, span_y,
+    )
+    while len(initial_transforms) < restart_count:
+        best_t = _random_initial_transform(master_rng, span_x, span_y)
+        if initial_transforms:
+            best_min_dist = min(
+                _normalized_transform_dist(best_t, s, span_x, span_y) for s in initial_transforms
+            )
+        else:
+            best_min_dist = math.inf
+        for _ in range(_DIVERSITY_FILL_TRIES - 1):
+            t = _random_initial_transform(master_rng, span_x, span_y)
+            min_dist = (
+                min(_normalized_transform_dist(t, s, span_x, span_y) for s in initial_transforms)
+                if initial_transforms else math.inf
+            )
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_t = t
+        initial_transforms.append(best_t)
+
+    restart_results: list[RestartResult] = []
+    best_run: JointAnnealRunResult | None = None
+
+    for restart_index in range(restart_count):
+        restart_seed = restart_seeds[restart_index]
+        initial_transform = initial_transforms[restart_index]
+        restart_opt = AnnealOptions(
+            optimization_budget_seconds=o.optimization_budget_seconds,
+            seed=restart_seed,
+            max_iterations=iterations_per_restart,
+            restart_count=1,
+            ignore_optimization_budget=o.ignore_optimization_budget,
+            ignore_source_rotation=o.ignore_source_rotation,
+            initial_temperature=o.initial_temperature,
+            final_temperature=o.final_temperature,
+            translation_step_m_ratio=o.translation_step_m_ratio,
+            rotation_step_rad=o.rotation_step_rad,
+            log_scale_step=o.log_scale_step,
+            trace_stride=o.trace_stride,
+        )
+        run = joint_simulated_annealing_search(
+            graph,
+            base_polylines,
+            w,
+            restart_opt,
+            record_trace=record_trace,
+            initial_transform=initial_transform,
+            adj=adj,
+            snap_index=snap_index,
+            node_index=node_index,
+            deadline=deadline,
+        )
+        restart_results.append(
+            _joint_run_to_restart_result(restart_index, restart_seed, initial_transform, run, graph)
+        )
+        if best_run is None or run.joint_score < best_run.joint_score:
+            best_run = run
+        if time.monotonic() >= deadline:
+            break
+
+    if best_run is None:
+        raise ValueError("joint optimizer produced no results")
+
+    # 各コンポーネントの結果を ComponentOptimizeResult にまとめる
+    from .scoring import route_geometric_length_m
+    comp_results: list[ComponentOptimizeResult] = []
+    merged_features: list[Any] = []
+    for i, (route, bd) in enumerate(zip(best_run.routes, best_run.breakdowns)):
+        length_m = route_geometric_length_m(graph, route.edge_ids)
+        w_score = bd.total(w)
+        comp_results.append(ComponentOptimizeResult(
+            component_index=i,
+            best_edge_ids=list(route.edge_ids),
+            best_polyline_xy_m=list(route.polyline_xy_m),
+            best_score=w_score,
+            best_breakdown=bd,
+            route_length_m=length_m,
+        ))
+        props: dict[str, Any] = {
+            "component_index": i,
+            "length_km": round(length_m / 1000.0, 6),
+            "length_m": length_m,
+            "score_total": w_score,
+            "score_terms": bd.as_dict(),
+        }
+        merged_features.append(_route_to_feature(lon0, lat0, route.polyline_xy_m, props))
+
+    merged_fc: dict[str, Any] = {"type": "FeatureCollection", "features": merged_features}
+
+    best_restart = min(restart_results, key=lambda r: r.best_score)
+    optimizer_meta: dict[str, Any] = {
+        "search": "joint_multistart_simulated_annealing",
+        "seed": o.seed,
+        "max_iterations": o.max_iterations,
+        "max_iterations_per_restart": iterations_per_restart,
+        "restart_count": restart_count,
+        "restarts_completed": len(restart_results),
+        "best_restart_index": best_restart.restart_index,
+        "ignore_source_rotation": o.ignore_source_rotation,
+        "initial_temperature": o.initial_temperature,
+        "final_temperature": o.final_temperature,
+        "optimization_budget_seconds": o.optimization_budget_seconds,
+        "ignore_optimization_budget": o.ignore_optimization_budget,
+        "deadline_hit": (not o.ignore_optimization_budget and time.monotonic() >= deadline)
+            or any(r.deadline_hit for r in restart_results),
+        "grid_search_candidates": n_grid_candidates,
+        "grid_budget_fraction": _GRID_BUDGET_FRACTION,
+        "n_components": len(stroke_components),
+        "restart_summaries": [_restart_to_dict(r) for r in restart_results],
+    }
+
+    return JointOptimizeResult(
+        components=comp_results,
+        best_joint_score=best_run.joint_score,
+        best_transform=best_run.global_transform,
+        best_local_offsets=best_run.local_offsets,
+        candidates_geojson=merged_fc,
+        restart_results=restart_results,
+        optimizer_meta=optimizer_meta,
     )

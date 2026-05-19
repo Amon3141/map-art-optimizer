@@ -22,6 +22,7 @@ from .transform import (
     graph_center_m,
     graph_xy_bounds,
     stroke_to_base_polyline_m,
+    strokes_to_base_polylines_m_shared,
 )
 from .types import (
     AnnealRunResult,
@@ -33,6 +34,43 @@ from .types import (
     TraceStep,
     Transform,
 )
+
+
+# ---- ジョイント SA 用の型 ----
+
+@dataclass
+class JointAnnealState:
+    global_t: Transform
+    local_offsets: list[tuple[float, float]]  # コンポーネントごとの (dx_m, dy_m)
+
+
+@dataclass
+class JointEvaluatedState:
+    state: JointAnnealState
+    routes: list[RouteBuildResult]
+    breakdowns: list[ScoreBreakdown]
+    arc_weights: list[float]
+    joint_score: float
+
+
+@dataclass
+class JointAnnealRunResult:
+    global_transform: Transform
+    local_offsets: list[tuple[float, float]]
+    routes: list[RouteBuildResult]
+    breakdowns: list[ScoreBreakdown]
+    joint_score: float
+    trace_steps: list[TraceStep]
+    iterations_planned: int
+    iterations_completed: int
+    accepted_moves: int
+    deadline_hit: bool
+
+    @property
+    def acceptance_rate(self) -> float:
+        if self.iterations_completed <= 0:
+            return 0.0
+        return self.accepted_moves / float(self.iterations_completed)
 
 
 @dataclass
@@ -269,6 +307,219 @@ def simulated_annealing_search(
         route=best.route,
         breakdown=best.breakdown,
         score=best.score,
+        trace_steps=trace,
+        iterations_planned=max_iterations,
+        iterations_completed=iterations_completed,
+        accepted_moves=accepted_moves,
+        deadline_hit=_over_deadline(deadline),
+    )
+
+
+def _polyline_arc_length(poly: list[tuple[float, float]]) -> float:
+    s = 0.0
+    for i in range(1, len(poly)):
+        dx = poly[i][0] - poly[i - 1][0]
+        dy = poly[i][1] - poly[i - 1][1]
+        s += math.sqrt(dx * dx + dy * dy)
+    return s
+
+
+def _propose_global_t(
+    current_global: Transform,
+    rng: random.Random,
+    opt: AnnealOptions,
+    span_x: float,
+    span_y: float,
+    step_scale: float,
+) -> Transform:
+    t = current_global
+    next_t = Transform(t.tx_m, t.ty_m, t.theta_rad, t.scale)
+    move_type = rng.choice((*_MOVE_TYPES, "compound"))
+    if move_type == "compound":
+        moves = rng.sample(_MOVE_TYPES, 2)
+    else:
+        moves = (move_type,)
+    for move in moves:
+        _apply_single_move(next_t, move, rng, opt, span_x, span_y, step_scale)
+    return next_t
+
+
+def _sample_local_offsets(
+    current_offsets: list[tuple[float, float]],
+    rng: random.Random,
+    local_sigma: float,
+) -> list[tuple[float, float]]:
+    return [
+        (dx + rng.gauss(0.0, local_sigma), dy + rng.gauss(0.0, local_sigma))
+        for dx, dy in current_offsets
+    ]
+
+
+def joint_simulated_annealing_search(
+    graph: RoadGraph,
+    base_polylines: list[list[tuple[float, float]]],
+    weights: OptimizeWeights,
+    opt: AnnealOptions,
+    record_trace: bool = True,
+    initial_transform: Transform | None = None,
+    adj: dict[str, list[tuple[str, str, float]]] | None = None,
+    snap_index: AnyEdgeSnapIndex | None = None,
+    node_index: NodeSpatialIndexGrid | None = None,
+    deadline: float | None = None,
+    local_offset_sigma_ratio: float = 0.02,
+) -> JointAnnealRunResult:
+    """複数コンポーネントをジョイントで焼きなます（1 restart 分）。"""
+    if adj is None:
+        adj = build_adjacency(graph)
+    if snap_index is None:
+        snap_index = build_edge_snap_index(graph)
+    if node_index is None:
+        node_index = build_node_spatial_index(graph)
+
+    center = graph_center_m(graph)
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    span_x = max(gx1 - gx0, 1.0)
+    span_y = max(gy1 - gy0, 1.0)
+    graph_diagonal = math.hypot(span_x, span_y)
+    local_sigma = max(span_x, span_y) * local_offset_sigma_ratio
+
+    arc_weights = [_polyline_arc_length(bp) for bp in base_polylines]
+    total_arc = sum(arc_weights)
+    norm_arc = [w / max(total_arc, 1e-9) for w in arc_weights]
+
+    empty_route = RouteBuildResult([], [], False, 0)
+    bad_breakdown = ScoreBreakdown(0.0, 0.0, 1e4, 1e4, 1e4, 1e4, 1.0)
+
+    def evaluate(state: JointAnnealState) -> JointEvaluatedState:
+        routes: list[RouteBuildResult] = []
+        breakdowns: list[ScoreBreakdown] = []
+        weighted_score = 0.0
+        for i, base in enumerate(base_polylines):
+            if len(base) < 2:
+                routes.append(empty_route)
+                breakdowns.append(bad_breakdown)
+                weighted_score += norm_arc[i] * bad_breakdown.total(weights)
+                continue
+            dx, dy = state.local_offsets[i]
+            poly = apply_transform(base, state.global_t, center)
+            poly = [(x + dx, y + dy) for x, y in poly]
+            route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index)
+            score_i, bd_i = score_route(
+                graph, poly, route, state.global_t, weights,
+                ignore_source_rotation=opt.ignore_source_rotation,
+            )
+            routes.append(route)
+            breakdowns.append(bd_i)
+            weighted_score += norm_arc[i] * score_i
+
+        # ローカルオフセットペナルティ（コンポーネント数 > 1 のときのみ意味あり）
+        if len(state.local_offsets) > 1:
+            offset_penalty = sum(
+                math.hypot(dx, dy) / max(graph_diagonal, 1.0)
+                for dx, dy in state.local_offsets
+            )
+            weighted_score += weights.local_offset * offset_penalty
+
+        return JointEvaluatedState(
+            state=state,
+            routes=routes,
+            breakdowns=breakdowns,
+            arc_weights=arc_weights,
+            joint_score=weighted_score,
+        )
+
+    rng = random.Random(opt.seed)
+    max_iterations = max(0, int(opt.max_iterations))
+    trace_stride = max(1, int(opt.trace_stride))
+
+    n_comps = len(base_polylines)
+    initial_state = JointAnnealState(
+        global_t=initial_transform or Transform(),
+        local_offsets=[(0.0, 0.0)] * n_comps,
+    )
+    current = evaluate(initial_state)
+    best = current
+    trace: list[TraceStep] = []
+    iterations_completed = 0
+    accepted_moves = 0
+
+    if record_trace:
+        trace.append(TraceStep(
+            step_index=0,
+            temperature=_temperature_at(0, max_iterations, opt),
+            accepted=True,
+            score_total=current.joint_score,
+            score_terms=current.breakdowns[0].as_dict() if current.breakdowns else {},
+            transform={"tx_m": initial_state.global_t.tx_m, "ty_m": initial_state.global_t.ty_m,
+                       "theta_rad": initial_state.global_t.theta_rad, "scale": initial_state.global_t.scale},
+            edge_ids=[str(e) for e in (current.routes[0].edge_ids if current.routes else [])],
+            edge_ids_per_component=[[str(e) for e in r.edge_ids] for r in current.routes],
+        ))
+
+    for step in range(1, max_iterations + 1):
+        if _over_deadline(deadline):
+            break
+
+        iterations_completed += 1
+        temperature = _temperature_at(step - 1, max_iterations, opt)
+        temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
+        step_scale = 0.2 + 0.8 * math.sqrt(max(0.0, min(1.0, temp_ratio)))
+
+        if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
+            proposal_state = JointAnnealState(
+                global_t=_random_transform(rng, span_x, span_y),
+                local_offsets=[(0.0, 0.0)] * n_comps,
+            )
+            proposal = evaluate(proposal_state)
+        else:
+            proposed_global = _propose_global_t(
+                current.state.global_t, rng, opt, span_x, span_y, step_scale,
+            )
+            n_local = max(1, opt.n_local_trials)
+            proposal = None
+            for _ in range(n_local):
+                candidate_state = JointAnnealState(
+                    global_t=proposed_global,
+                    local_offsets=_sample_local_offsets(
+                        current.state.local_offsets, rng, local_sigma,
+                    ),
+                )
+                candidate_eval = evaluate(candidate_state)
+                if proposal is None or candidate_eval.joint_score < proposal.joint_score:
+                    proposal = candidate_eval
+        delta = proposal.joint_score - current.joint_score
+        accepted = delta <= 0.0
+        if not accepted:
+            probability = math.exp(-delta / max(temperature, 1e-12))
+            accepted = rng.random() < probability
+
+        if accepted:
+            accepted_moves += 1
+            current = proposal
+            if current.joint_score < best.joint_score:
+                best = current
+
+        best_updated = accepted and current is best
+        should_record = record_trace and (step % trace_stride == 0 or best_updated)
+        if should_record:
+            g = current.state.global_t
+            trace.append(TraceStep(
+                step_index=step,
+                temperature=temperature,
+                accepted=accepted,
+                score_total=current.joint_score,
+                score_terms=current.breakdowns[0].as_dict() if current.breakdowns else {},
+                transform={"tx_m": g.tx_m, "ty_m": g.ty_m, "theta_rad": g.theta_rad, "scale": g.scale},
+                edge_ids=[str(e) for e in (current.routes[0].edge_ids if current.routes else [])],
+                edge_ids_per_component=[[str(e) for e in r.edge_ids] for r in current.routes],
+            ))
+
+    return JointAnnealRunResult(
+        global_transform=best.state.global_t,
+        local_offsets=best.state.local_offsets,
+        routes=best.routes,
+        breakdowns=best.breakdowns,
+        joint_score=best.joint_score,
         trace_steps=trace,
         iterations_planned=max_iterations,
         iterations_completed=iterations_completed,

@@ -45,6 +45,7 @@ export type OptimizeTraceStep = {
   score_terms: Record<string, number>
   transform: Record<string, number>
   edge_ids: string[]
+  edge_ids_per_component?: string[][]
 }
 
 export type OptimizeRestartResult = {
@@ -65,6 +66,14 @@ export type OptimizeRestartResult = {
   trace_steps: OptimizeTraceStep[]
 }
 
+export type OptimizeComponentResult = {
+  component_index: number
+  best_score: number
+  best_breakdown: Record<string, number>
+  route_length_m: number
+  route_length_km: number
+}
+
 export type OptimizeApiResponse = {
   trace_format_version: number
   projection: GraphPreviewResponse['projection']
@@ -80,6 +89,8 @@ export type OptimizeApiResponse = {
   route_length_km?: number
   optimizer_meta?: Record<string, unknown>
   restarts: OptimizeRestartResult[]
+  /** コンポーネントごとの結果（single_path では1要素） */
+  components?: OptimizeComponentResult[]
 }
 
 export type DebugOptimizePanelProps = {
@@ -187,7 +198,15 @@ export function DebugOptimizePanel({
       onRouteOverlayChange(result.candidates_geojson)
       return
     }
-    onRouteOverlayChange(rebuildRouteFeatureCollection(step.edge_ids, edges))
+    if (step.edge_ids_per_component && step.edge_ids_per_component.length > 1) {
+      // 全コンポーネントのトレース地点ルートを再構築して合成
+      const features = step.edge_ids_per_component.flatMap(
+        (ids) => rebuildRouteFeatureCollection(ids, edges).features,
+      )
+      onRouteOverlayChange({ type: 'FeatureCollection', features })
+    } else {
+      onRouteOverlayChange(rebuildRouteFeatureCollection(step.edge_ids, edges))
+    }
   }, [result, showBestRoute, steps, selectedTraceIndex, graphPreview, onRouteOverlayChange])
 
   useEffect(() => {
@@ -216,9 +235,8 @@ export function DebugOptimizePanel({
       setError('道路データ・手書きの形の両方が必要です。')
       return
     }
-    // 各コンポーネントを後処理済みの一筆書きパスに変換済み。バックエンドは最初のコンポーネントのみ送信
-    const strokeForBackend = processedComponents?.[0] ?? strokeData.strokes[0] ?? []
-    if (strokeForBackend.length < 2) {
+    const strokeComponents = processedComponents ?? [strokeData.strokes[0] ?? []]
+    if (strokeComponents.every((c) => c.length < 2)) {
       setError('有効なストロークがありません。')
       return
     }
@@ -236,7 +254,8 @@ export function DebugOptimizePanel({
         geojson,
         bbox,
         options: optsNorm,
-        stroke_points: strokeForBackend.map((p) => ({ x: p.x, y: p.y })),
+        stroke_components: strokeComponents.map((comp) => comp.map((p) => ({ x: p.x, y: p.y }))),
+        stroke_mode: strokeData.strokeMode,
         record_trace: true,
         weights: {
           source_rotation: weightSourceRotation,
@@ -323,7 +342,7 @@ export function DebugOptimizePanel({
                 {strokeData.strokeMode === 'free_draw' &&
                   (processedComponents?.length ?? 0) > 1 && (
                     <p className="text-[11px] text-stone-500">
-                      自由描画モード: 最初のコンポーネントのみ送信します（マルチコンポーネント対応は準備中）
+                      自由描画モード: {processedComponents?.length} コンポーネントをジョイント最適化
                     </p>
                   )}
                 {processedComponents ? (

@@ -27,6 +27,7 @@ from ..preprocess import (
 )
 from ..optimization.constants import (
     WEIGHT_DIJKSTRA_FALLBACK,
+    WEIGHT_LOCAL_OFFSET,
     WEIGHT_OUT_OF_GRAPH,
     WEIGHT_SHAPE_DISTANCE,
     WEIGHT_SOURCE_ROTATION,
@@ -48,7 +49,7 @@ from ..optimization.defaults import (
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
-from ..optimization.run import run_simulated_annealing
+from ..optimization.run import run_joint_simulated_annealing, run_simulated_annealing
 from ..optimization.types import AnnealOptions, OptimizeWeights, RestartResult, TraceStep, Transform
 from .preview import ways_raw_preview
 
@@ -105,6 +106,7 @@ class OptimizeWeightsBody(BaseModel):
     unreachable: float = WEIGHT_UNREACHABLE
     out_of_graph: float = WEIGHT_OUT_OF_GRAPH
     dijkstra_fallback: float = WEIGHT_DIJKSTRA_FALLBACK
+    local_offset: float = WEIGHT_LOCAL_OFFSET
 
 
 class AnnealOptionsBody(BaseModel):
@@ -152,14 +154,18 @@ class DebugOptimizeBody(BaseModel):
     geojson: dict[str, Any]
     bbox: BBoxBody
     options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
-    stroke_points: list[StrokePointBody] = Field(..., min_length=2)
+    # 旧フォーマット（後退互換）
+    stroke_points: list[StrokePointBody] = Field(default_factory=list)
+    # 新フォーマット: buildSinglePath 済みコンポーネントのリスト
+    stroke_components: list[list[StrokePointBody]] | None = None
+    stroke_mode: str = "single_path"
     weights: OptimizeWeightsBody | None = None
     anneal: AnnealOptionsBody | None = None
     record_trace: bool = True
 
 
 def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
-    return {
+    d: dict[str, Any] = {
         "step_index": t.step_index,
         "temperature": t.temperature,
         "accepted": t.accepted,
@@ -168,6 +174,9 @@ def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
         "transform": t.transform,
         "edge_ids": t.edge_ids,
     }
+    if t.edge_ids_per_component:
+        d["edge_ids_per_component"] = t.edge_ids_per_component
+    return d
 
 
 def _transform_to_dict(t: Transform) -> dict[str, float]:
@@ -295,7 +304,71 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
     a_body = body.anneal
     anneal = _anneal_body_to_options(a_body)
 
-    stroke_payload = [p.model_dump() for p in body.stroke_points]
+    projection_summary = (
+        "表示範囲の中心を原点とした平面座標（メートル換算）でグラフを構築しました。"
+    )
+    base_response: dict[str, Any] = {
+        "trace_format_version": 2,
+        "projection": {
+            "lon0": lon0,
+            "lat0": lat0,
+            "mode": "local_tangent_plane",
+            "summary": projection_summary,
+        },
+        "projection_summary": projection_summary,
+        "stats": built.stats,
+    }
+
+    # マルチコンポーネント（ジョイント SA）パス
+    if body.stroke_components is not None and len(body.stroke_components) > 1:
+        components_payload = [
+            [p.model_dump() for p in comp] for comp in body.stroke_components
+        ]
+        joint_result = run_joint_simulated_annealing(
+            built.graph,
+            components_payload,
+            lon0,
+            lat0,
+            weights=weights,
+            opt=anneal,
+            record_trace=body.record_trace,
+        )
+        total_length_m = sum(c.route_length_m for c in joint_result.components)
+        # best_breakdown は最初のコンポーネントを代表値として返す（デバッグ UI 互換）
+        rep_bd = joint_result.components[0].best_breakdown if joint_result.components else None
+        return {
+            **base_response,
+            "candidates_geojson": joint_result.candidates_geojson,
+            "best_score": joint_result.best_joint_score,
+            "best_breakdown": rep_bd.as_dict() if rep_bd else {},
+            "best_restart_index": min(
+                range(len(joint_result.restart_results)),
+                key=lambda i: joint_result.restart_results[i].best_score,
+                default=0,
+            ),
+            "route_length_m": total_length_m,
+            "route_length_km": round(total_length_m / 1000.0, 6),
+            "optimizer_meta": joint_result.optimizer_meta,
+            "restarts": [_restart_result_to_dict(r) for r in joint_result.restart_results],
+            "components": [
+                {
+                    "component_index": c.component_index,
+                    "best_score": c.best_score,
+                    "best_breakdown": c.best_breakdown.as_dict(),
+                    "route_length_m": c.route_length_m,
+                    "route_length_km": round(c.route_length_m / 1000.0, 6),
+                }
+                for c in joint_result.components
+            ],
+        }
+
+    # シングルコンポーネントパス（既存ロジック）
+    if body.stroke_components is not None and len(body.stroke_components) == 1:
+        stroke_payload = [p.model_dump() for p in body.stroke_components[0]]
+    elif body.stroke_points:
+        stroke_payload = [p.model_dump() for p in body.stroke_points]
+    else:
+        raise HTTPException(status_code=400, detail="stroke_components or stroke_points is required")
 
     opt_result = run_simulated_annealing(
         built.graph,
@@ -307,19 +380,8 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         record_trace=body.record_trace,
     )
 
-    projection_summary = (
-        "表示範囲の中心を原点とした平面座標（メートル換算）でグラフを構築しました。"
-    )
     return {
-        "trace_format_version": 2,
-        "projection": {
-            "lon0": lon0,
-            "lat0": lat0,
-            "mode": "local_tangent_plane",
-            "summary": projection_summary,
-        },
-        "projection_summary": projection_summary,
-        "stats": built.stats,
+        **base_response,
         "candidates_geojson": opt_result.candidates_geojson,
         "best_score": opt_result.best_score,
         "best_breakdown": opt_result.best_breakdown.as_dict(),
@@ -328,4 +390,13 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
         "optimizer_meta": opt_result.optimizer_meta,
         "restarts": [_restart_result_to_dict(r) for r in opt_result.restart_results],
+        "components": [
+            {
+                "component_index": 0,
+                "best_score": opt_result.best_score,
+                "best_breakdown": opt_result.best_breakdown.as_dict(),
+                "route_length_m": opt_result.best_route_length_m,
+                "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
+            }
+        ],
     }

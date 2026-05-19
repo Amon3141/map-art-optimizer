@@ -50,6 +50,46 @@ def stroke_to_base_polyline_m(
     return out
 
 
+def strokes_to_base_polylines_m_shared(
+    components: list[list[StrokePoint]],
+    graph: RoadGraph,
+    margin_ratio: float = 0.06,
+) -> list[list[tuple[float, float]]]:
+    """全コンポーネント合算の bounding box から共通スケールを計算し、相対位置を保ったまま各 base polyline を返す。"""
+    all_points = [p for comp in components for p in comp]
+    if not all_points:
+        return [[] for _ in components]
+
+    min_x = min(p.x for p in all_points)
+    min_y = min(p.y for p in all_points)
+    max_x = max(p.x for p in all_points)
+    max_y = max(p.y for p in all_points)
+    bw = max(max_x - min_x, 1e-9)
+    bh = max(max_y - min_y, 1e-9)
+    cx_canvas = (min_x + max_x) / 2.0
+    cy_canvas = (min_y + max_y) / 2.0
+
+    gx0, gy0, gx1, gy1 = graph_xy_bounds(graph)
+    gw = max(gx1 - gx0, 1.0)
+    gh = max(gy1 - gy0, 1.0)
+    cx = (gx0 + gx1) / 2.0
+    cy = (gy0 + gy1) / 2.0
+    m = margin_ratio
+    uw = gw * (1.0 - 2.0 * m)
+    uh = gh * (1.0 - 2.0 * m)
+    s = min(uw / bw, uh / bh)
+
+    result: list[list[tuple[float, float]]] = []
+    for comp in components:
+        poly: list[tuple[float, float]] = []
+        for p in comp:
+            qx = (p.x - cx_canvas) * s
+            qy = -(p.y - cy_canvas) * s  # canvas y-down → local plane y-up
+            poly.append((cx + qx, cy + qy))
+        result.append(poly)
+    return result
+
+
 def apply_transform(
     base_xy_m: list[tuple[float, float]],
     transform: Transform,

@@ -54,8 +54,9 @@
 
 ### レスポンスに含まれるもの（保存時の単位）
 
-- **`candidates_geojson`**: ベスト候補 1 本の WGS84 `LineString`（再描画にそのまま使える）。
-- **`restarts`**: 試行ごとの summary と `trace_steps`。ここでいう試行は、ランダムに作った別々の初期解から焼きなましを始める 1 回分の探索。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコア・温度・採択有無のみ。summary には `initial_transform`, `best_score`, `best_breakdown`, `acceptance_rate` などを含む。
+- **`candidates_geojson`**: ベスト候補の WGS84 `LineString`（マルチコンポーネントの場合は全コンポーネントを結合）。再描画にそのまま使える。
+- **`restarts`**: 試行ごとの summary と `trace_steps`。ここでいう試行は、ランダムに作った別々の初期解から焼きなましを始める 1 回分の探索。**各ステップはジオメトリを持たず**、`edge_ids`（`internal_edge_id` の列）と `transform`・スコア・温度・採択有無のみ。マルチコンポーネント時は `edge_ids_per_component`（コンポーネントごとの edge_ids）も付与される。summary には `initial_transform`, `best_score`, `best_breakdown`, `acceptance_rate` などを含む。
+- **`components`**: コンポーネントごとの `best_score`, `best_breakdown`, `route_length_m`。シングルコンポーネント時も `component_index=0` として返す。
 - **`best_restart_index`**: 全試行のうち、最良スコアを出した試行。
 - **`trace_format_version`**: 現状 `2`。クライアントや後処理スクリプトは、この番号でスキーマ互換を判断できるようにする（形式変更時はバージョンを上げる）。
 
@@ -68,6 +69,7 @@
    - **ベスト候補**: `candidates_geojson` をそのままオーバーレイ。
    - **試行 / トレーススライダー**: `restarts[n].trace_steps[i].edge_ids` と、直前の **`graph-preview` の edges FeatureCollection**（`properties.internal_edge_id`）を組み合わせ、クライアントで WGS84 の折れ線を復元（[`rebuildRouteFromTraceStep.ts`](../frontend/src/debug/lib/rebuildRouteFromTraceStep.ts)）。  
      → トレースを見るには **同じセッションで取得済みのグラフ GeoJSON** が必要。保存した JSON だけでは、edges が別途必要。
+   - **マルチコンポーネント**: `trace_steps[i].edge_ids_per_component` を使うと、コンポーネントごとに色分けして表示できる。`edge_ids`（結合版）は後退互換のため残す。
 
 ### オフラインでトレースを再現するとき
 
@@ -88,4 +90,5 @@
 
 - [preprocess.md](./preprocess.md) — H0 の段階（投影・グラフ化・索引など）と検証観点。
 - [optimization.md](./optimization.md) — 最適化の要件・実装ベースライン（API フィールド・スコア項など）。**トレースの保存・UI での見方は本文書の「最適化（焼きなまし）のトレース・結果データとデバッグ」**。
+- [input_shape.md](./input_shape.md) — 入力形状の前処理（一筆書き化・connected components・バックエンドへの送信フォーマット）。
 - [architecture.md](./architecture.md) — Overpass を FastAPI がプロキシする経路。
