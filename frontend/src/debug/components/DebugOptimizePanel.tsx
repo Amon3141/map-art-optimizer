@@ -3,7 +3,7 @@ import { MdOutlineDraw } from 'react-icons/md'
 import { SketchModal } from '../../components/SketchModal'
 import { SketchPreview } from '../../components/SketchPreview'
 import { apiUrl } from '../../lib/api'
-import type { Point } from '../../lib/simplify'
+import type { StrokeData } from '../../lib/strokeTypes'
 import {
   normalizeGraphBuildOptions,
   type GraphBuildOptionsPayload,
@@ -116,7 +116,7 @@ export function DebugOptimizePanel({
   onRouteOverlayChange,
 }: DebugOptimizePanelProps) {
   const [sketchOpen, setSketchOpen] = useState(false)
-  const [strokePoints, setStrokePoints] = useState<Point[] | null>(null)
+  const [strokeData, setStrokeData] = useState<StrokeData | null>(null)
   const [seed, setSeed] = useState(DEFAULT_ANNEAL_SEED)
   const [budgetSeconds, setBudgetSeconds] = useState(DEFAULT_OPTIMIZATION_BUDGET_SECONDS)
   const [maxIterations, setMaxIterations] = useState(DEFAULT_MAX_ITERATIONS)
@@ -148,7 +148,7 @@ export function DebugOptimizePanel({
 
   const optsNorm = useMemo(() => normalizeGraphBuildOptions(graphOptions), [graphOptions])
 
-  const hasShape = Boolean(strokePoints && strokePoints.length >= 2)
+  const hasShape = Boolean(strokeData && strokeData.strokes.some((s) => s.length >= 2))
   const restarts = result?.restarts ?? []
   const selectedRestart = restarts.find((r) => r.restart_index === selectedRestartIndex) ?? restarts[0] ?? null
   const steps = selectedRestart?.trace_steps ?? []
@@ -206,8 +206,17 @@ export function DebugOptimizePanel({
   }, [selectedRestartIndex, maxStepIdx])
 
   const runOptimize = async () => {
-    if (!geojson?.features?.length || !strokePoints || strokePoints.length < 2) {
+    if (!geojson?.features?.length || !strokeData) {
       setError('道路データ・手書きの形の両方が必要です。')
+      return
+    }
+    // 一筆書きモード: 全ストロークを描画順に結合。自由描画モード: 最初のストロークのみ送信
+    const strokeForBackend =
+      strokeData.strokeMode === 'single_path'
+        ? strokeData.strokes.flat()
+        : (strokeData.strokes[0] ?? [])
+    if (strokeForBackend.length < 2) {
+      setError('有効なストロークがありません。')
       return
     }
     const bbox = getMapBounds()
@@ -224,7 +233,7 @@ export function DebugOptimizePanel({
         geojson,
         bbox,
         options: optsNorm,
-        stroke_points: strokePoints.map((p) => ({ x: p.x, y: p.y })),
+        stroke_points: strokeForBackend.map((p) => ({ x: p.x, y: p.y })),
         record_trace: true,
         weights: {
           source_rotation: weightSourceRotation,
@@ -306,11 +315,18 @@ export function DebugOptimizePanel({
               <MdOutlineDraw className="h-5 w-5 shrink-0 text-stone-700" aria-hidden />
               {hasShape ? '形を描き直す' : '形を描く'}
             </button>
-            {hasShape && strokePoints ? (
-              <SketchPreview
-                points={strokePoints}
-                className="mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
-              />
+            {hasShape && strokeData ? (
+              <>
+                {strokeData.strokeMode === 'free_draw' && strokeData.strokes.length > 1 && (
+                  <p className="text-[11px] text-stone-500">
+                    自由描画モード: 最初のコンポーネントのみ送信します（マルチコンポーネント対応は準備中）
+                  </p>
+                )}
+                <SketchPreview
+                  strokes={strokeData.strokes}
+                  className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                />
+              </>
             ) : null}
           </div>
 
@@ -700,8 +716,8 @@ export function DebugOptimizePanel({
       {sketchOpen ? (
         <SketchModal
           onClose={() => setSketchOpen(false)}
-          onConfirm={(pts) => {
-            setStrokePoints(pts)
+          onConfirm={(data) => {
+            setStrokeData(data)
             setSketchOpen(false)
           }}
         />

@@ -1,31 +1,24 @@
 import { MdOutlineDraw } from 'react-icons/md'
 import { Link } from 'react-router-dom'
 import { SketchPreview } from './SketchPreview'
-import type { Point } from '../lib/simplify'
+import type { StrokeData } from '../lib/strokeTypes'
 
 const showDebugNav = import.meta.env.VITE_DEBUG === 'true'
 
 export type SidebarProps = {
   targetKm: number
   onTargetKmChange: (km: number) => void
-  strokePoints: Point[] | null
+  strokeData: StrokeData | null
   onOpenSketch: () => void
 }
 
-export function Sidebar({
-  targetKm,
-  onTargetKmChange,
-  strokePoints,
-  onOpenSketch,
-}: SidebarProps) {
-  const hasShape = Boolean(strokePoints && strokePoints.length >= 2)
+export function Sidebar({ targetKm, onTargetKmChange, strokeData, onOpenSketch }: SidebarProps) {
+  const hasShape = Boolean(strokeData && strokeData.strokes.some((s) => s.length >= 2))
 
   return (
     <aside className="flex w-full shrink-0 flex-col gap-4.5 p-5 pb-4 lg:max-w-sm lg:py-5 lg:pl-5 lg:pr-0">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-xl font-semibold tracking-tight text-stone-800">
-          GPSアート作成機
-        </h1>
+        <h1 className="text-xl font-semibold tracking-tight text-stone-800">GPSアート作成機</h1>
         <p className="text-sm leading-relaxed text-stone-600">
           キャンバスに描いた形を、地図の道路上で再現するルートを探します。
         </p>
@@ -41,18 +34,16 @@ export function Sidebar({
           {hasShape ? '形を描き直す' : '形を描く'}
         </button>
 
-        {hasShape && strokePoints ? (
+        {hasShape && strokeData ? (
           <SketchPreview
-            points={strokePoints}
-            className="mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+            strokes={strokeData.strokes}
+            className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
           />
         ) : null}
       </div>
 
       <div className="flex flex-col gap-2.5">
-        <label
-          className="block text-sm font-medium text-stone-700"
-        >
+        <label className="block text-sm font-medium text-stone-700">
           距離の目安（km）
           <input
             type="number"

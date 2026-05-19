@@ -1,5 +1,28 @@
 @import 'tailwindcss';
 
+@theme {
+  --animate-sketch-sheet-in: sketch-sheet-in 0.22s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  --animate-sketch-sheet-out: sketch-sheet-out 0.2s cubic-bezier(0.4, 0, 0.68, 0.06) forwards;
+}
+
+@keyframes sketch-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes sketch-sheet-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
 @import 'maplibre-gl/dist/maplibre-gl.css';
 
 .maplibregl-map {

@@ -1,41 +1,175 @@
-import { useEffect, useRef, useState } from 'react'
-import { MdOutlineDraw } from 'react-icons/md'
-import { type Point, simplifyStroke } from '../lib/simplify'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MdOutlineDraw, MdEdit, MdTextFields } from 'react-icons/md'
+import { simplifyStroke } from '../lib/simplify'
+import type { Point } from '../lib/simplify'
+import { isFullyConnected, isolatedStrokeIndices } from '../lib/strokeConnectivity'
+import { textToStrokes } from '../lib/textToStrokes'
+import type { InputMode, StrokeData, StrokeMode } from '../lib/strokeTypes'
+import { SketchPreview } from './SketchPreview'
 
 export type SketchModalProps = {
   onClose: () => void
-  onConfirm: (points: Point[]) => void
+  onConfirm: (data: StrokeData) => void
 }
 
-function drawStroke(
+const MIN_DISTANCE_PX = 1.5
+const MIN_DISTANCE_PEN_PX = 3
+const GHOST_DASH = [6, 4]
+
+// ────────────────────────────────────────────────────
+// キャンバス描画
+// ────────────────────────────────────────────────────
+
+function drawAllStrokes(
   ctx: CanvasRenderingContext2D,
-  points: Point[],
-  width: number,
-  height: number,
+  strokes: Point[][],
+  isolated: Set<number>,
+  currentPts: Point[],
+  ghostPt: Point | null,
+  isPenMode: boolean,
 ) {
-  ctx.clearRect(0, 0, width, height)
-  if (points.length < 2) return
+  const canvas = ctx.canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.strokeStyle = '#2d4a5e'
   ctx.lineWidth = 3
-  ctx.beginPath()
-  ctx.moveTo(points[0].x, points[0].y)
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x, points[i].y)
+
+  for (let i = 0; i < strokes.length; i++) {
+    const pts = strokes[i]
+    if (pts.length < 2) continue
+    ctx.strokeStyle = isolated.has(i) ? '#d97706' : '#2d4a5e'
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.moveTo(pts[0].x, pts[0].y)
+    for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y)
+    ctx.stroke()
   }
-  ctx.stroke()
+
+  if (!isPenMode) return
+
+  if (currentPts.length >= 2) {
+    ctx.strokeStyle = '#2d4a5e'
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.moveTo(currentPts[0].x, currentPts[0].y)
+    for (let j = 1; j < currentPts.length; j++) ctx.lineTo(currentPts[j].x, currentPts[j].y)
+    ctx.stroke()
+  }
+
+  if (currentPts.length >= 1 && ghostPt) {
+    const last = currentPts[currentPts.length - 1]
+    ctx.strokeStyle = '#94a3b8'
+    ctx.setLineDash(GHOST_DASH)
+    ctx.beginPath()
+    ctx.moveTo(last.x, last.y)
+    ctx.lineTo(ghostPt.x, ghostPt.y)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  if (currentPts.length >= 1) {
+    ctx.fillStyle = '#2d4a5e'
+    ctx.beginPath()
+    ctx.arc(currentPts[0].x, currentPts[0].y, 4, 0, Math.PI * 2)
+    ctx.fill()
+  }
 }
 
+// ────────────────────────────────────────────────────
+// 説明文（1-2文、動的に変わる）
+// ────────────────────────────────────────────────────
+
+function descriptionText(inputMode: InputMode, strokeMode: StrokeMode): string {
+  if (inputMode === 'text') {
+    return 'テキストを入力すると文字の輪郭がストロークになります。文字間スペースを調整できます。'
+  }
+  const tool = inputMode === 'freehand' ? '指やマウスでなぞって' : 'クリックで点を追加して'
+  if (strokeMode === 'single_path') {
+    return `${tool}形を描きます。複数ストロークを使う場合は、すべてが接触・交差している必要があります。`
+  }
+  return `${tool}形を描きます。複数回に分けて描いた形もそのまま使えます。`
+}
+
+// ────────────────────────────────────────────────────
+// SketchModal
+// ────────────────────────────────────────────────────
+
 export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const [points, setPoints] = useState<Point[]>([])
-  const [drawing, setDrawing] = useState(false)
+  const isPenUnsupported = useMemo(
+    () => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches,
+    [],
+  )
+  const useMobileSheetAnimation = useMemo(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
+    [],
+  )
+  const prefersReducedMotion = useMemo(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    [],
+  )
+
+  const shouldAnimateMobileSheet = useMobileSheetAnimation && !prefersReducedMotion
+
+  const [exiting, setExiting] = useState(false)
+  const [backdropBlurred, setBackdropBlurred] = useState(() => !shouldAnimateMobileSheet)
+  const [inputMode, setInputMode] = useState<InputMode>('freehand')
+  const [strokeMode, setStrokeMode] = useState<StrokeMode>('free_draw')
+  const [strokes, setStrokes] = useState<Point[][]>([])
   const [hint, setHint] = useState<string | null>(null)
+
+  const [drawing, setDrawing] = useState(false)
+  const currentRawPts = useRef<Point[]>([])
+
+  const [penCurrentPts, setPenCurrentPts] = useState<Point[]>([])
+  const penCurrentPtsRef = useRef<Point[]>([])
+  const [penGhostPt, setPenGhostPt] = useState<Point | null>(null)
+
+  penCurrentPtsRef.current = penCurrentPts
+
+  const [textInput, setTextInput] = useState('')
+  const [textCharSpacing, setTextCharSpacing] = useState(8)
+  const [textLoading, setTextLoading] = useState(false)
+  const textDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  useEffect(() => {
+    if (!shouldAnimateMobileSheet) {
+      setBackdropBlurred(true)
+      return
+    }
+    const id = requestAnimationFrame(() => setBackdropBlurred(true))
+    return () => cancelAnimationFrame(id)
+  }, [shouldAnimateMobileSheet])
+
+  const isolated = useMemo(
+    () =>
+      strokeMode === 'single_path' && inputMode !== 'text'
+        ? isolatedStrokeIndices(strokes)
+        : new Set<number>(),
+    [strokeMode, inputMode, strokes],
+  )
+
+  const fullyConnected = useMemo(() => {
+    if (strokeMode !== 'single_path' || inputMode === 'text') return true
+    if (strokes.length <= 1) return true
+    return isFullyConnected(strokes)
+  }, [strokeMode, inputMode, strokes])
+
+  const totalPoints = strokes.reduce((s, st) => s + st.length, 0)
+  const displayPointCount =
+    totalPoints + (inputMode === 'pen' ? penCurrentPts.length : 0)
+  const canConfirm = totalPoints >= 2 && (strokeMode !== 'single_path' || fullyConnected)
+
+  // ────────────────────────────────────────────────────
+  // キャンバス再描画
+  // ────────────────────────────────────────────────────
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas || inputMode === 'text') return
     const dpr = window.devicePixelRatio || 1
     const rect = canvas.getBoundingClientRect()
     canvas.width = Math.max(1, Math.floor(rect.width * dpr))
@@ -43,8 +177,57 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    drawStroke(ctx, points, rect.width, rect.height)
-  }, [points])
+    drawAllStrokes(ctx, strokes, isolated, penCurrentPts, penGhostPt, inputMode === 'pen')
+  }, [strokes, isolated, penCurrentPts, penGhostPt, inputMode])
+
+  // ────────────────────────────────────────────────────
+  // 入力モード切り替え
+  // ────────────────────────────────────────────────────
+
+  const switchInputMode = (mode: InputMode) => {
+    if (mode === inputMode) return
+    setInputMode(mode)
+    setStrokes([])
+    setHint(null)
+    setDrawing(false)
+    currentRawPts.current = []
+    setPenCurrentPts([])
+    setPenGhostPt(null)
+    if (mode === 'text') setStrokeMode('free_draw')
+  }
+
+  // ────────────────────────────────────────────────────
+  // テキスト入力の処理
+  // ────────────────────────────────────────────────────
+
+  const generateTextStrokes = useCallback(
+    async (text: string, spacing: number) => {
+      if (!text.trim()) { setStrokes([]); return }
+      setTextLoading(true)
+      try {
+        const result = await textToStrokes(text, spacing)
+        setStrokes(result)
+      } catch {
+        setHint('フォントの読み込みに失敗しました。')
+      } finally {
+        setTextLoading(false)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (inputMode !== 'text') return
+    if (textDebounceRef.current) clearTimeout(textDebounceRef.current)
+    textDebounceRef.current = setTimeout(() => {
+      void generateTextStrokes(textInput, textCharSpacing)
+    }, 300)
+    return () => { if (textDebounceRef.current) clearTimeout(textDebounceRef.current) }
+  }, [textInput, textCharSpacing, inputMode, generateTextStrokes])
+
+  // ────────────────────────────────────────────────────
+  // ポインターイベント（手書き）
+  // ────────────────────────────────────────────────────
 
   const clientToPoint = (ev: React.PointerEvent<HTMLCanvasElement>): Point => {
     const canvas = canvasRef.current
@@ -53,95 +236,358 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     return { x: ev.clientX - r.left, y: ev.clientY - r.top }
   }
 
-  const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+  const onFreehandPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     ev.currentTarget.setPointerCapture(ev.pointerId)
-    setDrawing(true)
-    setHint(null)
-    const p = clientToPoint(ev)
-    // 新しいストローク開始（既存の線は消して書き直し）
-    setPoints([p])
+    setDrawing(true); setHint(null)
+    currentRawPts.current = [clientToPoint(ev)]
   }
 
-  const onPointerMove = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+  const onFreehandPointerMove = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drawing) return
     const p = clientToPoint(ev)
-    setPoints((prev) => {
+    const pts = currentRawPts.current
+    const last = pts[pts.length - 1]
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < MIN_DISTANCE_PX) return
+    currentRawPts.current = [...pts, p]
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!ctx || !canvas) return
+    drawAllStrokes(ctx, strokes, isolated, [], null, false)
+    const raw = currentRawPts.current
+    if (raw.length >= 2) {
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3
+      ctx.strokeStyle = '#2d4a5e'; ctx.setLineDash([])
+      ctx.beginPath(); ctx.moveTo(raw[0].x, raw[0].y)
+      for (let i = 1; i < raw.length; i++) ctx.lineTo(raw[i].x, raw[i].y)
+      ctx.stroke()
+    }
+  }
+
+  const endFreehandStroke = () => {
+    if (!drawing) return
+    setDrawing(false)
+    const raw = currentRawPts.current
+    if (raw.length >= 2) setStrokes((prev) => [...prev, simplifyStroke(raw)])
+    currentRawPts.current = []
+  }
+
+  // ────────────────────────────────────────────────────
+  // ポインターイベント（ペンツール）
+  // ────────────────────────────────────────────────────
+
+  const onPenPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+    if (ev.buttons !== 1 || !ev.isPrimary) return
+    setHint(null)
+    const p = clientToPoint(ev)
+    setPenCurrentPts((prev) => {
       const last = prev[prev.length - 1]
-      if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return prev
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) < MIN_DISTANCE_PEN_PX) return prev
       return [...prev, p]
     })
   }
 
-  const endStroke = () => {
-    if (!drawing) return
-    setDrawing(false)
-    setPoints((prev) => {
-      if (prev.length < 2) return prev
-      return simplifyStroke(prev)
-    })
+  const onPenPointerMove = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+    if (ev.buttons !== 0) return
+    setPenGhostPt(clientToPoint(ev))
   }
 
-  const handleConfirm = () => {
-    if (points.length < 2) {
-      setHint('線を描いてから決定してください。')
-      return
+  const commitPenStroke = useCallback(() => {
+    const prev = penCurrentPtsRef.current
+    if (prev.length < 2) return
+    setStrokes((s) => [...s, prev])
+    setPenCurrentPts([])
+    setPenGhostPt(null)
+  }, [])
+
+  useEffect(() => {
+    if (inputMode !== 'pen') return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitPenStroke() }
     }
-    onConfirm(points)
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [inputMode, commitPenStroke])
+
+  // ────────────────────────────────────────────────────
+  // 削除
+  // ────────────────────────────────────────────────────
+
+  const deleteAllStrokes = () => {
+    setStrokes([]); setPenCurrentPts([]); setPenGhostPt(null)
+    currentRawPts.current = []; setHint(null)
+  }
+  const deletePreviousStroke = () => setStrokes((prev) => prev.slice(0, -1))
+  const deletePreviousPenPoint = () => setPenCurrentPts((prev) => prev.slice(0, -1))
+
+  const requestClose = useCallback(() => {
+    if (shouldAnimateMobileSheet) {
+      setBackdropBlurred(false)
+      setExiting(true)
+    } else {
+      onClose()
+    }
+  }, [onClose, shouldAnimateMobileSheet])
+
+  const onPanelAnimationEnd = (e: React.AnimationEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !exiting) return
     onClose()
   }
 
+  // ────────────────────────────────────────────────────
+  // 決定
+  // ────────────────────────────────────────────────────
+
+  const handleConfirm = () => {
+    if (!canConfirm) {
+      if (totalPoints < 2) {
+        setHint(inputMode === 'text' ? 'テキストを入力してください。' : '線を描いてから決定してください。')
+      } else {
+        setHint('全てのストロークを繋げてから決定してください。')
+      }
+      return
+    }
+    onConfirm({ inputMode, strokeMode: inputMode === 'text' ? 'free_draw' : strokeMode, strokes })
+    requestClose()
+  }
+
+  // ────────────────────────────────────────────────────
+  // UI
+  // ────────────────────────────────────────────────────
+
+  const inputModeOptions: { mode: InputMode; label: string; icon: React.ReactNode }[] = [
+    { mode: 'freehand', label: '手書き', icon: <MdOutlineDraw className="h-3.5 w-3.5" aria-hidden /> },
+    ...(!isPenUnsupported
+      ? [{ mode: 'pen' as InputMode, label: 'ペン', icon: <MdEdit className="h-3.5 w-3.5" aria-hidden /> }]
+      : []),
+    { mode: 'text', label: 'テキスト', icon: <MdTextFields className="h-3.5 w-3.5" aria-hidden /> },
+  ]
+
+  const hasAnyContent = strokes.length > 0 || penCurrentPts.length > 0
+  const showDeleteControls = inputMode !== 'text'
+
+  const sheetAnimClass = exiting
+    ? 'max-sm:animate-sketch-sheet-out'
+    : 'max-sm:animate-sketch-sheet-in'
+
+  const overlayClassName = [
+    'fixed inset-0 z-50 flex items-end justify-center bg-stone-900/25 sm:items-center sm:p-4 sm:backdrop-blur-sm',
+    shouldAnimateMobileSheet
+      ? [
+          'max-sm:transition-[backdrop-filter]',
+          exiting
+            ? 'max-sm:duration-200 max-sm:ease-in'
+            : 'max-sm:duration-[220ms] max-sm:ease-out',
+          backdropBlurred ? 'max-sm:backdrop-blur-sm' : 'max-sm:backdrop-blur-none',
+        ].join(' ')
+      : 'max-sm:backdrop-blur-sm',
+  ].join(' ')
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/25 p-4 backdrop-blur-sm sm:p-6"
+      className={overlayClassName}
       role="dialog"
       aria-modal="true"
       aria-labelledby="sketch-title"
     >
-      <div className="w-full max-w-lg rounded-2xl border border-stone-200/80 bg-[#fdfbf7] p-5 shadow-xl sm:max-w-2xl sm:p-6 md:max-w-3xl lg:max-w-4xl lg:p-8">
-        <h2
-          id="sketch-title"
-          className="flex items-center gap-2 text-lg font-medium text-stone-800 lg:text-xl"
-        >
-          <MdOutlineDraw className="h-6 w-6 shrink-0 text-stone-700" aria-hidden />
-          形を描く
-        </h2>
-        <p className="mt-1.5 text-sm text-stone-600">
-          指またはマウスでなぞってください。もう一度キャンバスに触れると、いまの線を消して書き直せます。
-        </p>
-        <div className="relative mt-4">
-          <canvas
-            ref={canvasRef}
-            className="h-64 w-full cursor-crosshair touch-none rounded-xl border border-dashed border-stone-300 bg-white sm:h-80 md:h-[22rem] lg:h-[26rem]"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={endStroke}
-            onPointerCancel={endStroke}
-          />
-          {points.length >= 2 ? (
-            <p
-              className="pointer-events-none absolute bottom-2 right-2 select-none text-[11px] text-stone-400"
-              aria-live="polite"
+      {/* モーダル本体: モバイルは下から全高、デスクトップは中央固定高さ */}
+      <div
+        className={[
+          'flex h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-stone-200/80 bg-[#fdfbf7] shadow-xl sm:h-[min(600px,90vh)] sm:max-w-xl sm:rounded-2xl',
+          sheetAnimClass,
+        ].join(' ')}
+        onAnimationEnd={onPanelAnimationEnd}
+      >
+
+        {/* ── 固定ヘッダー ── */}
+        <div className="shrink-0 px-5 pt-5">
+          {/* タイトル + 閉じる */}
+          <div className="flex items-center justify-between">
+            <h2 id="sketch-title" className="text-base font-medium text-stone-800">
+              形を描く
+            </h2>
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+              onClick={requestClose}
+              aria-label="閉じる"
             >
-              {drawing ? `${points.length} 点（描画中）` : `${points.length} 点（簡略化後）`}
-            </p>
-          ) : null}
+              ✕
+            </button>
+          </div>
+
+          {/* 入力モード + ストロークモード（同一行） */}
+          <div className="mt-3 flex items-center gap-2">
+            {/* 入力モードタブ */}
+            <div className="flex gap-0.5 overflow-hidden rounded-lg border border-stone-200/80 p-0.5">
+              {inputModeOptions.map(({ mode, label, icon }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => switchInputMode(mode)}
+                  className={[
+                    'flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    inputMode === mode
+                      ? 'bg-stone-100 text-[#2d4a5e]'
+                      : 'bg-white text-stone-500 hover:bg-stone-50 hover:text-stone-700',
+                  ].join(' ')}
+                >
+                  {icon}
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* ストロークモード（テキスト時は非表示、スペースは確保しない） */}
+            {inputMode !== 'text' && (
+              <div className="ml-auto flex overflow-hidden rounded-md border border-stone-200">
+                {(['single_path', 'free_draw'] as StrokeMode[]).map((mode, idx) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setStrokeMode(mode)}
+                    className={[
+                      'px-2 py-1 text-xs font-medium transition-colors',
+                      idx === 0 ? '' : 'border-l border-stone-200',
+                      strokeMode === mode
+                        ? 'bg-stone-100 text-[#2d4a5e]'
+                        : 'bg-white text-stone-500 hover:bg-stone-50 hover:text-stone-700',
+                    ].join(' ')}
+                  >
+                    {mode === 'single_path' ? '一筆書き' : '自由描画'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-stone-500">
+            {descriptionText(inputMode, strokeMode)}
+          </p>
         </div>
-        {hint ? <p className="mt-2 text-sm text-amber-800">{hint}</p> : null}
-        <div className="mt-4 flex justify-end gap-2 lg:mt-6">
-          <button
-            type="button"
-            className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 shadow-sm hover:bg-stone-50"
-            onClick={onClose}
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            className="rounded-lg bg-[#4a6f8a] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#3d5f77]"
-            onClick={handleConfirm}
-          >
-            決定
-          </button>
+
+        {/* ── フレキシブル中央エリア（プレビュー/キャンバス） ── */}
+        <div className="min-h-0 flex-1 px-5 pt-2">
+          {inputMode === 'text' ? (
+            /* テキスト入力エリア */
+            <div className="flex h-full flex-col gap-2">
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="テキストを入力（日本語・英語対応）"
+                className="shrink-0 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[#4a6f8a]"
+                autoFocus
+              />
+              <label className="shrink-0 flex flex-col gap-1">
+                  <span className="text-xs text-stone-500">文字間スペース: {textCharSpacing}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={50}
+                    step={1}
+                    value={textCharSpacing}
+                    onChange={(e) => setTextCharSpacing(Number(e.target.value))}
+                    className="accent-[#4a6f8a]"
+                  />
+              </label>
+
+              {/* プレビュー: 残りスペースを全て使う */}
+              <div className="min-h-0 flex-1">
+                {textLoading ? (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-stone-300 bg-white text-sm text-stone-400">
+                    フォントを読み込み中…
+                  </div>
+                ) : strokes.length > 0 ? (
+                  <SketchPreview strokes={strokes} strokeWidth={2} className="h-full" />
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-stone-300 bg-white text-sm text-stone-400">
+                    {textInput ? 'ストロークを生成中…' : 'テキストを入力するとプレビューが表示されます'}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* 手書き / ペンツール キャンバス: 残りスペースを全て使う */
+            <div className="relative h-full">
+              <canvas
+                ref={canvasRef}
+                className="h-full w-full cursor-crosshair touch-none rounded-xl border border-dashed border-stone-300 bg-white"
+                onPointerDown={inputMode === 'freehand' ? onFreehandPointerDown : onPenPointerDown}
+                onPointerMove={inputMode === 'freehand' ? onFreehandPointerMove : onPenPointerMove}
+                onPointerUp={inputMode === 'freehand' ? endFreehandStroke : undefined}
+                onPointerCancel={inputMode === 'freehand' ? endFreehandStroke : undefined}
+                onPointerLeave={inputMode === 'pen' ? () => setPenGhostPt(null) : undefined}
+              />
+              {strokes.length === 0 && penCurrentPts.length === 0 && !drawing && (
+                <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-stone-400 select-none">
+                  {inputMode === 'freehand' ? '指またはマウスでなぞってください' : 'クリックで点を追加します'}
+                </p>
+              )}
+              {inputMode === 'pen' && (
+                <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={penCurrentPts.length < 2}
+                    onClick={commitPenStroke}
+                    className="rounded-lg border border-[#4a6f8a] bg-white/95 px-2.5 py-1 text-xs font-medium text-[#4a6f8a] backdrop-blur-sm disabled:opacity-40 hover:bg-[#f3f6f8]"
+                  >
+                    ストローク確定
+                  </button>
+                  <button
+                    type="button"
+                    disabled={penCurrentPts.length === 0}
+                    onClick={deletePreviousPenPoint}
+                    className="rounded-lg border border-stone-300 bg-white/95 px-2.5 py-1 text-xs text-stone-600 backdrop-blur-sm disabled:opacity-40 hover:bg-stone-50"
+                  >
+                    前の点を削除
+                  </button>
+                </div>
+              )}
+              {(inputMode === 'pen' || strokes.length > 0 || drawing) && (
+                <p className="pointer-events-none absolute bottom-2 right-2 select-none text-[11px] text-stone-400">
+                  {strokes.length} ストローク / {displayPointCount} 点
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── 固定フッター ── */}
+        <div className="shrink-0 px-5 pb-5 pt-3">
+          {hint && <p className="mb-2 text-xs text-amber-800">{hint}</p>}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-1.5">
+              {showDeleteControls && (
+                <>
+                  <button
+                    type="button"
+                    disabled={!hasAnyContent}
+                    onClick={deleteAllStrokes}
+                    className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-600 shadow-[0_1px_1px_0_rgb(0_0_0/0.04)] disabled:opacity-40 hover:bg-stone-50"
+                  >
+                    全て削除
+                  </button>
+                  <button
+                    type="button"
+                    disabled={strokes.length === 0}
+                    onClick={deletePreviousStroke}
+                    className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-600 shadow-[0_1px_1px_0_rgb(0_0_0/0.04)] disabled:opacity-40 hover:bg-stone-50"
+                  >
+                    前のストローク削除
+                  </button>
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              className={`rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
+                canConfirm ? 'bg-[#4a6f8a] hover:bg-[#3d5f77]' : 'cursor-not-allowed bg-stone-400'
+              }`}
+            >
+              決定
+            </button>
+          </div>
         </div>
       </div>
     </div>

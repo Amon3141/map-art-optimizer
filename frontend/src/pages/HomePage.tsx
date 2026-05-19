@@ -2,19 +2,19 @@ import { useState } from 'react'
 import { Sidebar } from '../components/Sidebar'
 import { MapPanel } from '../components/MapPanel'
 import { SketchModal } from '../components/SketchModal'
-import type { Point } from '../lib/simplify'
+import type { StrokeData } from '../lib/strokeTypes'
 
 export function HomePage() {
   const [targetKm, setTargetKm] = useState(10)
   const [sketchOpen, setSketchOpen] = useState(false)
-  const [strokePoints, setStrokePoints] = useState<Point[] | null>(null)
+  const [strokeData, setStrokeData] = useState<StrokeData | null>(null)
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-0 bg-[#faf8f4] lg:flex-row lg:gap-5">
       <Sidebar
         targetKm={targetKm}
         onTargetKmChange={setTargetKm}
-        strokePoints={strokePoints}
+        strokeData={strokeData}
         onOpenSketch={() => setSketchOpen(true)}
       />
 
@@ -27,7 +27,10 @@ export function HomePage() {
       {sketchOpen ? (
         <SketchModal
           onClose={() => setSketchOpen(false)}
-          onConfirm={(pts) => setStrokePoints(pts)}
+          onConfirm={(data) => {
+            setStrokeData(data)
+            setSketchOpen(false)
+          }}
         />
       ) : null}
     </div>
