@@ -100,11 +100,12 @@ def _coarse_grid_search(
         return []
     center = graph_center_m(graph)
 
-    # 位置グリッド: [-span, span] を _GRID_POS_STEPS 点で等間隔
+    # 位置グリッド: [-span/2, span/2] を _GRID_POS_STEPS 点で等間隔
+    # ±span だとベース折れ線の中心がグラフ外に出るため半分に絞る。
     n = _GRID_POS_STEPS
     if n >= 2:
-        tx_vals = [span_x * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
-        ty_vals = [span_y * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
+        tx_vals = [span_x * 0.5 * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
+        ty_vals = [span_y * 0.5 * (-1.0 + 2.0 * i / (n - 1)) for i in range(n)]
     else:
         tx_vals = [0.0]
         ty_vals = [0.0]
@@ -255,9 +256,22 @@ def run_simulated_annealing(
     )
     n_grid_candidates = len(grid_candidates)
 
+    # スコアが極端に悪い候補（グラフ外に飛び出た等）を事前除外してから diversity 選択。
+    # 最良スコアの絶対差が閾値を超えるものを落とし、残りが少なすぎる場合は上位半数を使う。
+    _SCORE_FILTER_MARGIN: float = 0.5
+    diverse_candidates = grid_candidates
+    if grid_candidates:
+        best_score = grid_candidates[0][0]
+        cutoff = best_score + _SCORE_FILTER_MARGIN
+        filtered = [(s, t) for s, t in grid_candidates if s <= cutoff]
+        if len(filtered) >= restart_count:
+            diverse_candidates = filtered
+        elif len(grid_candidates) > 1:
+            diverse_candidates = grid_candidates[: max(restart_count, len(grid_candidates) // 2)]
+
     # maximin diversity で初期解を選択
     initial_transforms = _select_diverse_initial_transforms(
-        grid_candidates, restart_count, span_x, span_y,
+        diverse_candidates, restart_count, span_x, span_y,
     )
 
     # 候補不足の場合は diversity-aware ランダムで補完

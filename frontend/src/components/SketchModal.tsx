@@ -79,9 +79,16 @@ function drawAllStrokes(
 // 説明文（1-2文、動的に変わる）
 // ────────────────────────────────────────────────────
 
-function descriptionText(inputMode: InputMode, strokeMode: StrokeMode): string {
+function descriptionText(
+  inputMode: InputMode,
+  strokeMode: StrokeMode,
+  textLength: number,
+): string {
   if (inputMode === 'text') {
-    return 'テキストを入力すると文字の輪郭がストロークになります。文字間スペースを調整できます。'
+    if (textLength >= 2) {
+      return 'テキストを入力すると文字の輪郭がストロークになります。文字間スペースを調整できます。'
+    }
+    return 'テキストを入力すると文字の輪郭がストロークになります。'
   }
   const tool = inputMode === 'freehand' ? '指やマウスでなぞって' : 'クリックで点を追加して'
   if (strokeMode === 'single_path') {
@@ -467,7 +474,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
           </div>
 
           <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-stone-500">
-            {descriptionText(inputMode, strokeMode)}
+            {descriptionText(inputMode, strokeMode, textInput.length)}
           </p>
         </div>
 
@@ -484,7 +491,8 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
                 className="shrink-0 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[#4a6f8a]"
                 autoFocus
               />
-              <label className="shrink-0 flex flex-col gap-1">
+              {textInput.length >= 2 && (
+                <label className="shrink-0 flex flex-col gap-1">
                   <span className="text-xs text-stone-500">文字間スペース: {textCharSpacing}</span>
                   <input
                     type="range"
@@ -495,7 +503,8 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
                     onChange={(e) => setTextCharSpacing(Number(e.target.value))}
                     className="accent-[#4a6f8a]"
                   />
-              </label>
+                </label>
+              )}
 
               {/* プレビュー: 残りスペースを全て使う */}
               <div className="relative min-h-0 flex-1">
