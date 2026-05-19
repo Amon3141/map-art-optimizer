@@ -4,7 +4,7 @@ import { simplifyStroke } from '../lib/simplify'
 import type { Point } from '../lib/simplify'
 import { isFullyConnected, isolatedStrokeIndices } from '../lib/strokeConnectivity'
 import { textToStrokes } from '../lib/textToStrokes'
-import type { InputMode, StrokeData, StrokeMode } from '../lib/strokeTypes'
+import { MAX_STROKE_POINTS, type InputMode, type StrokeData, type StrokeMode } from '../lib/strokeTypes'
 import { SketchPreview } from './SketchPreview'
 
 export type SketchModalProps = {
@@ -161,7 +161,11 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   const totalPoints = strokes.reduce((s, st) => s + st.length, 0)
   const displayPointCount =
     totalPoints + (inputMode === 'pen' ? penCurrentPts.length : 0)
-  const canConfirm = totalPoints >= 2 && (strokeMode !== 'single_path' || fullyConnected)
+  const pointsOverLimit = displayPointCount > MAX_STROKE_POINTS
+  const canConfirm =
+    totalPoints >= 2 &&
+    (strokeMode !== 'single_path' || fullyConnected) &&
+    !pointsOverLimit
 
   // ────────────────────────────────────────────────────
   // キャンバス再描画
@@ -339,7 +343,9 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
 
   const handleConfirm = () => {
     if (!canConfirm) {
-      if (totalPoints < 2) {
+      if (pointsOverLimit) {
+        setHint(`点の数は ${MAX_STROKE_POINTS} 以下にしてください。`)
+      } else if (totalPoints < 2) {
         setHint(inputMode === 'text' ? 'テキストを入力してください。' : '線を描いてから決定してください。')
       } else {
         setHint('全てのストロークを繋げてから決定してください。')
@@ -370,16 +376,16 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     : 'max-sm:animate-sketch-sheet-in'
 
   const overlayClassName = [
-    'fixed inset-0 z-50 flex items-end justify-center bg-stone-900/25 sm:items-center sm:p-4 sm:backdrop-blur-sm',
+    'fixed inset-0 z-50 flex items-end justify-center bg-stone-900/25 sm:items-center sm:p-4 sm:backdrop-blur-xs',
     shouldAnimateMobileSheet
       ? [
           'max-sm:transition-[backdrop-filter]',
           exiting
             ? 'max-sm:duration-200 max-sm:ease-in'
             : 'max-sm:duration-[220ms] max-sm:ease-out',
-          backdropBlurred ? 'max-sm:backdrop-blur-sm' : 'max-sm:backdrop-blur-none',
+          backdropBlurred ? 'max-sm:backdrop-blur-xs' : 'max-sm:backdrop-blur-none',
         ].join(' ')
-      : 'max-sm:backdrop-blur-sm',
+      : 'max-sm:backdrop-blur-xs',
   ].join(' ')
 
   return (
@@ -492,13 +498,21 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
               </label>
 
               {/* プレビュー: 残りスペースを全て使う */}
-              <div className="min-h-0 flex-1">
+              <div className="relative min-h-0 flex-1">
                 {textLoading ? (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-stone-300 bg-white text-sm text-stone-400">
                     フォントを読み込み中…
                   </div>
                 ) : strokes.length > 0 ? (
-                  <SketchPreview strokes={strokes} strokeWidth={2} className="h-full" />
+                  <>
+                    <SketchPreview strokes={strokes} strokeWidth={2} className="h-full" />
+                    <p className="pointer-events-none absolute bottom-2 right-2 select-none text-[11px] text-stone-400">
+                      {strokes.length} ストローク /{' '}
+                      <span className={pointsOverLimit ? 'text-red-600' : ''}>
+                        {displayPointCount} 点
+                      </span>
+                    </p>
+                  </>
                 ) : (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-stone-300 bg-white text-sm text-stone-400">
                     {textInput ? 'ストロークを生成中…' : 'テキストを入力するとプレビューが表示されます'}
@@ -543,9 +557,12 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
                   </button>
                 </div>
               )}
-              {(inputMode === 'pen' || strokes.length > 0 || drawing) && (
+              {(strokes.length > 0 || drawing || penCurrentPts.length > 0) && (
                 <p className="pointer-events-none absolute bottom-2 right-2 select-none text-[11px] text-stone-400">
-                  {strokes.length} ストローク / {displayPointCount} 点
+                  {strokes.length} ストローク /{' '}
+                  <span className={pointsOverLimit ? 'text-red-600' : ''}>
+                    {displayPointCount} 点
+                  </span>
                 </p>
               )}
             </div>
@@ -554,6 +571,11 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
 
         {/* ── 固定フッター ── */}
         <div className="shrink-0 px-5 pb-5 pt-3">
+          {pointsOverLimit && (
+            <p className="mb-2 text-xs text-red-700">
+              点の数が上限（{MAX_STROKE_POINTS}）を超えています。点を減らしてから決定してください。
+            </p>
+          )}
           {hint && <p className="mb-2 text-xs text-amber-800">{hint}</p>}
           <div className="flex items-center justify-between gap-2">
             <div className="flex gap-1.5">

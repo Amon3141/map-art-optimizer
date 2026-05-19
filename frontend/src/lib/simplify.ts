@@ -5,6 +5,9 @@ export type Point = { x: number; y: number }
  * */
 export const SIMPLIFY_TOLERANCE_PX = 5
 
+/** テキスト輪郭（FONT_SIZE≈100 の座標系）。手書きより小さくして簡素化を緩める */
+export const TEXT_SIMPLIFY_TOLERANCE_PX = 2
+
 function perpendicularDistance(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x
   const dy = b.y - a.y

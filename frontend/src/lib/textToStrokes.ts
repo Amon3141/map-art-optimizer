@@ -1,4 +1,5 @@
 import opentype from 'opentype.js'
+import { simplifyStroke, TEXT_SIMPLIFY_TOLERANCE_PX } from './simplify'
 import type { Point } from './simplify'
 
 import japaneseFontUrl from '@fontsource/noto-sans-jp/files/noto-sans-jp-japanese-400-normal.woff?url'
@@ -100,7 +101,7 @@ function commandsToStrokes(commands: opentype.PathCommand[]): Point[][] {
  * テキストを glyph outline ポリラインに変換する。
  * @param text 入力テキスト
  * @param charSpacing 文字間の追加スペース（FONT_SIZE=100 基準の内部単位）
- * @returns 各コンターをストロークとした Point[][] 配列
+ * @returns 各コンターをストロークとした Point[][]（手書きと同じ RDP 簡素化を適用）
  */
 export async function textToStrokes(
   text: string,
@@ -133,6 +134,8 @@ export async function textToStrokes(
   }
 
   return allStrokes
+    .map((stroke) => simplifyStroke(stroke, TEXT_SIMPLIFY_TOLERANCE_PX))
+    .filter((stroke) => stroke.length >= 2)
 }
 
 export async function preloadFonts(): Promise<void> {
