@@ -3,6 +3,7 @@ import { MdOutlineDraw, MdEdit, MdTextFields } from 'react-icons/md'
 import { simplifyStroke } from '../lib/simplify'
 import type { Point } from '../lib/simplify'
 import { textToStrokes } from '../lib/textToStrokes'
+import { applyPenSnap } from '../lib/penNodeSnap'
 import { MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
 import { SketchPreview } from './SketchPreview'
 
@@ -25,6 +26,7 @@ function drawAllStrokes(
   currentPts: Point[],
   ghostPt: Point | null,
   isPenMode: boolean,
+  snapTarget: Point | null,
 ) {
   const canvas = ctx.canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -44,6 +46,21 @@ function drawAllStrokes(
   }
 
   if (!isPenMode) return
+
+  for (const stroke of strokes) {
+    for (const p of stroke) {
+      ctx.fillStyle = '#94a3b8'
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  for (const p of currentPts) {
+    ctx.fillStyle = '#94a3b8'
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
 
   if (currentPts.length >= 2) {
     ctx.strokeStyle = '#2d4a5e'
@@ -71,6 +88,18 @@ function drawAllStrokes(
     ctx.arc(currentPts[0].x, currentPts[0].y, 4, 0, Math.PI * 2)
     ctx.fill()
   }
+
+  if (snapTarget) {
+    ctx.strokeStyle = '#4a6f8a'
+    ctx.fillStyle = 'rgba(74, 111, 138, 0.2)'
+    ctx.lineWidth = 2
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.arc(snapTarget.x, snapTarget.y, 7, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.lineWidth = 3
+  }
 }
 
 // ────────────────────────────────────────────────────
@@ -84,8 +113,10 @@ function descriptionText(inputMode: InputMode, textLength: number): string {
     }
     return 'テキストを入力すると文字の輪郭がストロークになります。'
   }
-  const tool = inputMode === 'freehand' ? '指やマウスでなぞって' : 'クリックで点を追加して'
-  return `${tool}形を描きます。複数回に分けて描いた形もそのまま使えます。`
+  if (inputMode === 'pen') {
+    return 'クリックで点を追加して形を描きます。既存の点の近くでは自動的に吸着します。複数回に分けて描いた形もそのまま使えます。'
+  }
+  return '指やマウスでなぞって形を描きます。複数回に分けて描いた形もそのまま使えます。'
 }
 
 // ────────────────────────────────────────────────────
@@ -122,6 +153,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   const [penCurrentPts, setPenCurrentPts] = useState<Point[]>([])
   const penCurrentPtsRef = useRef<Point[]>([])
   const [penGhostPt, setPenGhostPt] = useState<Point | null>(null)
+  const [penSnapTarget, setPenSnapTarget] = useState<Point | null>(null)
 
   penCurrentPtsRef.current = penCurrentPts
 
@@ -161,8 +193,8 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    drawAllStrokes(ctx, strokes, penCurrentPts, penGhostPt, inputMode === 'pen')
-  }, [strokes, penCurrentPts, penGhostPt, inputMode])
+    drawAllStrokes(ctx, strokes, penCurrentPts, penGhostPt, inputMode === 'pen', penSnapTarget)
+  }, [strokes, penCurrentPts, penGhostPt, penSnapTarget, inputMode])
 
   // ────────────────────────────────────────────────────
   // 入力モード切り替え
@@ -177,6 +209,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     currentRawPts.current = []
     setPenCurrentPts([])
     setPenGhostPt(null)
+    setPenSnapTarget(null)
   }
 
   // ────────────────────────────────────────────────────
@@ -235,7 +268,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!ctx || !canvas) return
-    drawAllStrokes(ctx, strokes, [], null, false)
+    drawAllStrokes(ctx, strokes, [], null, false, null)
     const raw = currentRawPts.current
     if (raw.length >= 2) {
       ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3
@@ -258,10 +291,19 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   // ポインターイベント（ペンツール）
   // ────────────────────────────────────────────────────
 
+  const resolvePenSnap = useCallback(
+    (raw: Point) => {
+      const { point, snapTarget } = applyPenSnap(raw, strokes, penCurrentPtsRef.current)
+      return { point, snapTarget }
+    },
+    [strokes],
+  )
+
   const onPenPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     if (ev.buttons !== 1 || !ev.isPrimary) return
     setHint(null)
-    const p = clientToPoint(ev)
+    const { point: p, snapTarget } = resolvePenSnap(clientToPoint(ev))
+    setPenSnapTarget(snapTarget)
     setPenCurrentPts((prev) => {
       const last = prev[prev.length - 1]
       if (last && Math.hypot(p.x - last.x, p.y - last.y) < MIN_DISTANCE_PEN_PX) return prev
@@ -271,7 +313,9 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
 
   const onPenPointerMove = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     if (ev.buttons !== 0) return
-    setPenGhostPt(clientToPoint(ev))
+    const { point, snapTarget } = resolvePenSnap(clientToPoint(ev))
+    setPenGhostPt(point)
+    setPenSnapTarget(snapTarget)
   }
 
   const commitPenStroke = useCallback(() => {
@@ -280,6 +324,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     setStrokes((s) => [...s, prev])
     setPenCurrentPts([])
     setPenGhostPt(null)
+    setPenSnapTarget(null)
   }, [])
 
   const deletePreviousPenPoint = useCallback(
@@ -302,7 +347,7 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   // ────────────────────────────────────────────────────
 
   const deleteAllStrokes = () => {
-    setStrokes([]); setPenCurrentPts([]); setPenGhostPt(null)
+    setStrokes([]); setPenCurrentPts([]); setPenGhostPt(null); setPenSnapTarget(null)
     currentRawPts.current = []; setHint(null)
   }
   const deletePreviousStroke = () => setStrokes((prev) => prev.slice(0, -1))
@@ -491,7 +536,14 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
                 onPointerMove={inputMode === 'freehand' ? onFreehandPointerMove : onPenPointerMove}
                 onPointerUp={inputMode === 'freehand' ? endFreehandStroke : undefined}
                 onPointerCancel={inputMode === 'freehand' ? endFreehandStroke : undefined}
-                onPointerLeave={inputMode === 'pen' ? () => setPenGhostPt(null) : undefined}
+                onPointerLeave={
+                  inputMode === 'pen'
+                    ? () => {
+                        setPenGhostPt(null)
+                        setPenSnapTarget(null)
+                      }
+                    : undefined
+                }
               />
               {strokes.length === 0 && penCurrentPts.length === 0 && !drawing && (
                 <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-stone-400 select-none">
