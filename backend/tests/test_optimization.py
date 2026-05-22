@@ -5,7 +5,15 @@ from __future__ import annotations
 import math
 import random
 
-from app.optimization.anneal import AnnealState, _propose_state, _step_scale_at
+from app.optimization import anneal as anneal_mod
+from app.optimization.anneal import (
+    AnnealState,
+    _effective_acceptance_temperature,
+    _propose_state,
+    _should_trigger_escape,
+    _step_scale_at,
+    simulated_annealing_search,
+)
 from app.optimization.candidate_select import (
     normalized_transform_dist,
     select_ranked_candidates,
@@ -20,7 +28,7 @@ from app.optimization.snap_route import (
     build_route_from_polyline,
     dijkstra_path,
 )
-from app.optimization.transform import stroke_to_base_polyline_m
+from app.optimization.transform import apply_transform, graph_center_m, stroke_to_base_polyline_m
 from app.optimization.types import (
     AnnealOptions,
     OptimizeWeights,
@@ -485,6 +493,106 @@ def test_step_scale_tracks_temperature_at_cold_end() -> None:
     # 旧式 0.2 + 0.8*sqrt(temp_ratio) より終盤は小さい
     legacy_cold = 0.2 + 0.8 * math.sqrt(cold_ratio)
     assert cold_scale < legacy_cold
+
+
+def test_stagnation_escape_helpers() -> None:
+    opt = AnnealOptions(initial_temperature=0.05, final_temperature=0.001)
+    cold_t = opt.final_temperature
+    reheat_t = _effective_acceptance_temperature(cold_t, opt, reheat_remaining=5)
+    assert reheat_t > cold_t
+    assert _effective_acceptance_temperature(cold_t, opt, reheat_remaining=0) == cold_t
+    assert _should_trigger_escape(50, 30, 40, 25)
+    assert not _should_trigger_escape(10, 30, 40, 25)
+    assert not _should_trigger_escape(50, 10, 40, 25)
+
+
+def test_stagnation_escape_improves_from_bad_initial(monkeypatch) -> None:
+    monkeypatch.setattr(anneal_mod, "_stagnation_threshold", lambda _: 8)
+    monkeypatch.setattr(anneal_mod, "_ESCAPE_COOLDOWN_STEPS", 5)
+    g = _line_graph()
+    stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=200.0, y=0.0)]
+    bad_initial = Transform(tx_m=150.0, ty_m=80.0, theta_rad=1.2, scale=2.5)
+    opt = AnnealOptions(
+        seed=0,
+        max_iterations=100,
+        trace_stride=10_000,
+        ignore_optimization_budget=True,
+    )
+    weights = OptimizeWeights()
+    adj = build_adjacency(g)
+    base = stroke_to_base_polyline_m(stroke, g)
+    center = graph_center_m(g)
+    bad_poly = apply_transform(base, bad_initial, center)
+    bad_route = build_route_from_polyline(g, adj, bad_poly, arc_samples=10)
+    bad_score, _ = score_route(g, bad_poly, bad_route, bad_initial, weights)
+
+    run_with_escape = simulated_annealing_search(
+        g,
+        stroke,
+        weights,
+        opt,
+        record_trace=False,
+        initial_transform=bad_initial,
+    )
+
+    monkeypatch.setattr(anneal_mod, "_should_trigger_escape", lambda *args, **kwargs: False)
+    run_no_escape = simulated_annealing_search(
+        g,
+        stroke,
+        weights,
+        opt,
+        record_trace=False,
+        initial_transform=bad_initial,
+    )
+
+    assert run_with_escape.escape_triggers >= 1
+    assert run_with_escape.reheat_steps_used >= 1
+    assert run_with_escape.score < bad_score
+    assert run_with_escape.score < run_no_escape.score
+
+
+def test_good_initial_minimal_escape(monkeypatch) -> None:
+    monkeypatch.setattr(anneal_mod, "_stagnation_threshold", lambda _: 10_000)
+    g = _line_graph()
+    stroke = [StrokePoint(x=0.0, y=0.0), StrokePoint(x=200.0, y=0.0)]
+    opt = AnnealOptions(
+        seed=1,
+        max_iterations=60,
+        trace_stride=10_000,
+        ignore_optimization_budget=True,
+    )
+    run = simulated_annealing_search(
+        g,
+        stroke,
+        OptimizeWeights(),
+        opt,
+        record_trace=False,
+        initial_transform=Transform(),
+    )
+    assert run.escape_triggers == 0
+    assert run.score < 0.5
+
+
+def test_optimizer_meta_includes_escape_counts() -> None:
+    g = _line_graph()
+    opt = AnnealOptions(
+        seed=7,
+        max_iterations=80,
+        restart_count=1,
+        ignore_optimization_budget=True,
+        trace_stride=10_000,
+    )
+    result = run_simulated_annealing(
+        g,
+        [{"x": 0.0, "y": 0.0}, {"x": 200.0, "y": 0.0}],
+        0.0,
+        0.0,
+        opt=opt,
+        record_trace=False,
+    )
+    assert "escape_triggers" in result.optimizer_meta
+    assert "reheat_steps_used" in result.optimizer_meta
+    assert result.optimizer_meta["escape_triggers"] == result.restart_results[0].escape_triggers
 
 
 def test_multistart_each_restart_uses_full_max_iterations() -> None:

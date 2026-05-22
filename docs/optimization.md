@@ -174,8 +174,9 @@
 
 - **状態**: グローバル変換 `(theta_rad, scale, tx_m, ty_m)`。
 - **遷移関数** `_propose_state`: translate / rotate / scale の中からランダムに 1 種（または 2 種の compound）を選び、Gaussian ノイズを加える。摂動幅は温度比に連動（`step_scale = max(step_scale_min, temp_ratio)`）。終盤の細探索は別フェーズの後処理ではなく、この 1 本の SA スケジュールで行う。
-- **採択**: 改善は必ず採択。悪化は `exp(-delta / temperature)` で確率採択。温度は初期 → 最終へ幾何冷却。
+- **採択**: 改善は必ず採択。悪化は `exp(-delta / temperature)` で確率採択。温度は初期 → 最終へ幾何冷却。reheat 中は採択温度のみ `max(スケジュール温度, initial_temperature × 0.35)` に引き上げる（遷移幅 `step_scale` は変えない）。
 - **Basin hopping**: 温度比 > 0.5 かつ確率 5% でランダム変換に飛ぶ。
+- **停滞脱出**（`anneal.py` 内部定数、API 非公開）: `best` が `max(40, max(30, max_iterations // 5))` ステップ改善されない、かつ前回脱出から 25 ステップ以上経過したとき、通常 propose の代わりに `_random_transform` で完全ランダムジャンプを 1 回試す。発火後 12 ステップは reheat（採択温度ブースト）。`best` は常に保持するため、良い盆地に入った後の細探索挙動は従来どおり。`optimizer_meta` に `escape_triggers` / `reheat_steps_used` を restart 合算で記録。
 
 #### マルチコンポーネント・ジョイント SA（`joint_simulated_annealing_search`）
 
@@ -188,6 +189,7 @@
   > **設計意図**: global 位置が良くても local offset の 1 サンプルが外れると不当に reject されていた問題を解消する（Rao-Blackwellization 的アプローチ）。`n_local_trials=1` にすれば従来と等価。
 
 - **Basin hopping（ジョイント）**: ランダムな global 変換 + ゼロオフセット（ローカル trials なし）。
+- **停滞脱出（ジョイント）**: シングル SA と同条件で `joint_score` の `best` 停滞時に global ランダムジャンプ + ローカルオフセットゼロ。reheat の採択温度ロジックも共通。
 
 #### 共通
 

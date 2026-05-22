@@ -160,6 +160,8 @@ class AnnealRunResult:
     iterations_completed: int
     accepted_moves: int
     deadline_hit: bool
+    escape_triggers: int = 0
+    reheat_steps_used: int = 0
 
     @property
     def acceptance_rate(self) -> float:
@@ -185,6 +187,8 @@ class RestartResult:
     acceptance_rate: float
     deadline_hit: bool
     trace_steps: list[TraceStep] = field(default_factory=list)
+    escape_triggers: int = 0
+    reheat_steps_used: int = 0
 
 
 @dataclass

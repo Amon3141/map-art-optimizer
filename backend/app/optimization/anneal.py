@@ -65,6 +65,8 @@ class JointAnnealRunResult:
     iterations_completed: int
     accepted_moves: int
     deadline_hit: bool
+    escape_triggers: int = 0
+    reheat_steps_used: int = 0
 
     @property
     def acceptance_rate(self) -> float:
@@ -149,6 +151,35 @@ _MOVE_TYPES = ("translate", "rotate", "scale")
 # Basin hopping: 高温期にこの確率でランダムリセットを試みる
 _JUMP_PROBABILITY: float = 0.05
 _JUMP_TEMP_THRESHOLD: float = 0.5
+
+# 停滞脱出: best 未更新が続いたときだけランダムジャンプ + 短い reheat
+_ESCAPE_COOLDOWN_STEPS: int = 25
+_REHEAT_STEPS: int = 12
+_REHEAT_TEMP_RATIO: float = 0.35
+
+
+def _stagnation_threshold(max_iterations: int) -> int:
+    return max(40, max(30, max_iterations // 5))
+
+
+def _effective_acceptance_temperature(
+    scheduled_temperature: float,
+    opt: AnnealOptions,
+    reheat_remaining: int,
+) -> float:
+    if reheat_remaining > 0:
+        reheat_t = max(float(opt.initial_temperature), 1e-12) * _REHEAT_TEMP_RATIO
+        return max(scheduled_temperature, reheat_t)
+    return scheduled_temperature
+
+
+def _should_trigger_escape(
+    steps_since_best: int,
+    steps_since_escape: int,
+    stagnation_threshold: int,
+    escape_cooldown: int,
+) -> bool:
+    return steps_since_best >= stagnation_threshold and steps_since_escape >= escape_cooldown
 
 
 def _random_transform(rng: random.Random, span_x: float, span_y: float) -> Transform:
@@ -246,6 +277,8 @@ def simulated_annealing_search(
             iterations_completed=0,
             accepted_moves=0,
             deadline_hit=_over_deadline(deadline),
+            escape_triggers=0,
+            reheat_steps_used=0,
         )
 
     center = graph_center_m(graph)
@@ -275,6 +308,12 @@ def simulated_annealing_search(
     trace: list[TraceStep] = []
     iterations_completed = 0
     accepted_moves = 0
+    escape_triggers = 0
+    reheat_steps_used = 0
+    stagnation_threshold = _stagnation_threshold(max_iterations)
+    steps_since_best = 0
+    steps_since_escape = _ESCAPE_COOLDOWN_STEPS
+    reheat_remaining = 0
     if record_trace:
         _record_trace_step(trace, 0, _temperature_at(0, max_iterations, opt), True, current)
 
@@ -286,8 +325,26 @@ def simulated_annealing_search(
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
         step_scale = _step_scale_at(temp_ratio, opt)
-        # Basin hopping: 高温期に低確率でランダムリセットを提案する
-        if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
+        acceptance_temperature = _effective_acceptance_temperature(
+            temperature, opt, reheat_remaining,
+        )
+        if reheat_remaining > 0:
+            reheat_steps_used += 1
+            reheat_remaining -= 1
+
+        steps_since_best += 1
+        steps_since_escape += 1
+        if _should_trigger_escape(
+            steps_since_best,
+            steps_since_escape,
+            stagnation_threshold,
+            _ESCAPE_COOLDOWN_STEPS,
+        ):
+            proposal_state = AnnealState(_random_transform(rng, span_x, span_y))
+            escape_triggers += 1
+            reheat_remaining = _REHEAT_STEPS
+            steps_since_escape = 0
+        elif temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
             proposal_state = AnnealState(_random_transform(rng, span_x, span_y))
         else:
             proposal_state = _propose_state(current.state, rng, opt, span_x, span_y, step_scale)
@@ -295,7 +352,7 @@ def simulated_annealing_search(
         delta = proposal.score - current.score
         accepted = delta <= 0.0
         if not accepted:
-            probability = math.exp(-delta / max(temperature, 1e-12))
+            probability = math.exp(-delta / max(acceptance_temperature, 1e-12))
             accepted = rng.random() < probability
 
         if accepted:
@@ -303,6 +360,7 @@ def simulated_annealing_search(
             current = proposal
             if current.score < best.score:
                 best = current
+                steps_since_best = 0
 
         best_updated = accepted and current is best
         should_record = record_trace and (step % trace_stride == 0 or best_updated)
@@ -319,6 +377,8 @@ def simulated_annealing_search(
         iterations_completed=iterations_completed,
         accepted_moves=accepted_moves,
         deadline_hit=_over_deadline(deadline),
+        escape_triggers=escape_triggers,
+        reheat_steps_used=reheat_steps_used,
     )
 
 
@@ -449,6 +509,12 @@ def joint_simulated_annealing_search(
     trace: list[TraceStep] = []
     iterations_completed = 0
     accepted_moves = 0
+    escape_triggers = 0
+    reheat_steps_used = 0
+    stagnation_threshold = _stagnation_threshold(max_iterations)
+    steps_since_best = 0
+    steps_since_escape = _ESCAPE_COOLDOWN_STEPS
+    reheat_remaining = 0
 
     if record_trace:
         trace.append(TraceStep(
@@ -471,8 +537,30 @@ def joint_simulated_annealing_search(
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
         step_scale = _step_scale_at(temp_ratio, opt)
+        acceptance_temperature = _effective_acceptance_temperature(
+            temperature, opt, reheat_remaining,
+        )
+        if reheat_remaining > 0:
+            reheat_steps_used += 1
+            reheat_remaining -= 1
 
-        if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
+        steps_since_best += 1
+        steps_since_escape += 1
+        if _should_trigger_escape(
+            steps_since_best,
+            steps_since_escape,
+            stagnation_threshold,
+            _ESCAPE_COOLDOWN_STEPS,
+        ):
+            proposal_state = JointAnnealState(
+                global_t=_random_transform(rng, span_x, span_y),
+                local_offsets=[(0.0, 0.0)] * n_comps,
+            )
+            proposal = evaluate(proposal_state)
+            escape_triggers += 1
+            reheat_remaining = _REHEAT_STEPS
+            steps_since_escape = 0
+        elif temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
             proposal_state = JointAnnealState(
                 global_t=_random_transform(rng, span_x, span_y),
                 local_offsets=[(0.0, 0.0)] * n_comps,
@@ -497,7 +585,7 @@ def joint_simulated_annealing_search(
         delta = proposal.joint_score - current.joint_score
         accepted = delta <= 0.0
         if not accepted:
-            probability = math.exp(-delta / max(temperature, 1e-12))
+            probability = math.exp(-delta / max(acceptance_temperature, 1e-12))
             accepted = rng.random() < probability
 
         if accepted:
@@ -505,6 +593,7 @@ def joint_simulated_annealing_search(
             current = proposal
             if current.joint_score < best.joint_score:
                 best = current
+                steps_since_best = 0
 
         best_updated = accepted and current is best
         should_record = record_trace and (step % trace_stride == 0 or best_updated)
@@ -532,4 +621,6 @@ def joint_simulated_annealing_search(
         iterations_completed=iterations_completed,
         accepted_moves=accepted_moves,
         deadline_hit=_over_deadline(deadline),
+        escape_triggers=escape_triggers,
+        reheat_steps_used=reheat_steps_used,
     )

@@ -222,6 +222,13 @@ def _apply_ranked_candidates(
     return fc, ranked_dicts, selection.meta
 
 
+def _escape_meta_from_restarts(restart_results: list[RestartResult]) -> dict[str, int]:
+    return {
+        "escape_triggers": sum(r.escape_triggers for r in restart_results),
+        "reheat_steps_used": sum(r.reheat_steps_used for r in restart_results),
+    }
+
+
 def _restart_to_dict(r: RestartResult) -> dict[str, Any]:
     return {
         "restart_index": r.restart_index,
@@ -238,6 +245,8 @@ def _restart_to_dict(r: RestartResult) -> dict[str, Any]:
         "accepted_moves": r.accepted_moves,
         "acceptance_rate": r.acceptance_rate,
         "deadline_hit": r.deadline_hit,
+        "escape_triggers": r.escape_triggers,
+        "reheat_steps_used": r.reheat_steps_used,
     }
 
 
@@ -373,6 +382,8 @@ def run_simulated_annealing(
                 acceptance_rate=run.acceptance_rate,
                 deadline_hit=run.deadline_hit,
                 trace_steps=run.trace_steps,
+                escape_triggers=run.escape_triggers,
+                reheat_steps_used=run.reheat_steps_used,
             )
         )
         if time.monotonic() >= deadline:
@@ -408,6 +419,7 @@ def run_simulated_annealing(
         or any(r.deadline_hit for r in restart_results),
         "grid_search_candidates": n_grid_candidates,
         "grid_budget_fraction": _GRID_BUDGET_FRACTION,
+        **_escape_meta_from_restarts(restart_results),
     }
     fc, ranked_dicts, selection_meta = _apply_ranked_candidates(
         graph, lon0, lat0, restart_results, span_x, span_y, o,
@@ -491,6 +503,8 @@ def _joint_run_to_restart_result(
         acceptance_rate=run.acceptance_rate,
         deadline_hit=run.deadline_hit,
         trace_steps=run.trace_steps,
+        escape_triggers=run.escape_triggers,
+        reheat_steps_used=run.reheat_steps_used,
     )
 
 
@@ -681,6 +695,7 @@ def run_joint_simulated_annealing(
         "grid_search_candidates": n_grid_candidates,
         "grid_budget_fraction": _GRID_BUDGET_FRACTION,
         "n_components": len(stroke_components),
+        **_escape_meta_from_restarts(restart_results),
         "restart_summaries": [_restart_to_dict(r) for r in restart_results],
     }
 
