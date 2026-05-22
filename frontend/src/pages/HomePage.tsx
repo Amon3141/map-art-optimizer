@@ -1,3 +1,4 @@
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
 import { FetchRadiusErrorDialog } from '../components/FetchRadiusErrorDialog'
@@ -14,6 +15,7 @@ import {
   FETCH_AREA_TOO_LARGE_CODE,
   type SpeedPreset,
 } from '../lib/productionDefaults'
+import { fitMapToFeatureCollections } from '../lib/fitMapViewport'
 import { overlayForCandidate } from '../lib/routeOverlay'
 import { strokesToProcessedComponents } from '../lib/singlePathPostprocess'
 import type { StrokeData } from '../lib/strokeTypes'
@@ -61,6 +63,11 @@ export function HomePage() {
 
   const optimizeGenRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  const mapRef = useRef<MapLibreMap | null>(null)
+
+  const onMapReady = useCallback((map: MapLibreMap) => {
+    mapRef.current = map
+  }, [])
 
   const processedComponents = useMemo(
     () => (strokeData ? strokesToProcessedComponents(strokeData.strokes) : null),
@@ -233,6 +240,15 @@ export function HomePage() {
     return fc ?? candidates_geojson
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
+  useEffect(() => {
+    if (optimizeState.kind !== 'done' || !selectedCandidateId) return
+    const map = mapRef.current
+    if (!map?.loaded()) return
+    const geo = routeGeoJson
+    if (!geo?.features?.length) return
+    fitMapToFeatureCollections(map, geo)
+  }, [optimizeState, selectedCandidateId, routeGeoJson])
+
   return (
     <div className="scrollbar-hidden flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
       <Sidebar
@@ -254,6 +270,7 @@ export function HomePage() {
         <div className="relative flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] max-lg:h-[70dvh] max-lg:min-h-[320px] lg:min-h-0 lg:flex-1">
           <MapPanel
             className="min-h-0 w-full flex-1"
+            onMapReady={onMapReady}
             onCenterChange={(lon, lat) => setMapCenter({ lon, lat })}
             routeGeoJson={routeGeoJson}
             fetchRangeCircle={fetchRangeCircle}

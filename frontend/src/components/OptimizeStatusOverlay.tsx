@@ -58,7 +58,7 @@ export function OptimizeStatusOverlay({ visible, startedAt, preset, onStop }: Pr
               type="button"
               title="探索を停止"
               aria-label="探索を停止"
-              className="-mr-1 flex shrink-0 items-center justify-center rounded-full border border-transparent p-0.5 text-stone-400 transition-[border-color] hover:border-stone-300"
+              className="-mr-1 flex shrink-0 items-center justify-center rounded-full border border-stone-300 p-0.5 text-stone-400 transition-[border-color] [@media(hover:hover)]:border-transparent [@media(hover:hover)]:hover:border-stone-300"
               onClick={onStop}
             >
               <MdStop className="h-4 w-4" aria-hidden />

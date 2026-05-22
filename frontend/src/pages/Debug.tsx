@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DebugOptimizePanel } from '../debug/components/DebugOptimizePanel'
 import { DebugSidebar, type DebugPanelMode } from '../debug/components/DebugSidebar'
 import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugMapPanel'
-import { fitMapToLineString } from '../debug/lib/fitMapToWay'
+import { fitMapToFeatureCollections, fitMapToLineString } from '../lib/fitMapViewport'
 import {
   defaultGraphBuildOptions,
   normalizeGraphBuildOptions,
@@ -226,6 +226,12 @@ export function DebugPage() {
     setRouteOverlay(fc)
   }, [])
 
+  const handleFitViewport = useCallback((fc: GeoJSON.FeatureCollection) => {
+    const map = mapRef.current
+    if (!map?.loaded() || fc.features.length === 0) return
+    fitMapToFeatureCollections(map, fc)
+  }, [])
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-0 bg-[#faf8f4] lg:flex-row lg:gap-5">
       {debugFlow === 'preprocess' ? (
@@ -262,6 +268,7 @@ export function DebugPage() {
           onBack={handleBackFromOptimize}
           getMapBounds={getMapBounds}
           onRouteOverlayChange={handleRouteOverlayChange}
+          onFitViewport={handleFitViewport}
         />
       )}
 

@@ -1,8 +1,4 @@
-import maplibregl, {
-  type LngLatBoundsLike,
-  type Map as MapLibreMap,
-  type Popup,
-} from 'maplibre-gl'
+import maplibregl, { type Map as MapLibreMap, type Popup } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 import { BasemapSelector, type BasemapMode } from '../../components/BasemapSelector'
 import { MapPillToggle } from '../../components/MapPillToggle'
@@ -14,6 +10,7 @@ import {
 } from '../lib/debugMapBasemap'
 import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE, HIGHLIGHT_SYNTHETIC } from '../lib/debugHighlightColors'
 import { injectOsmOverlaySelection } from '../lib/debugOsmOverlay'
+import { fitMapToFeatureCollections } from '../../lib/fitMapViewport'
 
 const OSM_SRC = 'debug-osm-overlay'
 const OSM_LINE = 'debug-osm-overlay-line'
@@ -98,28 +95,7 @@ function applyGraphLayerVisibility(
   }
 }
 
-function fitCollectionBounds(map: MapLibreMap, ...collections: GeoJSON.FeatureCollection[]) {
-  const bounds = new maplibregl.LngLatBounds()
-  let any = false
-  for (const coll of collections) {
-    for (const f of coll.features) {
-      const g = f.geometry
-      if (!g) continue
-      if (g.type === 'LineString') {
-        for (const c of g.coordinates as [number, number][]) {
-          bounds.extend(c)
-          any = true
-        }
-      } else if (g.type === 'Point') {
-        bounds.extend(g.coordinates as [number, number])
-        any = true
-      }
-    }
-  }
-  if (any) {
-    map.fitBounds(bounds as LngLatBoundsLike, { padding: 48, maxZoom: 17, duration: 0 })
-  }
-}
+const GRAPH_OSM_FIT_OPTIONS = { instant: true, padding: 48, maxZoom: 17 } as const
 
 function osmPopupHtml(props: Record<string, unknown>): string {
   const wid = props.osm_way_id
@@ -268,11 +244,11 @@ export function DebugMapPanel({
         source: OSM_SRC,
         paint: { 'line-width': 16, 'line-opacity': 0 },
       })
-      if (fitOsmOverlayToData) fitCollectionBounds(map, g)
+      if (fitOsmOverlayToData) fitMapToFeatureCollections(map, g, GRAPH_OSM_FIT_OPTIONS)
     } else {
       src.setData(data)
       map.setPaintProperty(OSM_LINE, 'line-color', lineColor)
-      if (fitOsmOverlayToData) fitCollectionBounds(map, g)
+      if (fitOsmOverlayToData) fitMapToFeatureCollections(map, g, GRAPH_OSM_FIT_OPTIONS)
     }
   }, [
     mapReady,
@@ -388,7 +364,7 @@ export function DebugMapPanel({
     )
 
     if (graphFitTrigger !== lastGraphFitTriggerRef.current) {
-      fitCollectionBounds(map, gg.edges, gg.nodes)
+      fitMapToFeatureCollections(map, gg.edges, gg.nodes, GRAPH_OSM_FIT_OPTIONS)
       lastGraphFitTriggerRef.current = graphFitTrigger
     }
 

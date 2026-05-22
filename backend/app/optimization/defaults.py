@@ -23,5 +23,5 @@ DEFAULT_N_LOCAL_TRIALS: int = 4
 
 # トレース横断の表示候補選択（件数は可変。include 帯内かつ transform が離れたもののみ）
 DEFAULT_MAX_DISPLAY_CANDIDATES: int = 5
-DEFAULT_SCORE_INCLUDE_MARGIN: float = 0.03
+DEFAULT_SCORE_INCLUDE_MARGIN: float = 0.015
 DEFAULT_CANDIDATE_DIVERSITY_MIN: float = 0.12
