@@ -5,7 +5,7 @@ import { SketchPreview } from '../../components/SketchPreview'
 import { apiUrl } from '../../lib/api'
 import { strokesToProcessedComponents } from '../../lib/singlePathPostprocess'
 import type { StrokeData } from '../../lib/strokeTypes'
-import { SinglePathDebugPreview } from './SinglePathDebugPreview'
+import { RouteOrderPreview } from '../../components/RouteOrderPreview'
 import {
   normalizeGraphBuildOptions,
   type GraphBuildOptionsPayload,
@@ -32,83 +32,9 @@ import {
   DEFAULT_WEIGHT_TURN,
   DEFAULT_WEIGHT_UNREACHABLE,
 } from '../lib/optimizationDefaults'
-import { rebuildRouteFeatureCollection } from '../lib/rebuildRouteFromTraceStep'
-import { DebugAnnealingTraceSlider } from './DebugAnnealingTraceSlider'
-
-export type OptimizeTraceStep = {
-  step_index: number
-  temperature: number
-  accepted: boolean
-  score_total: number
-  score_terms: Record<string, number>
-  transform: Record<string, number>
-  edge_ids: string[]
-  edge_ids_per_component?: string[][]
-}
-
-export type OptimizeRestartResult = {
-  restart_index: number
-  seed: number
-  initial_transform: Record<string, number>
-  best_transform: Record<string, number>
-  best_edge_ids: string[]
-  best_score: number
-  best_breakdown: Record<string, number>
-  route_length_m?: number
-  route_length_km?: number
-  iterations_planned: number
-  iterations_completed: number
-  accepted_moves: number
-  acceptance_rate: number
-  deadline_hit: boolean
-  trace_steps: OptimizeTraceStep[]
-}
-
-export type OptimizeComponentResult = {
-  component_index: number
-  best_score: number
-  best_breakdown: Record<string, number>
-  route_length_m: number
-  route_length_km: number
-}
-
-export type RankedOptimizeCandidate = {
-  candidate_id: string
-  rank: number
-  restart_index: number
-  step_index: number
-  score_total: number
-  score_delta_from_best: number
-  tier: 'best' | 'included'
-  route_length_m: number
-  route_length_km: number
-  transform: Record<string, number>
-  edge_ids: string[]
-  edge_ids_per_component?: string[][]
-  labels: string[]
-  score_terms: Record<string, number>
-}
-
-export type OptimizeApiResponse = {
-  trace_format_version: number
-  projection: GraphPreviewResponse['projection']
-  projection_summary?: string
-  stats: Record<string, number>
-  candidates_geojson: GeoJSON.FeatureCollection
-  ranked_candidates?: RankedOptimizeCandidate[]
-  candidate_selection_meta?: Record<string, number>
-  best_score: number
-  best_breakdown: Record<string, number>
-  best_restart_index: number
-  /** ベストルートのグラフ上の長さ（メートル） */
-  route_length_m?: number
-  /** 同上（キロメートル）。評価とは独立した表示用メタ情報 */
-  route_length_km?: number
-  optimizer_meta?: Record<string, unknown>
-  restarts: OptimizeRestartResult[]
-  /** コンポーネントごとの結果（シングルコンポーネント時は1要素） */
-  components?: OptimizeComponentResult[]
-}
+import { overlayForCandidate, rebuildRouteFeatureCollection } from '../../lib/routeOverlay'
+import { AnnealingTraceSlider } from '../../components/AnnealingTraceSlider'
+import type { OptimizeApiResponse, OptimizeTraceStep } from '../../lib/optimizeTypes'
 
 export type DebugOptimizePanelProps = {
   geojson: GeoJSON.FeatureCollection | null
@@ -203,22 +129,12 @@ export function DebugOptimizePanel({
 
   function overlayForCandidateId(candidateId: string): GeoJSON.FeatureCollection | null {
     if (!result) return null
-    const features = result.candidates_geojson.features.filter(
-      (f) => f.properties?.candidate_id === candidateId,
+    return overlayForCandidate(
+      candidateId,
+      result.candidates_geojson,
+      rankedCandidates,
+      graphPreview?.graph_geojson?.edges,
     )
-    if (features.length > 0) {
-      return { type: 'FeatureCollection', features }
-    }
-    const cand = rankedCandidates.find((c) => c.candidate_id === candidateId)
-    const edges = graphPreview?.graph_geojson?.edges
-    if (!cand || !edges) return null
-    if (cand.edge_ids_per_component && cand.edge_ids_per_component.length > 1) {
-      const rebuilt = cand.edge_ids_per_component.flatMap(
-        (ids) => rebuildRouteFeatureCollection(ids, edges).features,
-      )
-      return { type: 'FeatureCollection', features: rebuilt }
-    }
-    return rebuildRouteFeatureCollection(cand.edge_ids, edges)
   }
 
   useEffect(() => {
@@ -415,7 +331,7 @@ export function DebugOptimizePanel({
                       </button>
                     </div>
                     {showDebugPreview ? (
-                      <SinglePathDebugPreview
+                      <RouteOrderPreview
                         paths={processedComponents}
                         className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
                       />
@@ -834,7 +750,7 @@ export function DebugOptimizePanel({
                       ))}
                     </select>
                   </label>
-                  <DebugAnnealingTraceSlider
+                  <AnnealingTraceSlider
                     steps={steps}
                     bestRestartIndex={result.best_restart_index}
                     selectedRestartIndex={selectedRestart.restart_index}

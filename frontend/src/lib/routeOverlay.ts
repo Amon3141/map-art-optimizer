@@ -1,3 +1,7 @@
+/** エッジ ID 列から地図オーバーレイ用 GeoJSON を再構築するユーティリティ。 */
+
+import type { OptimizeTraceStep, RankedOptimizeCandidate } from './optimizeTypes'
+
 type LonLat = [number, number]
 
 /** `graph-preview` の edges FeatureCollection から internal_edge_id → 座標列 */
@@ -64,4 +68,45 @@ export function rebuildRouteFeatureCollection(
       },
     ],
   }
+}
+
+/** trace step の edge_ids / edge_ids_per_component から GeoJSON を再構築する */
+export function rebuildRouteForTraceStep(
+  step: OptimizeTraceStep,
+  edgesFc: GeoJSON.FeatureCollection,
+): GeoJSON.FeatureCollection {
+  if (step.edge_ids_per_component && step.edge_ids_per_component.length > 1) {
+    const features = step.edge_ids_per_component.flatMap(
+      (ids) => rebuildRouteFeatureCollection(ids, edgesFc).features,
+    )
+    return { type: 'FeatureCollection', features }
+  }
+  return rebuildRouteFeatureCollection(step.edge_ids, edgesFc)
+}
+
+/**
+ * candidates_geojson から指定 candidate_id のフィーチャーを抽出する。
+ * candidates_geojson にない場合は edgesFc から再構築する（fallback）。
+ */
+export function overlayForCandidate(
+  candidateId: string,
+  candidatesGeojson: GeoJSON.FeatureCollection,
+  candidates: RankedOptimizeCandidate[],
+  edgesFc?: GeoJSON.FeatureCollection,
+): GeoJSON.FeatureCollection | null {
+  const features = candidatesGeojson.features.filter(
+    (f) => f.properties?.candidate_id === candidateId,
+  )
+  if (features.length > 0) return { type: 'FeatureCollection', features }
+
+  const cand = candidates.find((c) => c.candidate_id === candidateId)
+  if (!cand || !edgesFc) return null
+
+  if (cand.edge_ids_per_component && cand.edge_ids_per_component.length > 1) {
+    const rebuilt = cand.edge_ids_per_component.flatMap(
+      (ids) => rebuildRouteFeatureCollection(ids, edgesFc).features,
+    )
+    return { type: 'FeatureCollection', features: rebuilt }
+  }
+  return rebuildRouteFeatureCollection(cand.edge_ids, edgesFc)
 }

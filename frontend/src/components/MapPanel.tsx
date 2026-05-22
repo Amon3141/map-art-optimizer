@@ -7,21 +7,39 @@ import {
   DEFAULT_MAP_ZOOM,
   applyDebugBasemapVisibility,
 } from '../debug/lib/debugMapBasemap'
+import { circlePolygon } from '../lib/geoUtils'
+
+const FETCH_RANGE_SOURCE = 'prod-fetch-range'
+const FETCH_RANGE_FILL_LAYER = 'prod-fetch-range-fill'
+const FETCH_RANGE_LINE_LAYER = 'prod-fetch-range-line'
+const ROUTE_SOURCE = 'prod-route-overlay'
+const ROUTE_LAYER = 'prod-route-overlay-line'
 
 export type MapPanelProps = {
   className?: string
   onMapReady?: (map: MapLibreMap) => void
+  onCenterChange?: (lon: number, lat: number) => void
+  routeGeoJson?: GeoJSON.FeatureCollection | null
+  fetchRangeCircle?: { lon: number; lat: number; radiusM: number } | null
 }
 
-export function MapPanel({ className = '', onMapReady }: MapPanelProps) {
+export function MapPanel({
+  className = '',
+  onMapReady,
+  onCenterChange,
+  routeGeoJson,
+  fetchRangeCircle,
+}: MapPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const onMapReadyRef = useRef(onMapReady)
+  const onCenterChangeRef = useRef(onCenterChange)
   const basemapModeRef = useRef<BasemapMode>('normal')
   const [mapReady, setMapReady] = useState(false)
   const [basemapMode, setBasemapMode] = useState<BasemapMode>('normal')
 
   onMapReadyRef.current = onMapReady
+  onCenterChangeRef.current = onCenterChange
   basemapModeRef.current = basemapMode
 
   useEffect(() => {
@@ -41,9 +59,7 @@ export function MapPanel({ className = '', onMapReady }: MapPanelProps) {
     const resize = () => map.resize()
     window.addEventListener('resize', resize)
 
-    const ro = new ResizeObserver(() => {
-      map.resize()
-    })
+    const ro = new ResizeObserver(() => map.resize())
     ro.observe(el)
 
     map.once('load', () => {
@@ -53,15 +69,58 @@ export function MapPanel({ className = '', onMapReady }: MapPanelProps) {
         if (cancelled || mapRef.current !== map) return
         map.resize()
         applyDebugBasemapVisibility(map, basemapModeRef.current)
+
+        // 取得範囲 circle（ルート overlay の下に追加）
+        map.addSource(FETCH_RANGE_SOURCE, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        })
+        map.addLayer({
+          id: FETCH_RANGE_FILL_LAYER,
+          type: 'fill',
+          source: FETCH_RANGE_SOURCE,
+          paint: { 'fill-color': '#c45c3e', 'fill-opacity': 0.06 },
+        })
+        map.addLayer({
+          id: FETCH_RANGE_LINE_LAYER,
+          type: 'line',
+          source: FETCH_RANGE_SOURCE,
+          paint: {
+            'line-color': '#c45c3e',
+            'line-width': 1.5,
+            'line-opacity': 0.45,
+            'line-dasharray': [5, 3],
+          },
+        })
+
+        // ルートオーバーレイ（取得範囲の上に追加）
+        map.addSource(ROUTE_SOURCE, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        })
+        map.addLayer({
+          id: ROUTE_LAYER,
+          type: 'line',
+          source: ROUTE_SOURCE,
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#c45c3e', 'line-width': 4, 'line-opacity': 0.85 },
+        })
       })
       onMapReadyRef.current?.(map)
       setMapReady(true)
     })
 
+    const onMoveEnd = () => {
+      const center = map.getCenter()
+      onCenterChangeRef.current?.(center.lng, center.lat)
+    }
+    map.on('moveend', onMoveEnd)
+
     return () => {
       cancelled = true
       ro.disconnect()
       window.removeEventListener('resize', resize)
+      map.off('moveend', onMoveEnd)
       map.remove()
       mapRef.current = null
       setMapReady(false)
@@ -73,6 +132,33 @@ export function MapPanel({ className = '', onMapReady }: MapPanelProps) {
     if (!mapReady || !map) return
     applyDebugBasemapVisibility(map, basemapMode)
   }, [mapReady, basemapMode])
+
+  // 取得範囲 circle の更新
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) return
+    const source = map.getSource(FETCH_RANGE_SOURCE) as maplibregl.GeoJSONSource | undefined
+    if (!source) return
+    if (!fetchRangeCircle) {
+      source.setData({ type: 'FeatureCollection', features: [] })
+      return
+    }
+    source.setData({
+      type: 'FeatureCollection',
+      features: [
+        circlePolygon(fetchRangeCircle.lon, fetchRangeCircle.lat, fetchRangeCircle.radiusM),
+      ],
+    })
+  }, [mapReady, fetchRangeCircle])
+
+  // ルートオーバーレイの更新
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapReady || !map) return
+    const source = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined
+    if (!source) return
+    source.setData(routeGeoJson ?? { type: 'FeatureCollection', features: [] })
+  }, [mapReady, routeGeoJson])
 
   return (
     <div className={`relative min-h-0 w-full min-w-0 flex-1 ${className}`}>

@@ -54,7 +54,8 @@ from ..optimization.defaults import (
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
 from ..optimization.run import run_joint_simulated_annealing, run_simulated_annealing
-from ..optimization.types import AnnealOptions, OptimizeWeights, RestartResult, TraceStep, Transform
+from ..optimization.serialize import restart_result_to_dict
+from ..optimization.types import AnnealOptions, OptimizeWeights
 from .preview import ways_raw_preview
 
 router = APIRouter()
@@ -173,48 +174,6 @@ class DebugOptimizeBody(BaseModel):
     record_trace: bool = True
 
 
-def _trace_step_to_dict(t: TraceStep) -> dict[str, Any]:
-    d: dict[str, Any] = {
-        "step_index": t.step_index,
-        "temperature": t.temperature,
-        "accepted": t.accepted,
-        "score_total": t.score_total,
-        "score_terms": t.score_terms,
-        "transform": t.transform,
-        "edge_ids": t.edge_ids,
-    }
-    if t.edge_ids_per_component:
-        d["edge_ids_per_component"] = t.edge_ids_per_component
-    return d
-
-
-def _transform_to_dict(t: Transform) -> dict[str, float]:
-    return {
-        "tx_m": t.tx_m,
-        "ty_m": t.ty_m,
-        "theta_rad": t.theta_rad,
-        "scale": t.scale,
-    }
-
-
-def _restart_result_to_dict(r: RestartResult) -> dict[str, Any]:
-    return {
-        "restart_index": r.restart_index,
-        "seed": r.seed,
-        "initial_transform": _transform_to_dict(r.initial_transform),
-        "best_transform": _transform_to_dict(r.best_transform),
-        "best_edge_ids": r.best_edge_ids,
-        "best_score": r.best_score,
-        "best_breakdown": r.best_breakdown.as_dict(),
-        "route_length_m": r.best_route_length_m,
-        "route_length_km": round(r.best_route_length_m / 1000.0, 6),
-        "iterations_planned": r.iterations_planned,
-        "iterations_completed": r.iterations_completed,
-        "accepted_moves": r.accepted_moves,
-        "acceptance_rate": r.acceptance_rate,
-        "deadline_hit": r.deadline_hit,
-        "trace_steps": [_trace_step_to_dict(s) for s in r.trace_steps],
-    }
 
 
 @router.get("/ways")
@@ -362,7 +321,7 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
             "route_length_m": total_length_m,
             "route_length_km": round(total_length_m / 1000.0, 6),
             "optimizer_meta": joint_result.optimizer_meta,
-            "restarts": [_restart_result_to_dict(r) for r in joint_result.restart_results],
+            "restarts": [restart_result_to_dict(r) for r in joint_result.restart_results],
             "components": [
                 {
                     "component_index": c.component_index,
@@ -397,7 +356,7 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         "route_length_m": opt_result.best_route_length_m,
         "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
         "optimizer_meta": opt_result.optimizer_meta,
-        "restarts": [_restart_result_to_dict(r) for r in opt_result.restart_results],
+        "restarts": [restart_result_to_dict(r) for r in opt_result.restart_results],
         "components": [
             {
                 "component_index": 0,

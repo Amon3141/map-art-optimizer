@@ -1,4 +1,4 @@
-import type { Point } from '../../lib/simplify'
+import type { Point } from '../lib/simplify'
 
 type Props = {
   paths: Point[][]
@@ -13,17 +13,15 @@ const MARKER_R = 2.2
 const MIN_SEG_FOR_ARROW = ARROW_LEN * 2.5
 const LONGI_OFFSET = 1.5
 
-// 複数コンポーネントの色パレット
 const PATH_COLORS = ['#2d4a5e', '#5e2d4a', '#2d5e4a', '#4a5e2d', '#4a2d5e']
 
 const pk = (x: number, y: number) => `${Math.round(x * 100)},${Math.round(y * 100)}`
 
-/** 処理済みパス（複数コンポーネント対応）の巡回順を可視化する SVG プレビュー（デバッグ用） */
-export function SinglePathDebugPreview({ paths, className = '' }: Props) {
+/** 処理済みパス（複数コンポーネント対応）の巡回順を可視化する SVG プレビュー */
+export function RouteOrderPreview({ paths, className = '' }: Props) {
   const validPaths = paths.filter((p) => p.length >= 2)
   if (validPaths.length === 0) return null
 
-  // 全コンポーネント共通のバウンディングボックスとスケール
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const path of validPaths) {
     for (const p of path) {
@@ -41,14 +39,12 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
   const sx = (p: Point) => left + (p.x - minX) * scale
   const sy = (p: Point) => top + (p.y - minY) * scale
 
-  // 凡例: 1コンポーネントで回路なら "始/終"、それ以外は常に "始点 / 終点"
   const isSingleCircuit = (() => {
     if (validPaths.length !== 1) return false
     const ks = validPaths[0].map((p) => pk(sx(p), sy(p)))
     return ks[0] === ks[ks.length - 1]
   })()
 
-  // --- 各コンポーネントの描画要素を生成 ---
   const componentElements: React.ReactNode[] = validPaths.map((path, pathIdx) => {
     const color = PATH_COLORS[pathIdx % PATH_COLORS.length]
     const pathKeys = path.map((p) => pk(sx(p), sy(p)))
@@ -64,35 +60,26 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
     const endKey = pathKeys[pathKeys.length - 1]
     const isCircuit = startKey === endKey
 
-    // 交点: 2回以上出現
     const junctionKeys = new Set<string>()
     for (const [k, count] of keyCounts) {
       if (count > 1) junctionKeys.add(k)
     }
-    // 端点: 折り返し点 (path[i-1] == path[i+1])
     const endpointKeys = new Set<string>()
     for (let i = 1; i < path.length - 1; i++) {
       if (pathKeys[i - 1] === pathKeys[i + 1]) endpointKeys.add(pathKeys[i])
     }
 
-    // 注目頂点: 巡回中に通過するたびに番号を追加
     const visitOrder = new Map<string, number[]>()
     let counter = 1
     for (let i = 0; i < pathKeys.length; i++) {
       const k = pathKeys[i]
-      if (
-        i === 0 ||
-        i === path.length - 1 ||
-        endpointKeys.has(k) ||
-        junctionKeys.has(k)
-      ) {
+      if (i === 0 || i === path.length - 1 || endpointKeys.has(k) || junctionKeys.has(k)) {
         const nums = visitOrder.get(k)
         if (nums) nums.push(counter++)
         else visitOrder.set(k, [counter++])
       }
     }
 
-    // 双方向エッジ検出
     const segDir = new Map<string, { fwd: number; bwd: number }>()
     for (let i = 0; i < path.length - 1; i++) {
       const x1 = sx(path[i]), y1 = sy(path[i])
@@ -106,7 +93,6 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
       segDir.set(segKey, e)
     }
 
-    // 矢印
     const arrows: React.ReactNode[] = []
     for (let i = 0; i < path.length - 1; i++) {
       const x1 = sx(path[i]), y1 = sy(path[i])
@@ -144,7 +130,6 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
       )
     }
 
-    // 番号ラベル
     const labels: React.ReactNode[] = []
     for (const [key, nums] of visitOrder) {
       const coord = svgCoords.get(key)!
@@ -182,7 +167,6 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
         />
         {arrows}
         {labels}
-        {/* 終点マーカー */}
         {!isCircuit && (
           <circle
             cx={endCoord.x}
@@ -194,7 +178,6 @@ export function SinglePathDebugPreview({ paths, className = '' }: Props) {
             vectorEffect="non-scaling-stroke"
           />
         )}
-        {/* 始点マーカー */}
         {isCircuit ? (
           <>
             <circle
