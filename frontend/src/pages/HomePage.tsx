@@ -54,6 +54,7 @@ export function HomePage() {
   const [fetchRadiusErrorOpen, setFetchRadiusErrorOpen] = useState(false)
   const [fetchRadiusErrorMessage, setFetchRadiusErrorMessage] = useState('')
   const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER)
+  const [showFetchRange, setShowFetchRange] = useState(true)
   const [stopConfirmVariant, setStopConfirmVariant] = useState<StopOptimizeConfirmVariant | null>(
     null,
   )
@@ -66,21 +67,44 @@ export function HomePage() {
     [strokeData],
   )
 
+  const revealFetchRange = useCallback(() => setShowFetchRange(true), [])
+
   // 結果が届いたら最良候補を自動選択してトレースをリセット
   useEffect(() => {
     if (optimizeState.kind === 'done') {
       const top = optimizeState.result.ranked_candidates?.[0]
       setSelectedCandidateId(top?.candidate_id ?? null)
       setTraceRouteOverride(null)
+      setShowFetchRange(false)
     }
   }, [optimizeState])
 
-  const fetchRangeCircle = useMemo(
-    () =>
-      optimizeState.kind !== 'running'
-        ? { lon: mapCenter.lon, lat: mapCenter.lat, radiusM: fetchRadiusM }
-        : null,
-    [optimizeState.kind, mapCenter, fetchRadiusM],
+  const fetchRangeCircle = useMemo(() => {
+    if (!showFetchRange) return null
+    if (optimizeState.kind === 'running') {
+      return {
+        lon: optimizeState.centerLon,
+        lat: optimizeState.centerLat,
+        radiusM: optimizeState.fetchRadiusM,
+      }
+    }
+    return { lon: mapCenter.lon, lat: mapCenter.lat, radiusM: fetchRadiusM }
+  }, [showFetchRange, optimizeState, mapCenter, fetchRadiusM])
+
+  const handleSpeedPresetChange = useCallback(
+    (p: SpeedPreset) => {
+      setSpeedPreset(p)
+      revealFetchRange()
+    },
+    [revealFetchRange],
+  )
+
+  const handleFetchRadiusChange = useCallback(
+    (radiusM: number) => {
+      setFetchRadiusM(radiusM)
+      revealFetchRange()
+    },
+    [revealFetchRange],
   )
 
   const stopOptimization = useCallback(() => {
@@ -98,7 +122,14 @@ export function HomePage() {
       const ac = new AbortController()
       abortRef.current = ac
 
-      setOptimizeState({ kind: 'running', startedAt: Date.now(), preset })
+      setOptimizeState({
+        kind: 'running',
+        startedAt: Date.now(),
+        preset,
+        centerLon: mapCenter.lon,
+        centerLat: mapCenter.lat,
+        fetchRadiusM,
+      })
       setTraceRouteOverride(null)
       setSelectedCandidateId(null)
 
@@ -212,9 +243,10 @@ export function HomePage() {
         onOpenSketch={handleOpenSketch}
         optimizeState={optimizeState}
         speedPreset={speedPreset}
-        onSpeedPresetChange={setSpeedPreset}
+        onSpeedPresetChange={handleSpeedPresetChange}
         fetchRadiusM={fetchRadiusM}
-        onFetchRadiusChange={setFetchRadiusM}
+        onFetchRadiusChange={handleFetchRadiusChange}
+        onExplorationSettingsChange={revealFetchRange}
         onOptimize={handleOptimize}
       />
 
@@ -225,6 +257,8 @@ export function HomePage() {
             onCenterChange={(lon, lat) => setMapCenter({ lon, lat })}
             routeGeoJson={routeGeoJson}
             fetchRangeCircle={fetchRangeCircle}
+            showFetchRange={showFetchRange}
+            onShowFetchRangeChange={setShowFetchRange}
           />
 
           <OptimizeStatusOverlay
@@ -264,6 +298,7 @@ export function HomePage() {
           onConfirm={(data) => {
             setStrokeData(data)
             setSketchOpen(false)
+            revealFetchRange()
             if (optimizeState.kind !== 'running') {
               setOptimizeState({ kind: 'idle' })
               setTraceRouteOverride(null)

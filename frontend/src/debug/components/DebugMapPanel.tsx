@@ -5,6 +5,7 @@ import maplibregl, {
 } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 import { BasemapSelector, type BasemapMode } from '../../components/BasemapSelector'
+import { MapPillToggle } from '../../components/MapPillToggle'
 import {
   DEBUG_BASEMAP_STYLE,
   DEFAULT_MAP_CENTER,
@@ -515,40 +516,13 @@ export function DebugMapPanel({
             <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
           </div>
           {viewMode === 'graph' ? (
-            <div
-              className="pointer-events-auto inline-flex w-fit shrink-0 flex-nowrap items-stretch gap-0 rounded-full border border-dashed border-stone-400 bg-[#fdfbf7]/95 p-0.5 shadow-sm backdrop-blur-[2px]"
-              role="radiogroup"
-              aria-label="グラフノードの表示"
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={!showGraphNodes}
-                onClick={() => setShowGraphNodes(false)}
-                className={[
-                  'min-w-0 shrink rounded-l-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
-                  !showGraphNodes
-                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
-                    : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
-                ].join(' ')}
-              >
-                ノードなし
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={showGraphNodes}
-                onClick={() => setShowGraphNodes(true)}
-                className={[
-                  'min-w-0 shrink rounded-r-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm',
-                  showGraphNodes
-                    ? 'bg-[#f3f6f8] text-[#2d4a5e] shadow-inner ring-1 ring-stone-200/80'
-                    : 'text-stone-600 hover:border-[#4a6f8a]/30 hover:bg-white/80 hover:text-stone-800',
-                ].join(' ')}
-              >
-                ノードあり
-              </button>
-            </div>
+            <MapPillToggle
+              value={showGraphNodes}
+              onChange={setShowGraphNodes}
+              offLabel="ノードなし"
+              onLabel="ノードあり"
+              ariaLabel="グラフノードの表示"
+            />
           ) : null}
         </div>
       </div>

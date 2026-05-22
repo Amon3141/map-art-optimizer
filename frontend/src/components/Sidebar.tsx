@@ -18,7 +18,14 @@ import type { StrokeData } from '../lib/strokeTypes'
 
 export type OptimizeState =
   | { kind: 'idle' }
-  | { kind: 'running'; startedAt: number; preset: SpeedPreset }
+  | {
+      kind: 'running'
+      startedAt: number
+      preset: SpeedPreset
+      centerLon: number
+      centerLat: number
+      fetchRadiusM: number
+    }
   | { kind: 'done'; result: OptimizeApiResponse }
   | { kind: 'error'; message: string }
 
@@ -33,6 +40,7 @@ export type SidebarProps = {
   onSpeedPresetChange: (p: SpeedPreset) => void
   fetchRadiusM: number
   onFetchRadiusChange: (radiusM: number) => void
+  onExplorationSettingsChange?: () => void
   onOptimize: (preset: SpeedPreset, ignoreSourceRotation: boolean) => void
 }
 
@@ -47,6 +55,7 @@ export function Sidebar({
   onSpeedPresetChange,
   fetchRadiusM,
   onFetchRadiusChange,
+  onExplorationSettingsChange,
   onOptimize,
 }: SidebarProps) {
   const [lockRotation, setLockRotation] = useState(!DEFAULT_IGNORE_SOURCE_ROTATION)
@@ -139,7 +148,8 @@ export function Sidebar({
             <button
               key={p}
               type="button"
-              className={`rounded-xl border py-2 text-center transition-colors ${
+              disabled={isRunning}
+              className={`rounded-xl border py-2 text-center transition-colors disabled:opacity-50 ${
                 speedPreset === p
                   ? 'border-[#4a6f8a] bg-[#4a6f8a] text-white'
                   : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300'
@@ -179,7 +189,10 @@ export function Sidebar({
         <button
           type="button"
           className="flex items-center justify-between text-sm text-stone-700"
-          onClick={() => setLockRotation((v) => !v)}
+          onClick={() => {
+            setLockRotation((v) => !v)
+            onExplorationSettingsChange?.()
+          }}
           disabled={isRunning}
         >
           <span>向きを固定する</span>

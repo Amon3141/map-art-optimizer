@@ -1,6 +1,7 @@
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 import { BasemapSelector, type BasemapMode } from './BasemapSelector'
+import { MapPillToggle } from './MapPillToggle'
 import {
   DEBUG_BASEMAP_STYLE,
   DEFAULT_MAP_CENTER,
@@ -21,6 +22,8 @@ export type MapPanelProps = {
   onCenterChange?: (lon: number, lat: number) => void
   routeGeoJson?: GeoJSON.FeatureCollection | null
   fetchRangeCircle?: { lon: number; lat: number; radiusM: number } | null
+  showFetchRange: boolean
+  onShowFetchRangeChange: (show: boolean) => void
 }
 
 export function MapPanel({
@@ -29,6 +32,8 @@ export function MapPanel({
   onCenterChange,
   routeGeoJson,
   fetchRangeCircle,
+  showFetchRange,
+  onShowFetchRangeChange,
 }: MapPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -167,8 +172,17 @@ export function MapPanel({
         className="pointer-events-none absolute inset-0 z-1 shadow-[inset_0_4px_40px_0_rgb(62_36_30/0.095),inset_0_0_280px_0_rgb(48_28_24/0.115)]"
         aria-hidden
       />
-      <div className="pointer-events-none absolute left-3 top-3 z-10 sm:left-4 sm:top-4">
-        <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[min(100%,calc(100vw-1.5rem))] flex-wrap items-stretch gap-3 sm:left-4 sm:top-4">
+        <div className="pointer-events-auto shrink-0">
+          <BasemapSelector value={basemapMode} onChange={setBasemapMode} />
+        </div>
+        <MapPillToggle
+          value={showFetchRange}
+          onChange={onShowFetchRangeChange}
+          offLabel="範囲円なし"
+          onLabel="範囲円あり"
+          ariaLabel="探索範囲の表示"
+        />
       </div>
     </div>
   )
