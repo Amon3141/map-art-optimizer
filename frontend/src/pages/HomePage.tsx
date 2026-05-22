@@ -105,7 +105,7 @@ export function HomePage() {
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-0 bg-[#faf8f4] lg:flex-row lg:gap-5">
+    <div className="flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
       <Sidebar
         targetKm={targetKm}
         onTargetKmChange={setTargetKm}
@@ -118,8 +118,8 @@ export function HomePage() {
         onOptimize={handleOptimize}
       />
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col px-3 pb-3 pt-1.5 lg:min-h-0 lg:flex-1 lg:px-5 lg:pb-5 lg:pl-0 lg:pt-5">
-        <div className="relative flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] lg:min-h-0">
+      <main className="flex min-w-0 shrink-0 flex-col px-3 pb-3 pt-1.5 max-lg:flex-none lg:min-h-0 lg:flex-1 lg:px-5 lg:pb-5 lg:pl-0 lg:pt-5">
+        <div className="relative flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] max-lg:h-[70dvh] max-lg:min-h-[320px] lg:min-h-0 lg:flex-1">
           <MapPanel
             className="min-h-0 w-full flex-1"
             onCenterChange={(lon, lat) => setMapCenter({ lon, lat })}

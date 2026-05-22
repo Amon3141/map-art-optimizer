@@ -173,11 +173,11 @@ export function DebugMapPanel({
   const lastGraphFitTriggerRef = useRef<number>(-1)
   const popupRef = useRef<Popup | null>(null)
   const onMapReadyRef = useRef(onMapReady)
-  const basemapModeRef = useRef<BasemapMode>('normal')
+  const basemapModeRef = useRef<BasemapMode>('light')
   const viewModeRef = useRef<DebugMapViewMode>('osm')
   const showGraphNodesRef = useRef(true)
   const [mapReady, setMapReady] = useState(false)
-  const [basemapMode, setBasemapMode] = useState<BasemapMode>('normal')
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>('light')
   const [showGraphNodes, setShowGraphNodes] = useState(true)
 
   onMapReadyRef.current = onMapReady

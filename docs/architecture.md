@@ -21,7 +21,7 @@ map-draw-optimizer/
 | 変数 | 説明 |
 |------|------|
 | `VITE_API_BASE` | バックエンドのオリジン（例: `http://127.0.0.1:8000`）。未設定時は相対パス `/api` を使用。開発中は Vite の `server.proxy` で `127.0.0.1:8000` に転送。 |
-| `VITE_DEBUG` | `true` のときデバッグナビを表示 |
+| `VITE_APP_ENV` | `development` \| `production`。未設定時は `vite dev` → development、`vite build` → production。development 時のみテキストツール・距離目安・`/debug` を有効 |
 
 ### backend（`.env`）
 

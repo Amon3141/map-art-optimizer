@@ -33,13 +33,13 @@ pytest
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # 任意（デバッグナビ用）
+cp .env.example .env        # 任意（開発 UI 用）
 npm run dev
 ```
 
 ブラウザで `http://localhost:5173` を開く。開発時は Vite が `/api` と `/health` を `http://127.0.0.1:8000` にプロキシする。
 
 - メイン: `/`
-- デバッグ: `/debug`（サイドバーからのリンクは `VITE_DEBUG=true` のときのみ）
+- デバッグ: `/debug`（`VITE_APP_ENV=development` のときのみ。未設定の `vite dev` でも development）
 
 詳細な共有用メモは [`docs/`](docs/) を参照。

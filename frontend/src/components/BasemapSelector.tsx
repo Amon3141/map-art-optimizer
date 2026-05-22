@@ -3,7 +3,7 @@ import { useRef } from 'react'
 export type BasemapMode = 'normal' | 'light' | 'dark'
 
 const OPTIONS: { mode: BasemapMode; label: string }[] = [
-  { mode: 'normal', label: '普通' },
+  { mode: 'normal', label: '標準' },
   { mode: 'light', label: 'ライト' },
   { mode: 'dark', label: 'ダーク' },
 ]

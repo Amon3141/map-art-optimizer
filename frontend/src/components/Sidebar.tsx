@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { MdOutlineDraw } from 'react-icons/md'
 import { Link } from 'react-router-dom'
 import { RouteOrderPreview } from './RouteOrderPreview'
@@ -10,6 +10,7 @@ import {
   SPEED_PRESET_META,
   type SpeedPreset,
 } from '../lib/productionDefaults'
+import { isDevelopment, isProduction } from '../lib/appEnv'
 import type { StrokeData } from '../lib/strokeTypes'
 
 export type OptimizeState =
@@ -30,8 +31,6 @@ export type SidebarProps = {
   onOptimize: (preset: SpeedPreset, ignoreSourceRotation: boolean) => void
 }
 
-const showDebugNav = import.meta.env.VITE_DEBUG === 'true'
-
 export function Sidebar({
   targetKm,
   onTargetKmChange,
@@ -44,18 +43,11 @@ export function Sidebar({
   onOptimize,
 }: SidebarProps) {
   const [lockRotation, setLockRotation] = useState(!DEFAULT_IGNORE_SOURCE_ROTATION)
-  const [previewMode, setPreviewMode] = useState<'shape' | 'order'>('shape')
+  const [previewMode, setPreviewMode] = useState<'shape' | 'order'>('order')
 
   const hasShape = Boolean(strokeData && strokeData.strokes.some((s) => s.length >= 2))
   const isRunning = optimizeState.kind === 'running'
   const result = optimizeState.kind === 'done' ? optimizeState.result : null
-
-  // 結果が届いたら巡回順表示に切り替え
-  useEffect(() => {
-    if (optimizeState.kind === 'done') {
-      setPreviewMode('order')
-    }
-  }, [optimizeState.kind])
 
   function handleOptimize() {
     if (!hasShape || isRunning) return
@@ -87,8 +79,7 @@ export function Sidebar({
 
         {hasShape && strokeData ? (
           <div className="flex flex-col gap-2">
-            {/* プレビューモード切り替え（結果あり時のみ） */}
-            {result && canShowOrderPreview && (
+            {canShowOrderPreview && (
               <div className="flex rounded-lg border border-stone-200 bg-stone-100 p-0.5 text-xs">
                 <button
                   type="button"
@@ -116,15 +107,15 @@ export function Sidebar({
             )}
 
             {/* プレビュー本体 */}
-            {result && canShowOrderPreview && previewMode === 'order' ? (
+            {canShowOrderPreview && previewMode === 'order' ? (
               <RouteOrderPreview
                 paths={processedComponents!}
-                className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                className="mx-auto aspect-square w-full max-w-[min(100%,360px)] shrink-0"
               />
             ) : (
               <SketchPreview
                 strokes={strokeData.strokes}
-                className="aspect-square mx-auto w-full max-w-[220px] lg:mx-0 lg:max-w-none"
+                className="mx-auto aspect-square w-full max-w-[min(100%,360px)] shrink-0"
               />
             )}
           </div>
@@ -179,20 +170,21 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* 距離の目安 */}
-      <div className="flex flex-col gap-2">
-        <label className="block text-sm font-medium text-stone-700">
-          距離の目安（km）
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={Number.isFinite(targetKm) ? targetKm : 1}
-            onChange={(e) => onTargetKmChange(Math.max(1, parseInt(e.target.value, 10) || 1))}
-            className="mt-1.5 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 shadow-inner outline-none ring-[#4a6f8a] focus:ring-2"
-          />
-        </label>
-      </div>
+      {!isProduction ? (
+        <div className="flex flex-col gap-2">
+          <label className="block text-sm font-medium text-stone-700">
+            距離の目安（km）
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={Number.isFinite(targetKm) ? targetKm : 1}
+              onChange={(e) => onTargetKmChange(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="mt-1.5 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 shadow-inner outline-none ring-[#4a6f8a] focus:ring-2"
+            />
+          </label>
+        </div>
+      ) : null}
 
       {/* アクションボタン */}
       <button
@@ -211,7 +203,7 @@ export function Sidebar({
         </div>
       )}
 
-      {showDebugNav ? (
+      {isDevelopment ? (
         <Link
           to="/debug"
           className="mt-auto text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"

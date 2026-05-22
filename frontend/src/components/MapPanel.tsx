@@ -34,9 +34,9 @@ export function MapPanel({
   const mapRef = useRef<MapLibreMap | null>(null)
   const onMapReadyRef = useRef(onMapReady)
   const onCenterChangeRef = useRef(onCenterChange)
-  const basemapModeRef = useRef<BasemapMode>('normal')
+  const basemapModeRef = useRef<BasemapMode>('light')
   const [mapReady, setMapReady] = useState(false)
-  const [basemapMode, setBasemapMode] = useState<BasemapMode>('normal')
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>('light')
 
   onMapReadyRef.current = onMapReady
   onCenterChangeRef.current = onCenterChange

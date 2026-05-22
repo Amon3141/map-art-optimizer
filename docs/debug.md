@@ -25,7 +25,7 @@
 
 ### ホームからの導線
 
-- [frontend/src/components/Sidebar.tsx](../frontend/src/components/Sidebar.tsx): `VITE_DEBUG=true` のときだけ `/debug` へのリンクを表示する。
+- [frontend/src/components/Sidebar.tsx](../frontend/src/components/Sidebar.tsx): `VITE_APP_ENV=development` のときだけ `/debug` へのリンクを表示する（production では `/debug` は `/` へリダイレクト）。
 - API のベース URL は `VITE_API_BASE`（デバッグページの説明文にも記載）。
 
 ## バックエンド

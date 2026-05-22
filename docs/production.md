@@ -4,6 +4,55 @@
 
 ---
 
+## 本番環境の UI ゲート（`VITE_APP_ENV`）
+
+フロントは `VITE_APP_ENV`（`development` | `production`）で公開範囲を切り替える。判定は [`frontend/src/lib/appEnv.ts`](../frontend/src/lib/appEnv.ts) に集約し、各コンポーネントは `isProduction` / `isDevelopment` を import する。
+
+### 環境変数の解決
+
+| `VITE_APP_ENV` | 結果 |
+|----------------|------|
+| `production` | production |
+| `development` | development |
+| 未設定 or 不正 | `vite dev` → development、`vite build` → production |
+
+公開デプロイでは `vite build` のみで production になる（明示は任意）。ローカルで本番 UI を試すときは `VITE_APP_ENV=production npm run dev`。
+
+### production で非表示・到達不可にするもの
+
+| 対象 | 挙動 | 実装 |
+|------|------|------|
+| スケッチのテキストツール | 入力モード切替から「テキスト」を除外。手書き・ペン（タッチ端末ではペンも非表示）のみ | [`SketchModal.tsx`](../frontend/src/components/SketchModal.tsx) の `inputModeOptions` |
+| 距離の目安（km） | サイドバーの数値入力 UI を非表示 | [`Sidebar.tsx`](../frontend/src/components/Sidebar.tsx) |
+| デバッグページへのリンク | ホームサイドバー下部の「デバッグページへ →」を非表示 | [`Sidebar.tsx`](../frontend/src/components/Sidebar.tsx) |
+| `/debug` ルート | URL 直打ち・ブックマークでも `/` へ `replace` リダイレクト。`DebugPage` はマウントしない | [`App.tsx`](../frontend/src/App.tsx) |
+
+**補足（距離の目安）:** UI は隠すが、`HomePage` の `targetKm` state は残る（API 未連携のため本番挙動への影響なし）。将来 API に載せる場合は development 側 UI から送る想定。
+
+**補足（テキスト）:** production では `inputMode` の初期値 `freehand` のみ。テキスト用の opentype 生成・デバウンス処理はバンドルに含まれるが、ユーザーからは選択不可。
+
+### production でも利用できるもの（本番 UI）
+
+- ホーム `/`（スケッチ入力・速度プリセット・向き固定トグル・最適化実行）
+- 手書き・ペン（デスクトップ等）によるスケッチ
+- 確定形プレビュー（もとの形 / 巡回順）
+- 地図・ルートオーバーレイ・`RouteInfoPanel`（距離・候補・トレース再生）
+- `POST /api/optimize`（道路取得〜最適化の一括）
+
+### バックエンド（本番ゲートの対象外）
+
+`/api/debug/*` は環境変数で無効化しない（同一デプロイ・下記「実装原則」のとおり）。フロントの `/debug` 遮断のみでデバッグ UI への導線を切る。API を直接叩くことは可能。
+
+### development との差（要約）
+
+| 項目 | development | production |
+|------|-------------|------------|
+| テキストツール | あり | なし |
+| 距離の目安 UI | あり | なし |
+| `/debug` リンク・ルート | あり | なし（`/` へリダイレクト） |
+
+---
+
 ## UX 設計決定
 
 ### 角度制約 (ignore_source_rotation)
@@ -67,7 +116,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 | 角度制約デフォルト | ON（回転ペナルティあり） | OFF（回転自由） |
 | パラメータ設定 | 30+ パラメータを細かく調整可 | 速度プリセット + 角度トグルのみ |
 | トレース表示 | 全 trace step を完全表示 | 結果後に軽量スライダー |
-| 環境分離 | `VITE_DEBUG=true` で表示 | 常時表示 |
+| 環境分離（UI ゲート） | 上記「本番環境の UI ゲート」参照 | テキスト・距離目安・`/debug` を非表示 |
 
 ---
 

@@ -4,6 +4,7 @@ import { simplifyStroke } from '../lib/simplify'
 import type { Point } from '../lib/simplify'
 import { textToStrokes } from '../lib/textToStrokes'
 import { applyPenSnap } from '../lib/penNodeSnap'
+import { isProduction } from '../lib/appEnv'
 import { MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
 import { SketchPreview } from './SketchPreview'
 
@@ -392,7 +393,9 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     ...(!isPenUnsupported
       ? [{ mode: 'pen' as InputMode, label: 'ペン', icon: <MdEdit className="h-3.5 w-3.5" aria-hidden /> }]
       : []),
-    { mode: 'text', label: 'テキスト', icon: <MdTextFields className="h-3.5 w-3.5" aria-hidden /> },
+    ...(!isProduction
+      ? [{ mode: 'text' as InputMode, label: 'テキスト', icon: <MdTextFields className="h-3.5 w-3.5" aria-hidden /> }]
+      : []),
   ]
 
   const hasAnyContent = strokes.length > 0 || penCurrentPts.length > 0
