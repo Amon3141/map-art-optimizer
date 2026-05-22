@@ -7,16 +7,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+import threading
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .osm.geojson import overpass_elements_to_geojson
-from .osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
+from .osm.ingest import GraphBuildResult, build_graph_from_geojson, graph_to_geojson_fc
 from .osm.overpass import fetch_interpreter
 from .preprocess import GraphPreprocessOptions
 from .optimization.production_defaults import (
@@ -30,10 +33,13 @@ from .optimization.production_defaults import (
     SpeedPreset,
     SpeedPresetConfig,
 )
-from .optimization.run import run_joint_simulated_annealing, run_simulated_annealing
+from .optimization.run import (
+    OptimizationCancelled,
+    run_joint_simulated_annealing,
+    run_simulated_annealing,
+)
 from .optimization.serialize import restart_result_to_dict
 from .optimization.types import AnnealOptions, OptimizeWeights
-
 router = APIRouter()
 
 
@@ -85,53 +91,17 @@ def _compute_adaptive_radius(way_density: float, preset: SpeedPresetConfig) -> f
     return max(ADAPTIVE_RADIUS_MIN_M, min(radius_m, preset.fetch_radius_m))
 
 
-@router.post("/optimize")
-async def production_optimize(body: ProductionOptimizeBody) -> dict[str, Any]:
-    if len(body.stroke_components) < 1:
-        raise HTTPException(status_code=400, detail="stroke_components must be non-empty")
-
-    preset = SPEED_PRESETS[body.speed_preset]
-
-    # パイロットクエリで道路密度を推定し、適応半径を決定（失敗時はフォールバック）
-    way_density = await _estimate_way_density_per_km2(body.center_lon, body.center_lat)
-    radius_m = _compute_adaptive_radius(way_density, preset)
-    min_lat, min_lon, max_lat, max_lon = _center_to_bbox(
-        body.center_lon, body.center_lat, radius_m
-    )
-
-    # --- 道路データ取得 ---
-    way_query = f"""[out:json][timeout:30];
-(
-  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
-);
-out body;
->;
-out skel qt;
-"""
-    try:
-        data = await fetch_interpreter(way_query, timeout_s=40.0)
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"道路データの取得に失敗しました: {e}") from e
-
-    elements = data.get("elements") or []
-    ways = [e for e in elements if e.get("type") == "way"]
-    if len(ways) > PRODUCTION_OVERPASS_MAX_WAYS:
-        raise HTTPException(
-            status_code=413,
-            detail="この場所は道路データが多すぎて処理できませんでした。別のエリアを試してみてください。",
-        )
-
-    fc = overpass_elements_to_geojson(elements, limit_ways=None)
-
-    # --- グラフ構築 ---
+def _run_optimization_sync(
+    built: GraphBuildResult,
+    body: ProductionOptimizeBody,
+    preset: SpeedPresetConfig,
+    should_cancel: Callable[[], bool],
+) -> dict[str, Any]:
+    """グラフ構築済みの状態から焼きなましを実行（スレッド上で呼ぶ）。"""
     lon0, lat0 = body.center_lon, body.center_lat
     opts = GraphPreprocessOptions()
-    built = build_graph_from_geojson(fc, lon0, lat0, opts)
-
-    # トレース再生用のエッジ GeoJSON
     _nodes_fc, edges_fc = graph_to_geojson_fc(built.graph, lon0, lat0, opts)
 
-    # --- 最適化オプション ---
     anneal = replace(
         AnnealOptions(),
         optimization_budget_seconds=preset.budget_s,
@@ -147,7 +117,6 @@ out skel qt;
         "mode": "local_tangent_plane",
     }
 
-    # --- 最適化実行 ---
     if len(body.stroke_components) > 1:
         components_payload = [
             [p.model_dump() for p in comp] for comp in body.stroke_components
@@ -160,6 +129,7 @@ out skel qt;
             weights=weights,
             opt=anneal,
             record_trace=True,
+            should_cancel=should_cancel,
         )
         total_length_m = sum(c.route_length_m for c in joint_result.components)
         rep_bd = joint_result.components[0].best_breakdown if joint_result.components else None
@@ -199,6 +169,7 @@ out skel qt;
         weights=weights,
         opt=anneal,
         record_trace=True,
+        should_cancel=should_cancel,
     )
     return {
         "projection": projection_info,
@@ -221,3 +192,87 @@ out skel qt;
         ],
         "edges_geojson": edges_fc,
     }
+
+
+@router.post("/optimize")
+async def production_optimize(
+    request: Request, body: ProductionOptimizeBody
+) -> dict[str, Any]:
+    if len(body.stroke_components) < 1:
+        raise HTTPException(status_code=400, detail="stroke_components must be non-empty")
+
+    cancelled = threading.Event()
+
+    async def watch_disconnect() -> None:
+        while not cancelled.is_set():
+            if await request.is_disconnected():
+                cancelled.set()
+                return
+            await asyncio.sleep(0.2)
+
+    watcher = asyncio.create_task(watch_disconnect())
+    should_cancel = cancelled.is_set
+
+    try:
+        if should_cancel():
+            raise OptimizationCancelled()
+
+        preset = SPEED_PRESETS[body.speed_preset]
+
+        way_density = await _estimate_way_density_per_km2(body.center_lon, body.center_lat)
+        if should_cancel():
+            raise OptimizationCancelled()
+
+        radius_m = _compute_adaptive_radius(way_density, preset)
+        min_lat, min_lon, max_lat, max_lon = _center_to_bbox(
+            body.center_lon, body.center_lat, radius_m
+        )
+
+        way_query = f"""[out:json][timeout:30];
+(
+  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
+);
+out body;
+>;
+out skel qt;
+"""
+        try:
+            data = await fetch_interpreter(way_query, timeout_s=40.0)
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502, detail=f"道路データの取得に失敗しました: {e}"
+            ) from e
+
+        if should_cancel():
+            raise OptimizationCancelled()
+
+        elements = data.get("elements") or []
+        ways = [e for e in elements if e.get("type") == "way"]
+        if len(ways) > PRODUCTION_OVERPASS_MAX_WAYS:
+            raise HTTPException(
+                status_code=413,
+                detail="この場所は道路データが多すぎて処理できませんでした。別のエリアを試してみてください。",
+            )
+
+        fc = overpass_elements_to_geojson(elements, limit_ways=None)
+
+        lon0, lat0 = body.center_lon, body.center_lat
+        opts = GraphPreprocessOptions()
+        built = build_graph_from_geojson(fc, lon0, lat0, opts)
+
+        return await asyncio.to_thread(
+            _run_optimization_sync,
+            built,
+            body,
+            preset,
+            should_cancel,
+        )
+    except OptimizationCancelled:
+        raise HTTPException(status_code=499, detail="探索がキャンセルされました") from None
+    finally:
+        cancelled.set()
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass

@@ -3,7 +3,21 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections.abc import Callable
 from typing import Any
+
+
+class OptimizationCancelled(Exception):
+    """探索がクライアント切断または明示キャンセルで中断された。"""
+
+
+def _check_cancel(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise OptimizationCancelled()
+
+
+def _cancelled(should_cancel: Callable[[], bool] | None) -> bool:
+    return should_cancel is not None and should_cancel()
 
 from app.osm.projection import xy_m_to_lon_lat
 from app.preprocess.graph_model import RoadGraph
@@ -97,6 +111,7 @@ def _coarse_grid_search(
     span_x: float,
     span_y: float,
     grid_deadline: float,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[tuple[float, Transform]]:
     """
     (tx, ty, theta, scale) の粗いグリッドで評価し、スコア昇順の (score, transform) リストを返す。
@@ -141,7 +156,7 @@ def _coarse_grid_search(
         for scale in scale_vals:
             for tx in tx_vals:
                 for ty in ty_vals:
-                    if time.monotonic() >= grid_deadline:
+                    if time.monotonic() >= grid_deadline or _cancelled(should_cancel):
                         results.sort(key=lambda x: x[0])
                         return results
                     t = Transform(tx_m=tx, ty_m=ty, theta_rad=theta, scale=scale)
@@ -258,6 +273,7 @@ def run_simulated_annealing(
     weights: OptimizeWeights | None = None,
     opt: AnnealOptions | None = None,
     record_trace: bool = True,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> OptimizeResult:
     """手書きストロークと道路グラフから、マルチスタート焼きなましで候補ルートを返す。"""
     o = opt or AnnealOptions()
@@ -290,7 +306,9 @@ def run_simulated_annealing(
     # 粗いグリッド探索で初期解候補を取得
     grid_candidates = _coarse_grid_search(
         graph, adj, snap_index, node_index, stroke, w, o, span_x, span_y, grid_deadline,
+        should_cancel=should_cancel,
     )
+    _check_cancel(should_cancel)
     n_grid_candidates = len(grid_candidates)
 
     # スコアが極端に悪い候補（グラフ外に飛び出た等）を事前除外してから diversity 選択。
@@ -334,6 +352,7 @@ def run_simulated_annealing(
 
     restart_results: list[RestartResult] = []
     for restart_index in range(restart_count):
+        _check_cancel(should_cancel)
         restart_seed = restart_seeds[restart_index]
         initial_transform = initial_transforms[restart_index]
         restart_opt = AnnealOptions(
@@ -363,7 +382,9 @@ def run_simulated_annealing(
             snap_index=snap_index,
             node_index=node_index,
             deadline=deadline,
+            should_cancel=should_cancel,
         )
+        _check_cancel(should_cancel)
         length_m = route_geometric_length_m(graph, run.route.edge_ids)
         restart_results.append(
             RestartResult(
@@ -390,6 +411,8 @@ def run_simulated_annealing(
             break
 
     if not restart_results:
+        if _cancelled(should_cancel):
+            raise OptimizationCancelled()
         raise ValueError("optimizer produced no restart results")
 
     best_restart = min(restart_results, key=lambda r: r.best_score)
@@ -516,6 +539,7 @@ def run_joint_simulated_annealing(
     weights: OptimizeWeights | None = None,
     opt: AnnealOptions | None = None,
     record_trace: bool = True,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> JointOptimizeResult:
     """複数コンポーネントをジョイント焼きなましで最適化し、JointOptimizeResult を返す。"""
     o = opt or AnnealOptions()
@@ -559,7 +583,9 @@ def run_joint_simulated_annealing(
 
     grid_candidates = _coarse_grid_search(
         graph, adj, snap_index, node_index, base_stroke, w, o, span_x, span_y, grid_deadline,
+        should_cancel=should_cancel,
     )
+    _check_cancel(should_cancel)
     n_grid_candidates = len(grid_candidates)
 
     _SCORE_FILTER_MARGIN: float = 0.5
@@ -599,6 +625,7 @@ def run_joint_simulated_annealing(
     best_run: JointAnnealRunResult | None = None
 
     for restart_index in range(restart_count):
+        _check_cancel(should_cancel)
         restart_seed = restart_seeds[restart_index]
         initial_transform = initial_transforms[restart_index]
         restart_opt = AnnealOptions(
@@ -628,7 +655,9 @@ def run_joint_simulated_annealing(
             snap_index=snap_index,
             node_index=node_index,
             deadline=deadline,
+            should_cancel=should_cancel,
         )
+        _check_cancel(should_cancel)
         restart_results.append(
             _joint_run_to_restart_result(restart_index, restart_seed, initial_transform, run, graph)
         )
@@ -638,6 +667,8 @@ def run_joint_simulated_annealing(
             break
 
     if best_run is None:
+        if _cancelled(should_cancel):
+            raise OptimizationCancelled()
         raise ValueError("joint optimizer produced no results")
 
     # 各コンポーネントの結果を ComponentOptimizeResult にまとめる

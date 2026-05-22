@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.preprocess.graph_model import RoadGraph
@@ -90,6 +91,10 @@ class EvaluatedState:
 
 def _over_deadline(deadline: float | None) -> bool:
     return deadline is not None and time.monotonic() >= deadline
+
+
+def _is_cancelled(should_cancel: Callable[[], bool] | None) -> bool:
+    return should_cancel is not None and should_cancel()
 
 
 def _clamp_scale(scale: float) -> float:
@@ -254,6 +259,7 @@ def simulated_annealing_search(
     snap_index: AnyEdgeSnapIndex | None = None,
     node_index: NodeSpatialIndexGrid | None = None,
     deadline: float | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> AnnealRunResult:
     """スナップ元の変換パラメータを状態にした 1 restart 分の焼きなまし。"""
     if adj is None:
@@ -318,7 +324,7 @@ def simulated_annealing_search(
         _record_trace_step(trace, 0, _temperature_at(0, max_iterations, opt), True, current)
 
     for step in range(1, max_iterations + 1):
-        if _over_deadline(deadline):
+        if _over_deadline(deadline) or _is_cancelled(should_cancel):
             break
 
         iterations_completed += 1
@@ -433,6 +439,7 @@ def joint_simulated_annealing_search(
     snap_index: AnyEdgeSnapIndex | None = None,
     node_index: NodeSpatialIndexGrid | None = None,
     deadline: float | None = None,
+    should_cancel: Callable[[], bool] | None = None,
     local_offset_sigma_ratio: float = 0.02,
 ) -> JointAnnealRunResult:
     """複数コンポーネントをジョイントで焼きなます（1 restart 分）。"""
@@ -530,7 +537,7 @@ def joint_simulated_annealing_search(
         ))
 
     for step in range(1, max_iterations + 1):
-        if _over_deadline(deadline):
+        if _over_deadline(deadline) or _is_cancelled(should_cancel):
             break
 
         iterations_completed += 1

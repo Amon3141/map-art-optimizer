@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
 import { MapPanel } from '../components/MapPanel'
 import { OptimizeStatusOverlay } from '../components/OptimizeStatusOverlay'
 import { RouteInfoPanel } from '../components/RouteInfoPanel'
@@ -26,6 +27,12 @@ export function HomePage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [speedPreset, setSpeedPreset] = useState<SpeedPreset>(DEFAULT_SPEED_PRESET)
   const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER)
+  const [stopConfirmVariant, setStopConfirmVariant] = useState<StopOptimizeConfirmVariant | null>(
+    null,
+  )
+
+  const optimizeGenRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
 
   const processedComponents = useMemo(
     () => (strokeData ? strokesToProcessedComponents(strokeData.strokes) : null),
@@ -50,44 +57,102 @@ export function HomePage() {
     [optimizeState.kind, mapCenter, speedPreset],
   )
 
-  async function handleOptimize(preset: SpeedPreset, ignoreSourceRotation: boolean) {
-    if (!processedComponents || processedComponents.length === 0) return
+  const stopOptimization = useCallback(() => {
+    abortRef.current?.abort()
+    optimizeGenRef.current += 1
+    setOptimizeState({ kind: 'idle' })
+  }, [])
 
-    setOptimizeState({ kind: 'running', startedAt: Date.now(), preset })
-    setTraceRouteOverride(null)
-    setSelectedCandidateId(null)
+  const runOptimize = useCallback(
+    async (preset: SpeedPreset, ignoreSourceRotation: boolean) => {
+      if (!processedComponents || processedComponents.length === 0) return
 
-    try {
-      const body = {
-        stroke_components: processedComponents.map((comp) =>
-          comp.map((p) => ({ x: p.x, y: p.y })),
-        ),
-        center_lon: mapCenter.lon,
-        center_lat: mapCenter.lat,
-        speed_preset: preset,
-        ignore_source_rotation: ignoreSourceRotation,
+      abortRef.current?.abort()
+      const gen = ++optimizeGenRef.current
+      const ac = new AbortController()
+      abortRef.current = ac
+
+      setOptimizeState({ kind: 'running', startedAt: Date.now(), preset })
+      setTraceRouteOverride(null)
+      setSelectedCandidateId(null)
+
+      try {
+        const body = {
+          stroke_components: processedComponents.map((comp) =>
+            comp.map((p) => ({ x: p.x, y: p.y })),
+          ),
+          center_lon: mapCenter.lon,
+          center_lat: mapCenter.lat,
+          speed_preset: preset,
+          ignore_source_rotation: ignoreSourceRotation,
+        }
+
+        const res = await fetch(apiUrl('/api/optimize'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        })
+
+        if (gen !== optimizeGenRef.current) return
+
+        if (res.status === 499) return
+
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}))
+          throw new Error(detail?.detail ?? `サーバーエラーが発生しました（${res.status}）`)
+        }
+
+        const result: OptimizeApiResponse = await res.json()
+        if (gen !== optimizeGenRef.current) return
+        setOptimizeState({ kind: 'done', result })
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        if (gen !== optimizeGenRef.current) return
+        setOptimizeState({
+          kind: 'error',
+          message: err instanceof Error ? err.message : '不明なエラーが発生しました。',
+        })
       }
+    },
+    [processedComponents, mapCenter],
+  )
 
-      const res = await fetch(apiUrl('/api/optimize'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+  const handleOptimize = useCallback(
+    (preset: SpeedPreset, ignoreSourceRotation: boolean) => {
+      if (!processedComponents || processedComponents.length === 0) return
+      if (optimizeState.kind === 'running') return
+      void runOptimize(preset, ignoreSourceRotation)
+    },
+    [processedComponents, optimizeState.kind, runOptimize],
+  )
 
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}))
-        throw new Error(detail?.detail ?? `サーバーエラーが発生しました（${res.status}）`)
-      }
-
-      const result: OptimizeApiResponse = await res.json()
-      setOptimizeState({ kind: 'done', result })
-    } catch (err) {
-      setOptimizeState({
-        kind: 'error',
-        message: err instanceof Error ? err.message : '不明なエラーが発生しました。',
-      })
+  const handleOpenSketch = useCallback(() => {
+    if (optimizeState.kind === 'running') {
+      setStopConfirmVariant('sketch')
+      return
     }
-  }
+    setSketchOpen(true)
+  }, [optimizeState.kind])
+
+  const handleRequestStopFromOverlay = useCallback(() => {
+    setStopConfirmVariant('overlay')
+  }, [])
+
+  const handleConfirmStop = useCallback(() => {
+    const variant = stopConfirmVariant
+    setStopConfirmVariant(null)
+    if (variant == null) return
+
+    stopOptimization()
+    if (variant === 'sketch') {
+      setSketchOpen(true)
+    }
+  }, [stopConfirmVariant, stopOptimization])
+
+  const handleCancelStopConfirm = useCallback(() => {
+    setStopConfirmVariant(null)
+  }, [])
 
   // 選択候補のルートを表示（トレースオーバーライドが優先）
   const routeGeoJson = useMemo(() => {
@@ -111,7 +176,7 @@ export function HomePage() {
         onTargetKmChange={setTargetKm}
         strokeData={strokeData}
         processedComponents={processedComponents}
-        onOpenSketch={() => setSketchOpen(true)}
+        onOpenSketch={handleOpenSketch}
         optimizeState={optimizeState}
         speedPreset={speedPreset}
         onSpeedPresetChange={setSpeedPreset}
@@ -131,6 +196,7 @@ export function HomePage() {
             visible={optimizeState.kind === 'running'}
             startedAt={optimizeState.kind === 'running' ? optimizeState.startedAt : null}
             preset={optimizeState.kind === 'running' ? optimizeState.preset : 'normal'}
+            onStop={handleRequestStopFromOverlay}
           />
 
           {optimizeState.kind === 'done' && selectedCandidateId && (
@@ -144,15 +210,24 @@ export function HomePage() {
         </div>
       </main>
 
+      <ConfirmDialog
+        open={stopConfirmVariant != null}
+        variant={stopConfirmVariant}
+        onCancel={handleCancelStopConfirm}
+        onConfirm={handleConfirmStop}
+      />
+
       {sketchOpen ? (
         <SketchModal
           onClose={() => setSketchOpen(false)}
           onConfirm={(data) => {
             setStrokeData(data)
             setSketchOpen(false)
-            setOptimizeState({ kind: 'idle' })
-            setTraceRouteOverride(null)
-            setSelectedCandidateId(null)
+            if (optimizeState.kind !== 'running') {
+              setOptimizeState({ kind: 'idle' })
+              setTraceRouteOverride(null)
+              setSelectedCandidateId(null)
+            }
           }}
         />
       ) : null}

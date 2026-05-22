@@ -14,6 +14,10 @@ map-draw-optimizer/
   backend/      # FastAPI
 ```
 
+## フロント UI
+
+全画面モーダルは `ModalShell` + `createPortal` に統一する。マップ内の進捗・ルート情報は `absolute` オーバーレイのまま。詳細は [frontend-ui.md](frontend-ui.md)。
+
 ## 環境変数
 
 ### frontend（`.env` / `.env.example`）

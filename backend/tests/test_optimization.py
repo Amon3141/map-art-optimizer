@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 import random
 
+import pytest
+
 from app.optimization import anneal as anneal_mod
 from app.optimization.anneal import (
     AnnealState,
@@ -18,7 +20,7 @@ from app.optimization.candidate_select import (
     normalized_transform_dist,
     select_ranked_candidates,
 )
-from app.optimization.run import run_simulated_annealing
+from app.optimization.run import OptimizationCancelled, run_simulated_annealing
 from app.optimization.scoring import score_route, shape_similarity_loss
 from app.optimization.snap_route import (
     EdgeSnapIndexGrid,
@@ -129,6 +131,34 @@ def test_sa_smoke_low_iterations() -> None:
     assert "FeatureCollection" == result.candidates_geojson.get("type")
     assert result.optimizer_meta.get("search") == "multistart_simulated_annealing"
     assert result.optimizer_meta.get("max_iterations") == 8
+
+
+def test_should_cancel_raises() -> None:
+    """should_cancel が True のとき探索を中断する。"""
+    g = _line_graph()
+    opt = AnnealOptions(
+        seed=0,
+        max_iterations=500,
+        restart_count=3,
+        ignore_optimization_budget=True,
+        trace_stride=10_000,
+    )
+    cancelled = {"flag": False}
+
+    def should_cancel() -> bool:
+        return cancelled["flag"]
+
+    with pytest.raises(OptimizationCancelled):
+        cancelled["flag"] = True
+        run_simulated_annealing(
+            g,
+            [{"x": 0.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
+            0.0,
+            0.0,
+            opt=opt,
+            record_trace=False,
+            should_cancel=should_cancel,
+        )
 
 
 def test_ignore_optimization_budget_completes_iteration_cap() -> None:

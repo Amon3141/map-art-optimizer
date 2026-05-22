@@ -6,6 +6,7 @@ import { textToStrokes } from '../lib/textToStrokes'
 import { applyPenSnap } from '../lib/penNodeSnap'
 import { isProduction } from '../lib/appEnv'
 import { MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
+import { ModalShell } from './ModalShell'
 import { SketchPreview } from './SketchPreview'
 
 export type SketchModalProps = {
@@ -405,30 +406,29 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
     ? 'max-sm:animate-sketch-sheet-out'
     : 'max-sm:animate-sketch-sheet-in'
 
-  const overlayClassName = [
-    'fixed inset-0 z-50 flex items-end justify-center bg-stone-900/25 sm:items-center sm:p-4 sm:backdrop-blur-xs',
-    shouldAnimateMobileSheet
-      ? [
-          'max-sm:transition-[backdrop-filter]',
-          exiting
-            ? 'max-sm:duration-200 max-sm:ease-in'
-            : 'max-sm:duration-[220ms] max-sm:ease-out',
-          backdropBlurred ? 'max-sm:backdrop-blur-xs' : 'max-sm:backdrop-blur-none',
-        ].join(' ')
-      : 'max-sm:backdrop-blur-xs',
-  ].join(' ')
+  const backdropClassName = shouldAnimateMobileSheet
+    ? [
+        'max-sm:transition-[backdrop-filter]',
+        exiting
+          ? 'max-sm:duration-200 max-sm:ease-in'
+          : 'max-sm:duration-[220ms] max-sm:ease-out',
+        backdropBlurred ? 'max-sm:backdrop-blur-xs' : 'max-sm:backdrop-blur-none',
+      ].join(' ')
+    : ''
 
   return (
-    <div
-      className={overlayClassName}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sketch-title"
+    <ModalShell
+      open
+      layout="sheet"
+      backdrop="light"
+      closeOnBackdropClick={false}
+      closeOnEscape={false}
+      ariaLabelledBy="sketch-title"
+      backdropClassName={backdropClassName}
     >
-      {/* モーダル本体: モバイルは下から全高、デスクトップは中央固定高さ */}
       <div
         className={[
-          'flex h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-stone-200/80 bg-[#fdfbf7] shadow-xl sm:h-[min(600px,90vh)] sm:max-w-xl sm:rounded-2xl',
+          'flex h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-stone-200/80 bg-[#fdfbf7] shadow-xl sm:h-[min(600px,90vh)] sm:rounded-2xl',
           sheetAnimClass,
         ].join(' ')}
         onAnimationEnd={onPanelAnimationEnd}
@@ -628,6 +628,6 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </ModalShell>
   )
 }
