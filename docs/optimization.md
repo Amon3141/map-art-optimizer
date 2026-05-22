@@ -106,6 +106,7 @@
 | `backend/app/optimization/scoring.py` | スナップ元評価・順序対応形状項・coverage 形状項・到達不能の加重和 |
 | `backend/app/optimization/anneal.py` | `simulated_annealing_search`（シングル 1 試行）、`joint_simulated_annealing_search`（マルチコンポーネント 1 試行） |
 | `backend/app/optimization/run.py` | `run_simulated_annealing`（シングル・マルチスタート）、`run_joint_simulated_annealing`（ジョイント・マルチスタート）、GeoJSON 化 |
+| `backend/app/optimization/candidate_select.py` | トレース横断の `ranked_candidates` 選択 |
 | `backend/app/debug/routes.py` | `POST /api/debug/optimize`（薄い層として上記を呼ぶ） |
 | `backend/tests/test_optimization.py` | スモークテスト |
 
@@ -148,6 +149,9 @@
 | `log_scale_step` | 0.12 | 対数スケール摂動幅 |
 | `trace_stride` | 5 | トレース記録間隔（ステップ数） |
 | `step_scale_min` | 0.03 | 遷移幅スケールの下限（`temp_ratio` に比例、これ未満にはならない） |
+| `max_display_candidates` | 5 | トレース横断で返す表示候補の上限 |
+| `score_include_margin` | 0.05 | プール最良からこの絶対差以内のみ採用（1件だけでも可） |
+| `candidate_diversity_min` | 0.12 | transform 空間での dedup 閾値 |
 
 > **注意:** `n_local_trials`（後述）は現状 `AnnealOptionsBody` に公開されていない。バックエンド内部で `DEFAULT_N_LOCAL_TRIALS = 4` が使われる。
 
@@ -210,7 +214,7 @@
 
 | 項 | 説明 |
 |---|---|
-| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。絶対角度 30° までは 0、超過分を `SOURCE_ROTATION_NORMALIZATION_DEG`（= 150°）で正規化。`ignore_source_rotation` で無効化可能。 |
+| `source_rotation` | 入力の向きを保ちたい場合の回転角ペナルティ。絶対角度 45° までは 0、超過分を `SOURCE_ROTATION_NORMALIZATION_DEG`（= 150°）で正規化。`ignore_source_rotation` で無効化可能。 |
 | `source_scale` | `abs(log(scale))`（1 倍からの相対ズレ）。 |
 | `shape_distance` | スナップ元とルートの双方向チャンファー距離（弧長順序対応 + coverage）。 |
 | `turn` | 旋回ペナルティ。既定重みは 0（無効）。 |
@@ -238,7 +242,27 @@
   "projection": { "lon0": ..., "lat0": ..., "mode": "local_tangent_plane" },
   "stats": { /* グラフ統計 */ },
 
-  "candidates_geojson": { /* LineString FeatureCollection */ },
+  "candidates_geojson": { /* 採用候補ごとの LineString FeatureCollection */ },
+  "ranked_candidates": [
+    {
+      "candidate_id": "r0_s42",
+      "rank": 1,
+      "score_total": 0.118,
+      "score_delta_from_best": 0.0,
+      "tier": "best",
+      "route_length_km": 3.1,
+      "labels": ["compact"],
+      "transform": { ... },
+      "score_terms": { ... }
+    }
+  ],
+  "candidate_selection_meta": {
+    "pool_size": 87,
+    "after_quality_filter": 12,
+    "score_include_margin": 0.05,
+    "diversity_min": 0.12,
+    "max_candidates": 5
+  },
   "best_score": 0.123,
   "best_breakdown": { "shape_distance": ..., "source_rotation": ..., ... },
   "best_restart_index": 0,
@@ -288,12 +312,13 @@
 
 ### 8.9 フロント（デバッグ UI）
 
-- [`DebugOptimizePanel.tsx`](../frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましパラメータ入力、実行中の経過秒表示、ベスト試行と試行別 trace 表示、`processedComponents` の管理と送信ロジック。
+- [`DebugOptimizePanel.tsx`](../frontend/src/debug/components/DebugOptimizePanel.tsx): 焼きなましパラメータ入力、実行中の経過秒表示、**ランク付き候補セレクタ**（`ranked_candidates`）、ベスト試行と試行別 trace 表示、`processedComponents` の管理と送信ロジック。
+- [`candidate_select.py`](../backend/app/optimization/candidate_select.py): 全 restart の `trace_steps` から品質フィルタ（`score_include_margin`）・transform dedup で `ranked_candidates` を構築（`tier`: `best` | `included`）。
 - [`SinglePathDebugPreview.tsx`](../frontend/src/debug/components/SinglePathDebugPreview.tsx): 巡回順デバッグ表示（矢印・始終点・交点番号）。
 
 ### 8.10 あえて未実装／プロダクト要件との差
 
-- 複数候補のランキング提示（現状はベスト 1 本のみ）
+- 本番 UI 向けの複数候補比較（デバッグ API では `ranked_candidates` 対応済み）
 - 本番用 `/api` エンドポイント（`/api/debug` のみ）
 - 反転・一般アフィン変形（現状は回転・等方スケール・平行移動のみ）
 - 許容幅付きの距離制約

@@ -6,6 +6,10 @@ import math
 import random
 
 from app.optimization.anneal import AnnealState, _propose_state, _step_scale_at
+from app.optimization.candidate_select import (
+    normalized_transform_dist,
+    select_ranked_candidates,
+)
 from app.optimization.run import run_simulated_annealing
 from app.optimization.scoring import score_route, shape_similarity_loss
 from app.optimization.snap_route import (
@@ -17,7 +21,15 @@ from app.optimization.snap_route import (
     dijkstra_path,
 )
 from app.optimization.transform import stroke_to_base_polyline_m
-from app.optimization.types import AnnealOptions, OptimizeWeights, StrokePoint, Transform
+from app.optimization.types import (
+    AnnealOptions,
+    OptimizeWeights,
+    RestartResult,
+    ScoreBreakdown,
+    StrokePoint,
+    TraceStep,
+    Transform,
+)
 from app.preprocess.graph_model import InternalEdge, InternalNode, RoadGraph
 
 
@@ -231,10 +243,16 @@ def test_source_rotation_penalty_prefers_input_angle() -> None:
         Transform(theta_rad=math.radians(20.0)),
         w,
     )
-    _, bd_rotated = score_route(g, target, route, Transform(theta_rad=math.radians(45.0)), w)
+    _, bd_at_free_limit = score_route(
+        g, target, route, Transform(theta_rad=math.radians(45.0)), w,
+    )
+    _, bd_beyond_free = score_route(
+        g, target, route, Transform(theta_rad=math.radians(60.0)), w,
+    )
     assert bd_zero.source_rotation == 0.0
     assert bd_within_free_angle.source_rotation == 0.0
-    assert bd_zero.source_rotation < bd_rotated.source_rotation
+    assert bd_at_free_limit.source_rotation == 0.0
+    assert bd_beyond_free.source_rotation > 0.0
 
 
 def test_source_rotation_penalty_can_be_disabled() -> None:
@@ -252,6 +270,209 @@ def test_source_rotation_penalty_can_be_disabled() -> None:
         ignore_source_rotation=True,
     )
     assert bd.source_rotation == 0.0
+
+
+def _good_breakdown(shape: float = 0.1) -> ScoreBreakdown:
+    return ScoreBreakdown(
+        source_rotation=0.0,
+        source_scale=0.0,
+        shape_distance=shape,
+        turn=0.0,
+        unreachable=0.0,
+        out_of_graph=0.0,
+        dijkstra_fallback=0.0,
+    )
+
+
+def test_select_ranked_candidates_filters_unreachable() -> None:
+    g = _line_graph()
+    good = TraceStep(
+        step_index=1,
+        temperature=0.01,
+        accepted=True,
+        score_total=0.2,
+        score_terms=_good_breakdown(0.1).as_dict(),
+        transform={"tx_m": 0.0, "ty_m": 0.0, "theta_rad": 0.0, "scale": 1.0},
+        edge_ids=["e1"],
+    )
+    bad = TraceStep(
+        step_index=2,
+        temperature=0.01,
+        accepted=True,
+        score_total=1e4,
+        score_terms={**_good_breakdown().as_dict(), "unreachable": 1.0},
+        transform={"tx_m": 0.0, "ty_m": 0.0, "theta_rad": 0.0, "scale": 1.0},
+        edge_ids=[],
+    )
+    restarts = [
+        RestartResult(
+            restart_index=0,
+            seed=0,
+            initial_transform=Transform(),
+            best_transform=Transform(),
+            best_edge_ids=["e1"],
+            best_polyline_xy_m=[(0.0, 0.0), (100.0, 0.0)],
+            best_score=0.2,
+            best_breakdown=_good_breakdown(0.1),
+            best_route_length_m=100.0,
+            iterations_planned=10,
+            iterations_completed=10,
+            accepted_moves=5,
+            acceptance_rate=0.5,
+            deadline_hit=False,
+            trace_steps=[good, bad],
+        ),
+    ]
+    sel = select_ranked_candidates(g, restarts, 200.0, 1.0, AnnealOptions())
+    assert len(sel.ranked) == 1
+    assert sel.ranked[0].tier == "best"
+
+
+def test_select_ranked_candidates_dedups_same_transform() -> None:
+    g = _line_graph()
+    tdict = {"tx_m": 5.0, "ty_m": 0.0, "theta_rad": 0.0, "scale": 1.0}
+    steps = [
+        TraceStep(
+            step_index=i,
+            temperature=0.01,
+            accepted=True,
+            score_total=0.1 + i * 0.001,
+            score_terms=_good_breakdown().as_dict(),
+            transform=tdict,
+            edge_ids=["e1"],
+        )
+        for i in range(5)
+    ]
+    restarts = [
+        RestartResult(
+            restart_index=0,
+            seed=0,
+            initial_transform=Transform(),
+            best_transform=Transform(tx_m=5.0),
+            best_edge_ids=["e1"],
+            best_polyline_xy_m=[(0.0, 0.0), (100.0, 0.0)],
+            best_score=0.1,
+            best_breakdown=_good_breakdown(),
+            best_route_length_m=100.0,
+            iterations_planned=10,
+            iterations_completed=10,
+            accepted_moves=5,
+            acceptance_rate=0.5,
+            deadline_hit=False,
+            trace_steps=steps,
+        ),
+    ]
+    sel = select_ranked_candidates(
+        g, restarts, 200.0, 1.0, AnnealOptions(candidate_diversity_min=0.12),
+    )
+    assert len(sel.ranked) == 1
+
+
+def test_select_ranked_candidates_excludes_clearly_worse_scores() -> None:
+    """include_margin 内の同率帯のみ。ベストから大きく離れた trace は出さない。"""
+    g = _line_graph()
+    steps = [
+        TraceStep(
+            step_index=0,
+            temperature=0.01,
+            accepted=True,
+            score_total=0.0253,
+            score_terms=_good_breakdown(0.02).as_dict(),
+            transform={"tx_m": 0.0, "ty_m": 0.0, "theta_rad": 0.0, "scale": 1.0},
+            edge_ids=["e1"],
+        ),
+        TraceStep(
+            step_index=1,
+            temperature=0.01,
+            accepted=True,
+            score_total=0.0370,
+            score_terms=_good_breakdown(0.03).as_dict(),
+            transform={"tx_m": 80.0, "ty_m": 0.0, "theta_rad": 0.5, "scale": 1.2},
+            edge_ids=["e1"],
+        ),
+        TraceStep(
+            step_index=2,
+            temperature=0.01,
+            accepted=True,
+            score_total=0.0864,
+            score_terms=_good_breakdown(0.08).as_dict(),
+            transform={"tx_m": 10.0, "ty_m": 0.0, "theta_rad": 0.1, "scale": 1.0},
+            edge_ids=["e1"],
+        ),
+    ]
+    restarts = [
+        RestartResult(
+            restart_index=0,
+            seed=0,
+            initial_transform=Transform(),
+            best_transform=Transform(),
+            best_edge_ids=["e1"],
+            best_polyline_xy_m=[(0.0, 0.0), (100.0, 0.0)],
+            best_score=0.0253,
+            best_breakdown=_good_breakdown(0.02),
+            best_route_length_m=100.0,
+            iterations_planned=10,
+            iterations_completed=10,
+            accepted_moves=5,
+            acceptance_rate=0.5,
+            deadline_hit=False,
+            trace_steps=steps,
+        ),
+    ]
+    sel = select_ranked_candidates(
+        g, restarts, 200.0, 1.0, AnnealOptions(score_include_margin=0.05),
+    )
+    assert len(sel.ranked) <= 2
+    assert all(c.score_total <= 0.0253 + 0.05 + 1e-9 for c in sel.ranked)
+    assert not any(math.isclose(c.score_total, 0.0864) for c in sel.ranked)
+
+
+def test_select_ranked_candidates_keeps_diverse_low_scores() -> None:
+    g = _line_graph()
+    transforms = [
+        {"tx_m": 0.0, "ty_m": 0.0, "theta_rad": 0.0, "scale": 1.0},
+        {"tx_m": 80.0, "ty_m": 0.0, "theta_rad": 0.5, "scale": 1.2},
+    ]
+    steps = [
+        TraceStep(
+            step_index=i,
+            temperature=0.01,
+            accepted=True,
+            score_total=0.1 + i * 0.01,
+            score_terms=_good_breakdown().as_dict(),
+            transform=transforms[i],
+            edge_ids=["e1"],
+        )
+        for i in range(2)
+    ]
+    t0 = Transform()
+    t1 = Transform(tx_m=80.0, theta_rad=0.5, scale=1.2)
+    assert normalized_transform_dist(t0, t1, 200.0, 1.0) >= 0.12
+    restarts = [
+        RestartResult(
+            restart_index=0,
+            seed=0,
+            initial_transform=Transform(),
+            best_transform=t0,
+            best_edge_ids=["e1"],
+            best_polyline_xy_m=[(0.0, 0.0), (100.0, 0.0)],
+            best_score=0.1,
+            best_breakdown=_good_breakdown(),
+            best_route_length_m=100.0,
+            iterations_planned=10,
+            iterations_completed=10,
+            accepted_moves=5,
+            acceptance_rate=0.5,
+            deadline_hit=False,
+            trace_steps=steps,
+        ),
+    ]
+    sel = select_ranked_candidates(
+        g, restarts, 200.0, 1.0, AnnealOptions(candidate_diversity_min=0.12),
+    )
+    assert len(sel.ranked) == 2
+    assert sel.ranked[0].tier == "best"
+    assert sel.ranked[1].tier == "included"
 
 
 def test_step_scale_tracks_temperature_at_cold_end() -> None:

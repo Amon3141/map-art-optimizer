@@ -72,12 +72,31 @@ export type OptimizeComponentResult = {
   route_length_km: number
 }
 
+export type RankedOptimizeCandidate = {
+  candidate_id: string
+  rank: number
+  restart_index: number
+  step_index: number
+  score_total: number
+  score_delta_from_best: number
+  tier: 'best' | 'included'
+  route_length_m: number
+  route_length_km: number
+  transform: Record<string, number>
+  edge_ids: string[]
+  edge_ids_per_component?: string[][]
+  labels: string[]
+  score_terms: Record<string, number>
+}
+
 export type OptimizeApiResponse = {
   trace_format_version: number
   projection: GraphPreviewResponse['projection']
   projection_summary?: string
   stats: Record<string, number>
   candidates_geojson: GeoJSON.FeatureCollection
+  ranked_candidates?: RankedOptimizeCandidate[]
+  candidate_selection_meta?: Record<string, number>
   best_score: number
   best_breakdown: Record<string, number>
   best_restart_index: number
@@ -163,8 +182,10 @@ export function DebugOptimizePanel({
   const [showBestRoute, setShowBestRoute] = useState(true)
   const [selectedRestartIndex, setSelectedRestartIndex] = useState(0)
   const [selectedTraceIndex, setSelectedTraceIndex] = useState(0)
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
 
   const optsNorm = useMemo(() => normalizeGraphBuildOptions(graphOptions), [graphOptions])
+  const rankedCandidates = result?.ranked_candidates ?? []
 
   const hasShape = Boolean(strokeData && strokeData.strokes.some((s) => s.length >= 2))
   const restarts = result?.restarts ?? []
@@ -180,10 +201,41 @@ export function DebugOptimizePanel({
     return () => window.clearInterval(id)
   }, [loading, loadingStartedAt])
 
+  function overlayForCandidateId(candidateId: string): GeoJSON.FeatureCollection | null {
+    if (!result) return null
+    const features = result.candidates_geojson.features.filter(
+      (f) => f.properties?.candidate_id === candidateId,
+    )
+    if (features.length > 0) {
+      return { type: 'FeatureCollection', features }
+    }
+    const cand = rankedCandidates.find((c) => c.candidate_id === candidateId)
+    const edges = graphPreview?.graph_geojson?.edges
+    if (!cand || !edges) return null
+    if (cand.edge_ids_per_component && cand.edge_ids_per_component.length > 1) {
+      const rebuilt = cand.edge_ids_per_component.flatMap(
+        (ids) => rebuildRouteFeatureCollection(ids, edges).features,
+      )
+      return { type: 'FeatureCollection', features: rebuilt }
+    }
+    return rebuildRouteFeatureCollection(cand.edge_ids, edges)
+  }
+
   useEffect(() => {
     if (!result) {
       onRouteOverlayChange(null)
       return
+    }
+    const activeCandidateId =
+      showBestRoute && rankedCandidates.length > 0
+        ? rankedCandidates[0].candidate_id
+        : selectedCandidateId
+    if (activeCandidateId) {
+      const fc = overlayForCandidateId(activeCandidateId)
+      if (fc) {
+        onRouteOverlayChange(fc)
+        return
+      }
     }
     if (showBestRoute) {
       onRouteOverlayChange(result.candidates_geojson)
@@ -200,7 +252,6 @@ export function DebugOptimizePanel({
       return
     }
     if (step.edge_ids_per_component && step.edge_ids_per_component.length > 1) {
-      // 全コンポーネントのトレース地点ルートを再構築して合成
       const features = step.edge_ids_per_component.flatMap(
         (ids) => rebuildRouteFeatureCollection(ids, edges).features,
       )
@@ -208,7 +259,16 @@ export function DebugOptimizePanel({
     } else {
       onRouteOverlayChange(rebuildRouteFeatureCollection(step.edge_ids, edges))
     }
-  }, [result, showBestRoute, steps, selectedTraceIndex, graphPreview, onRouteOverlayChange])
+  }, [
+    result,
+    showBestRoute,
+    selectedCandidateId,
+    rankedCandidates,
+    steps,
+    selectedTraceIndex,
+    graphPreview,
+    onRouteOverlayChange,
+  ])
 
   useEffect(() => {
     if (!result) return
@@ -216,6 +276,9 @@ export function DebugOptimizePanel({
     setSelectedRestartIndex((current) =>
       result.restarts.some((r) => r.restart_index === current) ? current : bestIndex,
     )
+    const top = result.ranked_candidates?.[0]
+    setSelectedCandidateId(top?.candidate_id ?? null)
+    if (top) setShowBestRoute(true)
   }, [result])
 
   /** グローバルベスト表示は最良試行を選んでいるときだけ有効 */
@@ -576,7 +639,7 @@ export function DebugOptimizePanel({
                   <label className="flex flex-col gap-0.5 text-xs text-stone-600">
                     <span>source_rotation 重み</span>
                     <span className="text-[10px] font-normal leading-snug text-stone-500">
-                      入力ストロークの向きからの回転角ペナルティに乗じる重み。30° 以内は無罰で、超過分を正規化します。「角度は気にしない」ON で無効化されます。
+                      入力ストロークの向きからの回転角ペナルティに乗じる重み。45° 以内は無罰で、超過分を正規化します。「角度は気にしない」ON で無効化されます。
                     </span>
                     <input
                       type="number"
@@ -685,6 +748,52 @@ export function DebugOptimizePanel({
                   </li>
                 ))}
               </ul>
+              {rankedCandidates.length > 0 ? (
+                <div className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
+                  <p className="mb-1 text-xs font-medium text-stone-700">
+                    表示候補 ({rankedCandidates.length} 件)
+                    {result.candidate_selection_meta?.pool_size != null
+                      ? ` / プール ${result.candidate_selection_meta.pool_size}`
+                      : ''}
+                  </p>
+                  <label className="text-xs text-stone-600">
+                    候補ルート
+                    <select
+                      value={
+                        showBestRoute
+                          ? rankedCandidates[0].candidate_id
+                          : selectedCandidateId ?? rankedCandidates[0].candidate_id
+                      }
+                      onChange={(e) => {
+                        setSelectedCandidateId(e.target.value)
+                        setShowBestRoute(false)
+                      }}
+                      className="mt-0.5 w-full rounded border border-stone-200 bg-white px-2 py-1 text-sm"
+                    >
+                      {rankedCandidates.map((c) => (
+                        <option key={c.candidate_id} value={c.candidate_id}>
+                          #{c.rank} スコア={c.score_total.toFixed(4)}
+                          {c.tier === 'best' ? ' 最良' : ''}
+                          {c.route_length_km != null
+                            ? ` ${c.route_length_km.toFixed(2)}km`
+                            : ''}
+                          {c.labels.length > 0 ? ` [${c.labels.join(',')}]` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="mt-1 text-[10px] text-[#4a6f8a] underline"
+                    onClick={() => {
+                      setShowBestRoute(true)
+                      setSelectedCandidateId(rankedCandidates[0].candidate_id)
+                    }}
+                  >
+                    ランク1（ベスト候補）を表示
+                  </button>
+                </div>
+              ) : null}
               {restarts.length > 0 ? (
                 <div className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
                   <p className="mb-1 text-xs font-medium text-stone-700">各試行の結果</p>
@@ -713,6 +822,7 @@ export function DebugOptimizePanel({
                         setSelectedRestartIndex(next)
                         setSelectedTraceIndex(bestTraceStepIndex(r?.trace_steps ?? []))
                         setShowBestRoute(false)
+                        setSelectedCandidateId(null)
                       }}
                       className="mt-0.5 w-full rounded border border-stone-200 bg-white px-2 py-1 text-sm"
                     >
@@ -735,12 +845,14 @@ export function DebugOptimizePanel({
                       setSelectedRestartIndex(br)
                       setSelectedTraceIndex(bestTraceStepIndex(bestRun?.trace_steps ?? []))
                       setShowBestRoute(true)
+                      setSelectedCandidateId(result.ranked_candidates?.[0]?.candidate_id ?? null)
                     }}
                     selectedTraceIndex={selectedTraceIndex}
                     traceSliderValue={traceSliderValue}
                     onTraceSliderChange={(index) => {
                       setSelectedTraceIndex(index)
                       setShowBestRoute(false)
+                      setSelectedCandidateId(null)
                     }}
                   />
                 </div>

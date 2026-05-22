@@ -37,15 +37,18 @@ from ..optimization.constants import (
 )
 from ..optimization.defaults import (
     DEFAULT_ANNEAL_SEED,
+    DEFAULT_CANDIDATE_DIVERSITY_MIN,
     DEFAULT_FINAL_TEMPERATURE,
     DEFAULT_IGNORE_OPTIMIZATION_BUDGET,
     DEFAULT_IGNORE_SOURCE_ROTATION,
     DEFAULT_INITIAL_TEMPERATURE,
     DEFAULT_LOG_SCALE_STEP,
+    DEFAULT_MAX_DISPLAY_CANDIDATES,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
     DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_SCORE_INCLUDE_MARGIN,
     DEFAULT_STEP_SCALE_MIN,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
@@ -128,6 +131,9 @@ class AnnealOptionsBody(BaseModel):
     log_scale_step: float = Field(DEFAULT_LOG_SCALE_STEP, ge=0.0, le=2.0)
     trace_stride: int = Field(DEFAULT_TRACE_STRIDE, ge=1, le=10_000)
     step_scale_min: float = Field(DEFAULT_STEP_SCALE_MIN, ge=0.0, le=1.0)
+    max_display_candidates: int = Field(DEFAULT_MAX_DISPLAY_CANDIDATES, ge=1, le=20)
+    score_include_margin: float = Field(DEFAULT_SCORE_INCLUDE_MARGIN, ge=0.0, le=10.0)
+    candidate_diversity_min: float = Field(DEFAULT_CANDIDATE_DIVERSITY_MIN, ge=0.0, le=2.0)
 
 
 def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
@@ -148,6 +154,9 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         log_scale_step=body.log_scale_step,
         trace_stride=body.trace_stride,
         step_scale_min=body.step_scale_min,
+        max_display_candidates=body.max_display_candidates,
+        score_include_margin=body.score_include_margin,
+        candidate_diversity_min=body.candidate_diversity_min,
     )
 
 
@@ -341,6 +350,8 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         return {
             **base_response,
             "candidates_geojson": joint_result.candidates_geojson,
+            "ranked_candidates": joint_result.ranked_candidates,
+            "candidate_selection_meta": joint_result.candidate_selection_meta,
             "best_score": joint_result.best_joint_score,
             "best_breakdown": rep_bd.as_dict() if rep_bd else {},
             "best_restart_index": min(
@@ -378,6 +389,8 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
     return {
         **base_response,
         "candidates_geojson": opt_result.candidates_geojson,
+        "ranked_candidates": opt_result.ranked_candidates,
+        "candidate_selection_meta": opt_result.candidate_selection_meta,
         "best_score": opt_result.best_score,
         "best_breakdown": opt_result.best_breakdown.as_dict(),
         "best_restart_index": opt_result.best_restart_index,

@@ -19,6 +19,11 @@ from .snap_route import (
     build_route_from_polyline,
 )
 from .scoring import route_geometric_length_m, score_route
+from .candidate_select import (
+    build_candidates_geojson,
+    ranked_candidate_to_dict,
+    select_ranked_candidates,
+)
 from .transform import apply_transform, graph_center_m, graph_xy_bounds, stroke_to_base_polyline_m, strokes_to_base_polylines_m_shared
 from .types import (
     AnnealOptions,
@@ -194,6 +199,27 @@ def _select_diverse_initial_transforms(
                 best_idx = i
         selected.append(pool.pop(best_idx))
     return selected
+
+
+def _apply_ranked_candidates(
+    graph: RoadGraph,
+    lon0: float,
+    lat0: float,
+    restarts: list[RestartResult],
+    span_x: float,
+    span_y: float,
+    opt: AnnealOptions,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    """トレース横断で候補を選び GeoJSON と ranked_candidates を返す。"""
+    selection = select_ranked_candidates(graph, restarts, span_x, span_y, opt)
+    ranked_dicts = [ranked_candidate_to_dict(c) for c in selection.ranked]
+    if selection.ranked:
+        fc = build_candidates_geojson(
+            graph, lon0, lat0, selection.ranked, _route_to_feature,
+        )
+    else:
+        fc = {"type": "FeatureCollection", "features": []}
+    return fc, ranked_dicts, selection.meta
 
 
 def _restart_to_dict(r: RestartResult) -> dict[str, Any]:
@@ -383,19 +409,35 @@ def run_simulated_annealing(
         "grid_search_candidates": n_grid_candidates,
         "grid_budget_fraction": _GRID_BUDGET_FRACTION,
     }
-    props: dict[str, Any] = {
-        "length_km": round(length_m / 1000.0, 6),
-        "length_m": length_m,
-        "edge_count": len(best_restart.best_edge_ids),
-        "score_total": total_score,
-        "score_terms": best_bd.as_dict(),
-        "transform": _transform_to_dict(best_t),
-        "restart_index": best_restart.restart_index,
-        "reachable": len(best_restart.best_edge_ids) > 0,
-        "optimizer": optimizer_meta,
-    }
-    feat = _route_to_feature(lon0, lat0, best_restart.best_polyline_xy_m, props)
-    fc: dict[str, Any] = {"type": "FeatureCollection", "features": [feat]}
+    fc, ranked_dicts, selection_meta = _apply_ranked_candidates(
+        graph, lon0, lat0, restart_results, span_x, span_y, o,
+    )
+    if ranked_dicts:
+        top = ranked_dicts[0]
+        br_idx = int(top["restart_index"])
+        best_restart = next(
+            (r for r in restart_results if r.restart_index == br_idx),
+            best_restart,
+        )
+        best_t = best_restart.best_transform
+        best_bd = best_restart.best_breakdown
+        length_m = float(top.get("route_length_m", best_restart.best_route_length_m))
+        total_score = float(top["score_total"])
+    if not fc.get("features"):
+        props: dict[str, Any] = {
+            "length_km": round(length_m / 1000.0, 6),
+            "length_m": length_m,
+            "edge_count": len(best_restart.best_edge_ids),
+            "score_total": total_score,
+            "score_terms": best_bd.as_dict(),
+            "transform": _transform_to_dict(best_t),
+            "restart_index": best_restart.restart_index,
+            "reachable": len(best_restart.best_edge_ids) > 0,
+            "optimizer": optimizer_meta,
+        }
+        feat = _route_to_feature(lon0, lat0, best_restart.best_polyline_xy_m, props)
+        fc = {"type": "FeatureCollection", "features": [feat]}
+        ranked_dicts = []
 
     return OptimizeResult(
         best_transform=best_t,
@@ -407,6 +449,8 @@ def run_simulated_annealing(
         best_route_length_m=length_m,
         restart_results=restart_results,
         candidates_geojson=fc,
+        ranked_candidates=ranked_dicts,
+        candidate_selection_meta=selection_meta,
         optimizer_meta={
             **optimizer_meta,
             "restart_summaries": [_restart_to_dict(r) for r in restart_results],
@@ -608,6 +652,16 @@ def run_joint_simulated_annealing(
 
     merged_fc: dict[str, Any] = {"type": "FeatureCollection", "features": merged_features}
 
+    candidates_fc, ranked_dicts, selection_meta = _apply_ranked_candidates(
+        graph, lon0, lat0, restart_results, span_x, span_y, o,
+    )
+    if candidates_fc.get("features"):
+        merged_fc = candidates_fc
+
+    best_joint_score = best_run.joint_score
+    if ranked_dicts:
+        best_joint_score = float(ranked_dicts[0]["score_total"])
+
     best_restart = min(restart_results, key=lambda r: r.best_score)
     optimizer_meta: dict[str, Any] = {
         "search": "joint_multistart_simulated_annealing",
@@ -632,10 +686,12 @@ def run_joint_simulated_annealing(
 
     return JointOptimizeResult(
         components=comp_results,
-        best_joint_score=best_run.joint_score,
+        best_joint_score=best_joint_score,
         best_transform=best_run.global_transform,
         best_local_offsets=best_run.local_offsets,
         candidates_geojson=merged_fc,
+        ranked_candidates=ranked_dicts,
+        candidate_selection_meta=selection_meta,
         restart_results=restart_results,
         optimizer_meta=optimizer_meta,
     )

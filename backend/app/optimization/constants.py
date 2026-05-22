@@ -20,7 +20,7 @@ WEIGHT_LOCAL_OFFSET: float = 0.5
 SHAPE_COVERAGE_WEIGHT: float = 0.35
 
 # スナップ元の回転角ペナルティ。30 度までは無罰、超過分をこの度幅で割って正規化（小さいほど角度制約が強い）。
-SOURCE_ROTATION_FREE_DEG: float = 30.0
+SOURCE_ROTATION_FREE_DEG: float = 45.0
 SOURCE_ROTATION_NORMALIZATION_DEG: float = 150.0
 
 # 焼きなまし中の等方スケールのクリップ域

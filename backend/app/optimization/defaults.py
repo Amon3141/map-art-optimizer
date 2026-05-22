@@ -20,3 +20,8 @@ DEFAULT_TRACE_STRIDE: int = 5
 # 冷え込み時の遷移幅フロア（temp_ratio に比例、これ未満にはならない）
 DEFAULT_STEP_SCALE_MIN: float = 0.03
 DEFAULT_N_LOCAL_TRIALS: int = 4
+
+# トレース横断の表示候補選択（件数は可変。include 帯内かつ transform が離れたもののみ）
+DEFAULT_MAX_DISPLAY_CANDIDATES: int = 5
+DEFAULT_SCORE_INCLUDE_MARGIN: float = 0.03
+DEFAULT_CANDIDATE_DIVERSITY_MIN: float = 0.12

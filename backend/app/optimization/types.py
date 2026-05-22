@@ -21,10 +21,13 @@ from .defaults import (
     DEFAULT_INITIAL_TEMPERATURE,
     DEFAULT_LOG_SCALE_STEP,
     DEFAULT_MAX_ITERATIONS,
+    DEFAULT_CANDIDATE_DIVERSITY_MIN,
+    DEFAULT_MAX_DISPLAY_CANDIDATES,
     DEFAULT_N_LOCAL_TRIALS,
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
     DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_SCORE_INCLUDE_MARGIN,
     DEFAULT_STEP_SCALE_MIN,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
@@ -82,6 +85,10 @@ class AnnealOptions:
     step_scale_min: float = DEFAULT_STEP_SCALE_MIN
     # ジョイント SA: global perturbation ごとに試す local offset サンプル数（1=従来と等価）
     n_local_trials: int = DEFAULT_N_LOCAL_TRIALS
+    # トレース横断の表示候補
+    max_display_candidates: int = DEFAULT_MAX_DISPLAY_CANDIDATES
+    score_include_margin: float = DEFAULT_SCORE_INCLUDE_MARGIN
+    candidate_diversity_min: float = DEFAULT_CANDIDATE_DIVERSITY_MIN
 
 
 @dataclass
@@ -192,6 +199,8 @@ class OptimizeResult:
     best_route_length_m: float = 0.0
     restart_results: list[RestartResult] = field(default_factory=list)
     candidates_geojson: dict[str, Any] = field(default_factory=dict)
+    ranked_candidates: list[dict[str, Any]] = field(default_factory=list)
+    candidate_selection_meta: dict[str, Any] = field(default_factory=dict)
     optimizer_meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -216,5 +225,7 @@ class JointOptimizeResult:
     best_transform: Transform
     best_local_offsets: list[tuple[float, float]]
     candidates_geojson: dict[str, Any]
+    ranked_candidates: list[dict[str, Any]] = field(default_factory=list)
+    candidate_selection_meta: dict[str, Any] = field(default_factory=dict)
     restart_results: list[RestartResult] = field(default_factory=list)
     optimizer_meta: dict[str, Any] = field(default_factory=dict)
