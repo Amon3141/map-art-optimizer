@@ -32,10 +32,10 @@ from .types import (
 )
 
 # グリッド探索の設定（ハードコード）
-# 4×4 位置 × 3 角度 × 1 スケール = 最大 48 評価点
+# 4×4 位置 × 3 角度 × 3 スケール = 最大 144 評価点（時間切れで打ち切り）
 _GRID_POS_STEPS: int = 4        # 位置グリッドの一辺の点数（4×4 = 16 位置）
 _GRID_ANGLE_STEPS: int = 3      # 角度グリッドの点数（[0, 2π/3, 4π/3] | [-π/6, 0, π/6]）
-_GRID_SCALE_STEPS: int = 1      # スケール点数（1 = scale=1.0 固定）
+_GRID_SCALE_STEPS: int = 3      # スケール点数（log-uniform、TRANSFORM_SCALE_MIN..MAX）
 _GRID_BUDGET_FRACTION: float = 0.15  # グリッド探索に充てる時間予算の割合
 _DIVERSITY_FILL_TRIES: int = 10  # 補完時の diversity-aware ランダム試行数
 
@@ -314,6 +314,8 @@ def run_simulated_annealing(
             rotation_step_rad=o.rotation_step_rad,
             log_scale_step=o.log_scale_step,
             trace_stride=o.trace_stride,
+            step_scale_min=o.step_scale_min,
+            n_local_trials=o.n_local_trials,
         )
         run = simulated_annealing_search(
             graph,
@@ -554,6 +556,8 @@ def run_joint_simulated_annealing(
             rotation_step_rad=o.rotation_step_rad,
             log_scale_step=o.log_scale_step,
             trace_stride=o.trace_stride,
+            step_scale_min=o.step_scale_min,
+            n_local_trials=o.n_local_trials,
         )
         run = joint_simulated_annealing_search(
             graph,

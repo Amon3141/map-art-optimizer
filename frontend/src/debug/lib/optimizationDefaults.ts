@@ -11,6 +11,7 @@ export const DEFAULT_TRANSLATION_STEP_M_RATIO = 0.08
 export const DEFAULT_ROTATION_STEP_RAD = 0.35
 export const DEFAULT_LOG_SCALE_STEP = 0.12
 export const DEFAULT_TRACE_STRIDE = 5
+export const DEFAULT_STEP_SCALE_MIN = 0.03
 
 // 評価関数の重みの既定値（backend/app/optimization/constants.py と同値に保つこと）
 export const DEFAULT_WEIGHT_SOURCE_ROTATION = 0.38

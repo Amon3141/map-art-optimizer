@@ -108,6 +108,13 @@ def _temperature_at(step_index: int, max_iterations: int, opt: AnnealOptions) ->
     return t0 * ((t1 / t0) ** frac)
 
 
+def _step_scale_at(temp_ratio: float, opt: AnnealOptions) -> float:
+    """温度比に比例する遷移幅。冷え込み後の細探索は step_scale_min で下限。"""
+    ratio = max(0.0, min(1.0, temp_ratio))
+    floor = max(0.0, min(1.0, float(opt.step_scale_min)))
+    return max(floor, ratio)
+
+
 def _transform_dict(state: AnnealState) -> dict[str, float | bool]:
     return {
         "tx_m": state.transform.tx_m,
@@ -278,7 +285,7 @@ def simulated_annealing_search(
         iterations_completed += 1
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
-        step_scale = 0.2 + 0.8 * math.sqrt(max(0.0, min(1.0, temp_ratio)))
+        step_scale = _step_scale_at(temp_ratio, opt)
         # Basin hopping: 高温期に低確率でランダムリセットを提案する
         if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
             proposal_state = AnnealState(_random_transform(rng, span_x, span_y))
@@ -463,7 +470,7 @@ def joint_simulated_annealing_search(
         iterations_completed += 1
         temperature = _temperature_at(step - 1, max_iterations, opt)
         temp_ratio = temperature / max(float(opt.initial_temperature), 1e-12)
-        step_scale = 0.2 + 0.8 * math.sqrt(max(0.0, min(1.0, temp_ratio)))
+        step_scale = _step_scale_at(temp_ratio, opt)
 
         if temp_ratio > _JUMP_TEMP_THRESHOLD and rng.random() < _JUMP_PROBABILITY:
             proposal_state = JointAnnealState(

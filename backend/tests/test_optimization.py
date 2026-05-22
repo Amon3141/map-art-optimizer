@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import random
 
-from app.optimization.anneal import AnnealState, _propose_state
+from app.optimization.anneal import AnnealState, _propose_state, _step_scale_at
 from app.optimization.run import run_simulated_annealing
 from app.optimization.scoring import score_route, shape_similarity_loss
 from app.optimization.snap_route import (
@@ -252,6 +252,18 @@ def test_source_rotation_penalty_can_be_disabled() -> None:
         ignore_source_rotation=True,
     )
     assert bd.source_rotation == 0.0
+
+
+def test_step_scale_tracks_temperature_at_cold_end() -> None:
+    opt = AnnealOptions(step_scale_min=0.03)
+    cold_ratio = opt.final_temperature / opt.initial_temperature
+    cold_scale = _step_scale_at(cold_ratio, opt)
+    assert math.isclose(cold_scale, max(0.03, cold_ratio))
+    assert cold_scale < _step_scale_at(1.0, opt)
+    assert math.isclose(_step_scale_at(0.02, opt), 0.03)
+    # 旧式 0.2 + 0.8*sqrt(temp_ratio) より終盤は小さい
+    legacy_cold = 0.2 + 0.8 * math.sqrt(cold_ratio)
+    assert cold_scale < legacy_cold
 
 
 def test_multistart_each_restart_uses_full_max_iterations() -> None:

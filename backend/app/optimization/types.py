@@ -25,6 +25,7 @@ from .defaults import (
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
     DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_STEP_SCALE_MIN,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
@@ -77,6 +78,8 @@ class AnnealOptions:
     rotation_step_rad: float = DEFAULT_ROTATION_STEP_RAD
     log_scale_step: float = DEFAULT_LOG_SCALE_STEP
     trace_stride: int = DEFAULT_TRACE_STRIDE
+    # 遷移幅スケールの下限（initial_temperature に対する temp_ratio の比）
+    step_scale_min: float = DEFAULT_STEP_SCALE_MIN
     # ジョイント SA: global perturbation ごとに試す local offset サンプル数（1=従来と等価）
     n_local_trials: int = DEFAULT_N_LOCAL_TRIALS
 

@@ -46,6 +46,7 @@ from ..optimization.defaults import (
     DEFAULT_OPTIMIZATION_BUDGET_SECONDS,
     DEFAULT_RESTART_COUNT,
     DEFAULT_ROTATION_STEP_RAD,
+    DEFAULT_STEP_SCALE_MIN,
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
@@ -126,6 +127,7 @@ class AnnealOptionsBody(BaseModel):
     rotation_step_rad: float = Field(DEFAULT_ROTATION_STEP_RAD, ge=0.0, le=6.28319)
     log_scale_step: float = Field(DEFAULT_LOG_SCALE_STEP, ge=0.0, le=2.0)
     trace_stride: int = Field(DEFAULT_TRACE_STRIDE, ge=1, le=10_000)
+    step_scale_min: float = Field(DEFAULT_STEP_SCALE_MIN, ge=0.0, le=1.0)
 
 
 def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
@@ -145,6 +147,7 @@ def _anneal_body_to_options(body: AnnealOptionsBody | None) -> AnnealOptions:
         rotation_step_rad=body.rotation_step_rad,
         log_scale_step=body.log_scale_step,
         trace_stride=body.trace_stride,
+        step_scale_min=body.step_scale_min,
     )
 
 

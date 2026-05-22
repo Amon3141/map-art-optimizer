@@ -147,6 +147,7 @@
 | `rotation_step_rad` | 0.35 | 回転摂動幅（ラジアン） |
 | `log_scale_step` | 0.12 | 対数スケール摂動幅 |
 | `trace_stride` | 5 | トレース記録間隔（ステップ数） |
+| `step_scale_min` | 0.03 | 遷移幅スケールの下限（`temp_ratio` に比例、これ未満にはならない） |
 
 > **注意:** `n_local_trials`（後述）は現状 `AnnealOptionsBody` に公開されていない。バックエンド内部で `DEFAULT_N_LOCAL_TRIALS = 4` が使われる。
 
@@ -168,7 +169,7 @@
 #### シングルコンポーネント（`simulated_annealing_search`）
 
 - **状態**: グローバル変換 `(theta_rad, scale, tx_m, ty_m)`。
-- **遷移関数** `_propose_state`: translate / rotate / scale の中からランダムに 1 種（または 2 種の compound）を選び、Gaussian ノイズを加える。摂動幅は温度比に連動（`step_scale = 0.2 + 0.8 * sqrt(temp_ratio)`）。
+- **遷移関数** `_propose_state`: translate / rotate / scale の中からランダムに 1 種（または 2 種の compound）を選び、Gaussian ノイズを加える。摂動幅は温度比に連動（`step_scale = max(step_scale_min, temp_ratio)`）。終盤の細探索は別フェーズの後処理ではなく、この 1 本の SA スケジュールで行う。
 - **採択**: 改善は必ず採択。悪化は `exp(-delta / temperature)` で確率採択。温度は初期 → 最終へ幾何冷却。
 - **Basin hopping**: 温度比 > 0.5 かつ確率 5% でランダム変換に飛ぶ。
 
@@ -193,7 +194,7 @@
 
 全試行の前に、`optimization_budget_seconds * 0.15` の時間を使って粗いグリッド探索を行い、スコア上位の変換を初期解候補とする（`run.py: _coarse_grid_search`）。
 
-- 4×4 位置グリッド × 3 角度 × 1 スケール = 最大 48 評価点
+- 4×4 位置グリッド × 3 角度 × 3 スケール（log-uniform）= 最大 144 評価点（時間切れで打ち切り）
 - 多様性を保つ diversity-aware 選択で `restart_count` 個に絞る
 - ジョイント SA では最大弧長のコンポーネントを基準にグリッド探索
 
