@@ -23,10 +23,11 @@ from .osm.ingest import GraphBuildResult, build_graph_from_geojson, graph_to_geo
 from .osm.overpass import fetch_interpreter
 from .preprocess import GraphPreprocessOptions
 from .optimization.production_defaults import (
-    ADAPTIVE_RADIUS_MIN_M,
-    MAX_WAY_BUDGET_ADAPTIVE,
-    PILOT_FALLBACK_DENSITY,
-    PILOT_QUERY_RADIUS_M,
+    DEFAULT_FETCH_RADIUS_M,
+    DEFAULT_SPEED_PRESET,
+    FETCH_AREA_TOO_LARGE_MESSAGE,
+    FETCH_RADIUS_MAX_M,
+    FETCH_RADIUS_MIN_M,
     PRODUCTION_IGNORE_SOURCE_ROTATION,
     PRODUCTION_OVERPASS_MAX_WAYS,
     SPEED_PRESETS,
@@ -43,6 +44,10 @@ from .optimization.types import AnnealOptions, OptimizeWeights
 router = APIRouter()
 
 
+def _fetch_area_too_large_detail() -> dict[str, str]:
+    return {"code": "fetch_area_too_large", "message": FETCH_AREA_TOO_LARGE_MESSAGE}
+
+
 class StrokePointBody(BaseModel):
     x: float
     y: float
@@ -52,7 +57,12 @@ class ProductionOptimizeBody(BaseModel):
     stroke_components: list[list[StrokePointBody]]
     center_lon: float = Field(..., ge=-180.0, le=180.0)
     center_lat: float = Field(..., ge=-90.0, le=90.0)
-    speed_preset: SpeedPreset = "normal"
+    speed_preset: SpeedPreset = DEFAULT_SPEED_PRESET
+    fetch_radius_m: float = Field(
+        default=DEFAULT_FETCH_RADIUS_M,
+        ge=FETCH_RADIUS_MIN_M,
+        le=FETCH_RADIUS_MAX_M,
+    )
     ignore_source_rotation: bool = PRODUCTION_IGNORE_SOURCE_ROTATION
 
 
@@ -63,32 +73,6 @@ def _center_to_bbox(
     dlat = radius_m / 111_320.0
     dlon = radius_m / (111_320.0 * math.cos(math.radians(lat)))
     return lat - dlat, lon - dlon, lat + dlat, lon + dlon
-
-
-async def _estimate_way_density_per_km2(lon: float, lat: float) -> float:
-    """半径 300m の bbox で highway way 数をカウントし、密度 (ways/km²) を返す。
-    失敗時は PILOT_FALLBACK_DENSITY を返す（処理を止めない）。"""
-    r = float(PILOT_QUERY_RADIUS_M)
-    min_lat, min_lon, max_lat, max_lon = _center_to_bbox(lon, lat, r)
-    query = f"""[out:json][timeout:6];
-way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});
-out count;
-"""
-    try:
-        data = await fetch_interpreter(query, timeout_s=8.0)
-        elements = data.get("elements") or []
-        way_count = int(elements[0]["tags"]["ways"]) if elements else 0
-        area_km2 = math.pi * (r / 1000.0) ** 2
-        return way_count / area_km2 if area_km2 > 0 else PILOT_FALLBACK_DENSITY
-    except Exception:
-        return PILOT_FALLBACK_DENSITY
-
-
-def _compute_adaptive_radius(way_density: float, preset: SpeedPresetConfig) -> float:
-    """道路密度から way 数予算内に収まる最大半径を返す。preset.fetch_radius_m が上限。"""
-    area_km2 = MAX_WAY_BUDGET_ADAPTIVE / max(way_density, 1.0)
-    radius_m = math.sqrt(area_km2 / math.pi) * 1000.0
-    return max(ADAPTIVE_RADIUS_MIN_M, min(radius_m, preset.fetch_radius_m))
 
 
 def _run_optimization_sync(
@@ -219,13 +203,8 @@ async def production_optimize(
 
         preset = SPEED_PRESETS[body.speed_preset]
 
-        way_density = await _estimate_way_density_per_km2(body.center_lon, body.center_lat)
-        if should_cancel():
-            raise OptimizationCancelled()
-
-        radius_m = _compute_adaptive_radius(way_density, preset)
         min_lat, min_lon, max_lat, max_lon = _center_to_bbox(
-            body.center_lon, body.center_lat, radius_m
+            body.center_lon, body.center_lat, body.fetch_radius_m
         )
 
         way_query = f"""[out:json][timeout:30];
@@ -240,7 +219,8 @@ out skel qt;
             data = await fetch_interpreter(way_query, timeout_s=40.0)
         except httpx.HTTPError as e:
             raise HTTPException(
-                status_code=502, detail=f"道路データの取得に失敗しました: {e}"
+                status_code=502,
+                detail=_fetch_area_too_large_detail(),
             ) from e
 
         if should_cancel():
@@ -251,7 +231,7 @@ out skel qt;
         if len(ways) > PRODUCTION_OVERPASS_MAX_WAYS:
             raise HTTPException(
                 status_code=413,
-                detail="この場所は道路データが多すぎて処理できませんでした。別のエリアを試してみてください。",
+                detail=_fetch_area_too_large_detail(),
             )
 
         fc = overpass_elements_to_geojson(elements, limit_ways=None)

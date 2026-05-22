@@ -7,6 +7,9 @@ import type { OptimizeApiResponse } from '../lib/optimizeTypes'
 import type { Point } from '../lib/simplify'
 import {
   DEFAULT_IGNORE_SOURCE_ROTATION,
+  FETCH_RADIUS_MAX_M,
+  FETCH_RADIUS_MIN_M,
+  FETCH_RADIUS_STEP_M,
   SPEED_PRESET_META,
   type SpeedPreset,
 } from '../lib/productionDefaults'
@@ -28,6 +31,8 @@ export type SidebarProps = {
   optimizeState: OptimizeState
   speedPreset: SpeedPreset
   onSpeedPresetChange: (p: SpeedPreset) => void
+  fetchRadiusM: number
+  onFetchRadiusChange: (radiusM: number) => void
   onOptimize: (preset: SpeedPreset, ignoreSourceRotation: boolean) => void
 }
 
@@ -40,6 +45,8 @@ export function Sidebar({
   optimizeState,
   speedPreset,
   onSpeedPresetChange,
+  fetchRadiusM,
+  onFetchRadiusChange,
   onOptimize,
 }: SidebarProps) {
   const [lockRotation, setLockRotation] = useState(!DEFAULT_IGNORE_SOURCE_ROTATION)
@@ -57,7 +64,7 @@ export function Sidebar({
   const canShowOrderPreview = Boolean(processedComponents && processedComponents.length > 0)
 
   return (
-    <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-5 pb-4 lg:max-w-sm lg:py-5 lg:pl-5 lg:pr-0">
+    <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-5 pb-4 lg:max-w-sm lg:py-5 lg:pl-5 lg:pr-0">
       {/* タイトル */}
       <div className="flex flex-col gap-1.5">
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">GPSアート作成機</h1>
@@ -147,11 +154,33 @@ export function Sidebar({
           ))}
         </div>
 
+        {/* 探索範囲 */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between text-sm text-stone-700">
+            <span className="font-medium">探索範囲</span>
+            <span className="tabular-nums text-stone-600">
+              {(fetchRadiusM / 1000).toFixed(1)} km
+            </span>
+          </div>
+          <input
+            type="range"
+            min={FETCH_RADIUS_MIN_M}
+            max={FETCH_RADIUS_MAX_M}
+            step={FETCH_RADIUS_STEP_M}
+            value={fetchRadiusM}
+            disabled={isRunning}
+            onChange={(e) => onFetchRadiusChange(Number(e.target.value))}
+            className="w-full accent-[#4a6f8a] disabled:opacity-50"
+            aria-label="道路データの探索範囲"
+          />
+        </div>
+
         {/* 回転固定トグル */}
         <button
           type="button"
           className="flex items-center justify-between text-sm text-stone-700"
           onClick={() => setLockRotation((v) => !v)}
+          disabled={isRunning}
         >
           <span>向きを固定する</span>
           <span

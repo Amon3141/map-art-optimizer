@@ -305,7 +305,7 @@ export function DebugOptimizePanel({
         </p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl border border-stone-200/90 bg-white/80 p-3 shadow-sm">
+      <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl border border-stone-200/90 bg-white/80 p-3 shadow-sm">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
             <button
@@ -713,7 +713,7 @@ export function DebugOptimizePanel({
               {restarts.length > 0 ? (
                 <div className="rounded-lg border border-stone-200/80 bg-stone-50/50 p-2">
                   <p className="mb-1 text-xs font-medium text-stone-700">各試行の結果</p>
-                  <ul className="flex max-h-24 flex-col gap-1 overflow-y-auto text-[10px] text-stone-600">
+                  <ul className="scrollbar-hidden flex max-h-24 flex-col gap-1 overflow-y-auto text-[10px] text-stone-600">
                     {restarts.map((r) => (
                       <li key={r.restart_index} className="font-mono">
                         #{r.restart_index}

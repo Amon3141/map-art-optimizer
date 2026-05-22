@@ -13,7 +13,7 @@ export const SPEED_PRESET_META: Record<SpeedPreset, SpeedPresetMeta> = {
   thorough: { label: 'じっくり', description: '約30秒' },
 }
 
-export const DEFAULT_SPEED_PRESET: SpeedPreset = 'normal'
+export const DEFAULT_SPEED_PRESET: SpeedPreset = 'fast'
 
 /** 本番デフォルト: 向き固定 OFF（回転自由） */
 export const DEFAULT_IGNORE_SOURCE_ROTATION = true
@@ -25,9 +25,10 @@ export const PRESET_BUDGET_S: Record<SpeedPreset, number> = {
   thorough: 30,
 }
 
-/** プリセット別の道路取得半径 (m) — バックエンドの production_defaults.py と同期して保つ */
-export const PRESET_FETCH_RADIUS_M: Record<SpeedPreset, number> = {
-  fast: 3500,
-  normal: 5000,
-  thorough: 7000,
-}
+/** 道路取得半径 (m) — バックエンドの production_defaults.py と同期して保つ */
+export const FETCH_RADIUS_MIN_M = 1000
+export const FETCH_RADIUS_MAX_M = 5000
+export const DEFAULT_FETCH_RADIUS_M = 3000
+export const FETCH_RADIUS_STEP_M = 500
+
+export const FETCH_AREA_TOO_LARGE_CODE = 'fetch_area_too_large' as const

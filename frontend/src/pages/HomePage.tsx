@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
+import { FetchRadiusErrorDialog } from '../components/FetchRadiusErrorDialog'
 import { MapPanel } from '../components/MapPanel'
 import { OptimizeStatusOverlay } from '../components/OptimizeStatusOverlay'
 import { RouteInfoPanel } from '../components/RouteInfoPanel'
@@ -8,8 +9,9 @@ import { SketchModal } from '../components/SketchModal'
 import { apiUrl } from '../lib/api'
 import type { OptimizeApiResponse } from '../lib/optimizeTypes'
 import {
+  DEFAULT_FETCH_RADIUS_M,
   DEFAULT_SPEED_PRESET,
-  PRESET_FETCH_RADIUS_M,
+  FETCH_AREA_TOO_LARGE_CODE,
   type SpeedPreset,
 } from '../lib/productionDefaults'
 import { overlayForCandidate } from '../lib/routeOverlay'
@@ -17,6 +19,28 @@ import { strokesToProcessedComponents } from '../lib/singlePathPostprocess'
 import type { StrokeData } from '../lib/strokeTypes'
 
 const DEFAULT_CENTER = { lon: 139.7671, lat: 35.6812 }
+
+function parseOptimizeApiDetail(detail: unknown): {
+  fetchAreaTooLarge: boolean
+  message: string
+} {
+  if (detail && typeof detail === 'object' && 'code' in detail) {
+    const d = detail as { code?: string; message?: string }
+    if (d.code === FETCH_AREA_TOO_LARGE_CODE) {
+      return {
+        fetchAreaTooLarge: true,
+        message: d.message ?? '探索範囲を小さくして再試行してください。',
+      }
+    }
+    if (typeof d.message === 'string') {
+      return { fetchAreaTooLarge: false, message: d.message }
+    }
+  }
+  if (typeof detail === 'string') {
+    return { fetchAreaTooLarge: false, message: detail }
+  }
+  return { fetchAreaTooLarge: false, message: '不明なエラーが発生しました。' }
+}
 
 export function HomePage() {
   const [targetKm, setTargetKm] = useState(10)
@@ -26,6 +50,9 @@ export function HomePage() {
   const [traceRouteOverride, setTraceRouteOverride] = useState<GeoJSON.FeatureCollection | null>(null)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [speedPreset, setSpeedPreset] = useState<SpeedPreset>(DEFAULT_SPEED_PRESET)
+  const [fetchRadiusM, setFetchRadiusM] = useState(DEFAULT_FETCH_RADIUS_M)
+  const [fetchRadiusErrorOpen, setFetchRadiusErrorOpen] = useState(false)
+  const [fetchRadiusErrorMessage, setFetchRadiusErrorMessage] = useState('')
   const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER)
   const [stopConfirmVariant, setStopConfirmVariant] = useState<StopOptimizeConfirmVariant | null>(
     null,
@@ -48,13 +75,12 @@ export function HomePage() {
     }
   }, [optimizeState])
 
-  // 取得範囲 circle: 探索中以外は常に表示
   const fetchRangeCircle = useMemo(
     () =>
       optimizeState.kind !== 'running'
-        ? { lon: mapCenter.lon, lat: mapCenter.lat, radiusM: PRESET_FETCH_RADIUS_M[speedPreset] }
+        ? { lon: mapCenter.lon, lat: mapCenter.lat, radiusM: fetchRadiusM }
         : null,
-    [optimizeState.kind, mapCenter, speedPreset],
+    [optimizeState.kind, mapCenter, fetchRadiusM],
   )
 
   const stopOptimization = useCallback(() => {
@@ -84,6 +110,7 @@ export function HomePage() {
           center_lon: mapCenter.lon,
           center_lat: mapCenter.lat,
           speed_preset: preset,
+          fetch_radius_m: fetchRadiusM,
           ignore_source_rotation: ignoreSourceRotation,
         }
 
@@ -99,8 +126,15 @@ export function HomePage() {
         if (res.status === 499) return
 
         if (!res.ok) {
-          const detail = await res.json().catch(() => ({}))
-          throw new Error(detail?.detail ?? `サーバーエラーが発生しました（${res.status}）`)
+          const payload = await res.json().catch(() => ({}))
+          const parsed = parseOptimizeApiDetail(payload?.detail)
+          if (parsed.fetchAreaTooLarge) {
+            setFetchRadiusErrorMessage(parsed.message)
+            setFetchRadiusErrorOpen(true)
+            setOptimizeState({ kind: 'idle' })
+            return
+          }
+          throw new Error(parsed.message || `サーバーエラーが発生しました（${res.status}）`)
         }
 
         const result: OptimizeApiResponse = await res.json()
@@ -115,7 +149,7 @@ export function HomePage() {
         })
       }
     },
-    [processedComponents, mapCenter],
+    [processedComponents, mapCenter, fetchRadiusM],
   )
 
   const handleOptimize = useCallback(
@@ -154,7 +188,6 @@ export function HomePage() {
     setStopConfirmVariant(null)
   }, [])
 
-  // 選択候補のルートを表示（トレースオーバーライドが優先）
   const routeGeoJson = useMemo(() => {
     if (traceRouteOverride) return traceRouteOverride
     if (optimizeState.kind !== 'done') return null
@@ -170,7 +203,7 @@ export function HomePage() {
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
+    <div className="scrollbar-hidden flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
       <Sidebar
         targetKm={targetKm}
         onTargetKmChange={setTargetKm}
@@ -180,6 +213,8 @@ export function HomePage() {
         optimizeState={optimizeState}
         speedPreset={speedPreset}
         onSpeedPresetChange={setSpeedPreset}
+        fetchRadiusM={fetchRadiusM}
+        onFetchRadiusChange={setFetchRadiusM}
         onOptimize={handleOptimize}
       />
 
@@ -215,6 +250,12 @@ export function HomePage() {
         variant={stopConfirmVariant}
         onCancel={handleCancelStopConfirm}
         onConfirm={handleConfirmStop}
+      />
+
+      <FetchRadiusErrorDialog
+        open={fetchRadiusErrorOpen}
+        message={fetchRadiusErrorMessage}
+        onClose={() => setFetchRadiusErrorOpen(false)}
       />
 
       {sketchOpen ? (

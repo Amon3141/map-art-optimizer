@@ -79,7 +79,7 @@ export function DebugSidebar({
       : null
 
   const emptyPlaceholder = (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <p className="px-3 py-6 text-center text-sm text-stone-500">{EMPTY_PLACEHOLDER}</p>
     </div>
   )
@@ -212,7 +212,7 @@ export function DebugSidebar({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
         {mapViewMode === 'graph' ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <div className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
             <div className="shrink-0 rounded-xl border border-stone-200/90 bg-white/90 p-3 shadow-sm">
               <p className="mb-2 text-xs font-medium text-stone-700">グラフ構築オプション</p>
               {graphLoading && hasRoadData ? (
@@ -444,14 +444,14 @@ export function DebugSidebar({
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] lg:min-h-[200px]">
                 {panelMode === 'text' ? (
                   textDump ? (
-                    <pre className="min-h-0 flex-1 overflow-auto p-3 text-[11px] leading-snug text-stone-800">
+                    <pre className="scrollbar-hidden min-h-0 flex-1 overflow-auto p-3 text-[11px] leading-snug text-stone-800">
                       {textDump}
                     </pre>
                   ) : (
                     emptyPlaceholder
                   )
                 ) : geojson ? (
-                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                  <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     <DebugWayList
                       features={features}
                       selectedWayId={selectedWayId}

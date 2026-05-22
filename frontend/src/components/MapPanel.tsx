@@ -70,7 +70,7 @@ export function MapPanel({
         map.resize()
         applyDebugBasemapVisibility(map, basemapModeRef.current)
 
-        // 取得範囲 circle（ルート overlay の下に追加）
+        // 探索範囲 circle（ルート overlay の下に追加）
         map.addSource(FETCH_RANGE_SOURCE, {
           type: 'geojson',
           data: { type: 'FeatureCollection', features: [] },
@@ -93,7 +93,7 @@ export function MapPanel({
           },
         })
 
-        // ルートオーバーレイ（取得範囲の上に追加）
+        // ルートオーバーレイ（探索範囲の上に追加）
         map.addSource(ROUTE_SOURCE, {
           type: 'geojson',
           data: { type: 'FeatureCollection', features: [] },
@@ -133,7 +133,7 @@ export function MapPanel({
     applyDebugBasemapVisibility(map, basemapMode)
   }, [mapReady, basemapMode])
 
-  // 取得範囲 circle の更新
+  // 探索範囲 circle の更新
   useEffect(() => {
     const map = mapRef.current
     if (!mapReady || !map) return

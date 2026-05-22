@@ -28,6 +28,7 @@
 | マップ内オーバーレイ | `z-20` | 探索進捗、ルート情報 |
 | モーダル | `MODAL_Z_INDEX` (50) | スケッチモーダル |
 | 前面モーダル | `MODAL_Z_INDEX_STACKED` (60) | 確認ダイアログ |
+| 最小幅ガード | `VIEWPORT_GUARD_Z_INDEX` (70) | 320px 未満（[`MinViewportGuard`](../frontend/src/components/MinViewportGuard.tsx)） |
 
 ### `ModalShell` の主な props
 
