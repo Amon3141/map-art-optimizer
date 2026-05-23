@@ -71,78 +71,71 @@ export function Sidebar({
   }
 
   const canShowOrderPreview = Boolean(processedComponents && processedComponents.length > 0)
+  const showPreview = hasShape && strokeData
+
+  const previewContent =
+    showPreview && canShowOrderPreview && previewMode === 'order' ? (
+      <RouteOrderPreview paths={processedComponents!} className="h-full w-full" />
+    ) : showPreview ? (
+      <SketchPreview strokes={strokeData!.strokes} className="h-full w-full" />
+    ) : null
 
   return (
-    <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-5 pb-4 lg:max-w-sm lg:py-5 lg:pl-5 lg:pr-0">
-      {/* タイトル */}
-      <div className="flex flex-col gap-1.5">
+    <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-5 pb-4 max-lg:overscroll-y-contain lg:h-full lg:max-w-sm lg:min-h-0 lg:overflow-hidden lg:py-5 lg:pl-5 lg:pr-0">
+      <div className="flex shrink-0 flex-col gap-1.5">
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">GPSアート作成機</h1>
         <p className="text-sm leading-relaxed text-stone-600">
           キャンバスに描いた形を、地図の道路上で再現するルートを探します。
         </p>
       </div>
 
-      {/* スケッチ入力 */}
-      <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          className="inline-flex items-center justify-center gap-1 rounded-xl border border-dashed border-stone-400 bg-white py-3 text-sm font-medium text-stone-800 shadow-sm hover:border-[#4a6f8a] hover:bg-[#f3f6f8]"
-          onClick={onOpenSketch}
-        >
-          <MdOutlineDraw className="h-5 w-5 shrink-0 text-stone-700" aria-hidden />
-          {hasShape ? '形を描き直す' : '形を描く'}
-        </button>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center justify-center gap-1 rounded-xl border border-dashed border-stone-400 bg-white py-3 text-sm font-medium text-stone-800 shadow-sm hover:border-[#4a6f8a] hover:bg-[#f3f6f8]"
+        onClick={onOpenSketch}
+      >
+        <MdOutlineDraw className="h-5 w-5 shrink-0 text-stone-700" aria-hidden />
+        {hasShape ? '形を描き直す' : '形を描く'}
+      </button>
 
-        {hasShape && strokeData ? (
-          <div className="flex flex-col gap-2">
-            {canShowOrderPreview && (
-              <div className="flex rounded-lg border border-stone-200 bg-stone-100 p-0.5 text-xs">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-md py-1.5 text-center transition-colors ${
-                    previewMode === 'shape'
-                      ? 'bg-white font-medium text-stone-800 shadow-sm'
-                      : 'text-stone-500 hover:text-stone-700'
-                  }`}
-                  onClick={() => setPreviewMode('shape')}
-                >
-                  もとの形
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-md py-1.5 text-center transition-colors ${
-                    previewMode === 'order'
-                      ? 'bg-white font-medium text-stone-800 shadow-sm'
-                      : 'text-stone-500 hover:text-stone-700'
-                  }`}
-                  onClick={() => setPreviewMode('order')}
-                >
-                  巡回順
-                </button>
-              </div>
-            )}
+      {showPreview && canShowOrderPreview ? (
+        <div className="flex shrink-0 rounded-lg border border-stone-200 bg-stone-100 p-0.5 text-xs">
+          <button
+            type="button"
+            className={`flex-1 rounded-md py-1.5 text-center transition-colors ${
+              previewMode === 'shape'
+                ? 'bg-white font-medium text-stone-800 shadow-sm'
+                : 'text-stone-500 hover:text-stone-700'
+            }`}
+            onClick={() => setPreviewMode('shape')}
+          >
+            もとの形
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-md py-1.5 text-center transition-colors ${
+              previewMode === 'order'
+                ? 'bg-white font-medium text-stone-800 shadow-sm'
+                : 'text-stone-500 hover:text-stone-700'
+            }`}
+            onClick={() => setPreviewMode('order')}
+          >
+            巡回順
+          </button>
+        </div>
+      ) : null}
 
-            {/* プレビュー本体 */}
-            {canShowOrderPreview && previewMode === 'order' ? (
-              <RouteOrderPreview
-                paths={processedComponents!}
-                className="mx-auto aspect-square w-full max-w-[min(100%,360px)] shrink-0"
-              />
-            ) : (
-              <SketchPreview
-                strokes={strokeData.strokes}
-                className="mx-auto aspect-square w-full max-w-[min(100%,360px)] shrink-0"
-              />
-            )}
+      {showPreview ? (
+        <div className="flex min-h-0 min-w-0 justify-center overflow-hidden max-lg:contents lg:flex-1">
+          <div className="mx-auto aspect-square w-full max-w-[min(100%,360px)] shrink-0 overflow-hidden lg:min-h-0 lg:min-w-0 lg:max-h-full lg:max-w-none">
+            {previewContent}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
-      {/* 探索設定 */}
-      <div className="flex flex-col gap-3">
+      <div className="flex shrink-0 flex-col gap-3">
         <p className="text-sm font-medium text-stone-700">探索設定</p>
 
-        {/* 速度プリセット */}
         <div className="grid grid-cols-3 gap-1.5">
           {(Object.keys(SPEED_PRESET_META) as SpeedPreset[]).map((p) => (
             <button
@@ -164,7 +157,6 @@ export function Sidebar({
           ))}
         </div>
 
-        {/* 探索範囲 */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between text-sm text-stone-700">
             <span className="font-medium">探索範囲</span>
@@ -185,7 +177,6 @@ export function Sidebar({
           />
         </div>
 
-        {/* 回転固定トグル */}
         <button
           type="button"
           className="flex items-center justify-between text-sm text-stone-700"
@@ -213,7 +204,7 @@ export function Sidebar({
       </div>
 
       {!isProduction ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex shrink-0 flex-col gap-2">
           <label className="block text-sm font-medium text-stone-700">
             距離の目安（km）
             <input
@@ -228,27 +219,19 @@ export function Sidebar({
         </div>
       ) : null}
 
-      {/* アクションボタン */}
       <button
         type="button"
         disabled={!hasShape || isRunning}
-        className="rounded-xl bg-[#c45c3e] py-3 text-sm font-semibold text-white shadow-md hover:bg-[#b14f33] disabled:cursor-not-allowed disabled:opacity-50"
+        className="shrink-0 rounded-xl bg-[#c45c3e] py-3 text-sm font-semibold text-white shadow-md hover:bg-[#b14f33] disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleOptimize}
       >
         {isRunning ? '探索中…' : result ? 'もう一度探す' : 'GPSアートを作成'}
       </button>
 
-      {/* エラー表示 */}
-      {optimizeState.kind === 'error' && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
-          {optimizeState.message}
-        </div>
-      )}
-
       {isDevelopment ? (
         <Link
           to="/debug"
-          className="mt-auto text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"
+          className="mt-auto shrink-0 text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"
         >
           デバッグページへ →
         </Link>

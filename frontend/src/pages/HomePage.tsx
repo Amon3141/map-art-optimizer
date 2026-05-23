@@ -1,7 +1,6 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
-import { FetchRadiusErrorDialog } from '../components/FetchRadiusErrorDialog'
 import { MapPanel } from '../components/MapPanel'
 import { OptimizeStatusOverlay } from '../components/OptimizeStatusOverlay'
 import { RouteInfoPanel } from '../components/RouteInfoPanel'
@@ -13,9 +12,10 @@ import {
   DEFAULT_FETCH_RADIUS_M,
   DEFAULT_SPEED_PRESET,
   FETCH_AREA_TOO_LARGE_CODE,
+  PRESET_BUDGET_S,
   type SpeedPreset,
 } from '../lib/productionDefaults'
-import { fitMapToFeatureCollections } from '../lib/fitMapViewport'
+import { fitMapWhenReady, ROUTE_FIT_PADDING } from '../lib/fitMapViewport'
 import { overlayForCandidate } from '../lib/routeOverlay'
 import { strokesToProcessedComponents } from '../lib/singlePathPostprocess'
 import type { StrokeData } from '../lib/strokeTypes'
@@ -53,8 +53,6 @@ export function HomePage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [speedPreset, setSpeedPreset] = useState<SpeedPreset>(DEFAULT_SPEED_PRESET)
   const [fetchRadiusM, setFetchRadiusM] = useState(DEFAULT_FETCH_RADIUS_M)
-  const [fetchRadiusErrorOpen, setFetchRadiusErrorOpen] = useState(false)
-  const [fetchRadiusErrorMessage, setFetchRadiusErrorMessage] = useState('')
   const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER)
   const [showFetchRange, setShowFetchRange] = useState(true)
   const [stopConfirmVariant, setStopConfirmVariant] = useState<StopOptimizeConfirmVariant | null>(
@@ -64,6 +62,8 @@ export function HomePage() {
   const optimizeGenRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
+  /** 探索完了直後の 1 回だけ onlyIfNeeded をバイパスする */
+  const forceFitOnResultRef = useRef(false)
 
   const onMapReady = useCallback((map: MapLibreMap) => {
     mapRef.current = map
@@ -76,15 +76,6 @@ export function HomePage() {
 
   const revealFetchRange = useCallback(() => setShowFetchRange(true), [])
 
-  // 結果が届いたら最良候補を自動選択してトレースをリセット
-  useEffect(() => {
-    if (optimizeState.kind === 'done') {
-      const top = optimizeState.result.ranked_candidates?.[0]
-      setSelectedCandidateId(top?.candidate_id ?? null)
-      setTraceRouteOverride(null)
-      setShowFetchRange(false)
-    }
-  }, [optimizeState])
 
   const fetchRangeCircle = useMemo(() => {
     if (!showFetchRange) return null
@@ -129,6 +120,13 @@ export function HomePage() {
       const ac = new AbortController()
       abortRef.current = ac
 
+      const hardTimeoutId = setTimeout(() => {
+        if (gen !== optimizeGenRef.current) return
+        ac.abort()
+        optimizeGenRef.current += 1
+        setOptimizeState({ kind: 'error', message: '時間がかかりすぎています。再試行してください。' })
+      }, (PRESET_BUDGET_S[preset] + 90) * 1000)
+
       setOptimizeState({
         kind: 'running',
         startedAt: Date.now(),
@@ -139,6 +137,7 @@ export function HomePage() {
       })
       setTraceRouteOverride(null)
       setSelectedCandidateId(null)
+      forceFitOnResultRef.current = false
 
       try {
         const body = {
@@ -167,9 +166,7 @@ export function HomePage() {
           const payload = await res.json().catch(() => ({}))
           const parsed = parseOptimizeApiDetail(payload?.detail)
           if (parsed.fetchAreaTooLarge) {
-            setFetchRadiusErrorMessage(parsed.message)
-            setFetchRadiusErrorOpen(true)
-            setOptimizeState({ kind: 'idle' })
+            setOptimizeState({ kind: 'error', message: parsed.message })
             return
           }
           throw new Error(parsed.message || `サーバーエラーが発生しました（${res.status}）`)
@@ -177,6 +174,10 @@ export function HomePage() {
 
         const result: OptimizeApiResponse = await res.json()
         if (gen !== optimizeGenRef.current) return
+        setTraceRouteOverride(null)
+        setShowFetchRange(false)
+        setSelectedCandidateId(result.ranked_candidates?.[0]?.candidate_id ?? null)
+        forceFitOnResultRef.current = true
         setOptimizeState({ kind: 'done', result })
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -185,6 +186,8 @@ export function HomePage() {
           kind: 'error',
           message: err instanceof Error ? err.message : '不明なエラーが発生しました。',
         })
+      } finally {
+        clearTimeout(hardTimeoutId)
       }
     },
     [processedComponents, mapCenter, fetchRadiusM],
@@ -240,14 +243,31 @@ export function HomePage() {
     return fc ?? candidates_geojson
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
+  const fitTargetFc = useMemo((): GeoJSON.FeatureCollection | null => {
+    if (optimizeState.kind !== 'done' || !selectedCandidateId) return null
+    const { candidates_geojson, ranked_candidates, edges_geojson } = optimizeState.result
+    const fc = overlayForCandidate(
+      selectedCandidateId,
+      candidates_geojson,
+      ranked_candidates ?? [],
+      edges_geojson,
+    )
+    if (fc?.features.length) return fc
+    if (candidates_geojson.features.length > 0) return candidates_geojson
+    return null
+  }, [optimizeState, selectedCandidateId])
+
   useEffect(() => {
-    if (optimizeState.kind !== 'done' || !selectedCandidateId) return
+    if (optimizeState.kind !== 'done' || !selectedCandidateId || !fitTargetFc) return
     const map = mapRef.current
-    if (!map?.loaded()) return
-    const geo = routeGeoJson
-    if (!geo?.features?.length) return
-    fitMapToFeatureCollections(map, geo)
-  }, [optimizeState, selectedCandidateId, routeGeoJson])
+    if (!map) return
+    const force = forceFitOnResultRef.current
+    if (force) forceFitOnResultRef.current = false
+    return fitMapWhenReady(map, fitTargetFc, {
+      onlyIfNeeded: !force,
+      padding: ROUTE_FIT_PADDING,
+    })
+  }, [optimizeState, selectedCandidateId, fitTargetFc])
 
   return (
     <div className="scrollbar-hidden flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
@@ -278,12 +298,20 @@ export function HomePage() {
             onShowFetchRangeChange={setShowFetchRange}
           />
 
-          <OptimizeStatusOverlay
-            visible={optimizeState.kind === 'running'}
-            startedAt={optimizeState.kind === 'running' ? optimizeState.startedAt : null}
-            preset={optimizeState.kind === 'running' ? optimizeState.preset : 'normal'}
-            onStop={handleRequestStopFromOverlay}
-          />
+          {optimizeState.kind === 'running' ? (
+            <OptimizeStatusOverlay
+              mode="running"
+              startedAt={optimizeState.startedAt}
+              preset={optimizeState.preset}
+              onStop={handleRequestStopFromOverlay}
+            />
+          ) : optimizeState.kind === 'error' ? (
+            <OptimizeStatusOverlay
+              mode="error"
+              message={optimizeState.message}
+              onDismiss={() => setOptimizeState({ kind: 'idle' })}
+            />
+          ) : null}
 
           {optimizeState.kind === 'done' && selectedCandidateId && (
             <RouteInfoPanel
@@ -301,12 +329,6 @@ export function HomePage() {
         variant={stopConfirmVariant}
         onCancel={handleCancelStopConfirm}
         onConfirm={handleConfirmStop}
-      />
-
-      <FetchRadiusErrorDialog
-        open={fetchRadiusErrorOpen}
-        message={fetchRadiusErrorMessage}
-        onClose={() => setFetchRadiusErrorOpen(false)}
       />
 
       {sketchOpen ? (

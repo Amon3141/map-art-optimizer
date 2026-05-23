@@ -14,7 +14,7 @@
 
 ### いつ使わないか
 
-- マップコンテナ内の `absolute` オーバーレイ（例: [`OptimizeStatusOverlay`](../frontend/src/components/OptimizeStatusOverlay.tsx)、[`RouteInfoPanel`](../frontend/src/components/RouteInfoPanel.tsx)）
+- マップコンテナ内の `absolute` オーバーレイ（例: [`OptimizeStatusOverlay`](../frontend/src/components/OptimizeStatusOverlay.tsx) — 探索中は進捗・失敗時はエラーメッセージと「閉じる」、[`RouteInfoPanel`](../frontend/src/components/RouteInfoPanel.tsx)）
 - ツールチップ・インラインの軽い UI
 
 これらは従来どおりマップ親要素内に配置する。

@@ -354,6 +354,8 @@ def simulated_annealing_search(
             proposal_state = AnnealState(_random_transform(rng, span_x, span_y))
         else:
             proposal_state = _propose_state(current.state, rng, opt, span_x, span_y, step_scale)
+        if _over_deadline(deadline) or _is_cancelled(should_cancel):
+            break
         proposal = evaluate(proposal_state)
         delta = proposal.score - current.score
         accepted = delta <= 0.0
@@ -553,6 +555,8 @@ def joint_simulated_annealing_search(
 
         steps_since_best += 1
         steps_since_escape += 1
+        if _over_deadline(deadline) or _is_cancelled(should_cancel):
+            break
         if _should_trigger_escape(
             steps_since_best,
             steps_since_escape,

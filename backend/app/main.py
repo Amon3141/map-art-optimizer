@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .debug import router as debug_router
-from .routes import router as prod_router
+from .routes import router as app_router
 
 CORS_ORIGINS = [
     o.strip()
@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(debug_router, prefix="/api/debug", tags=["debug"])
-app.include_router(prod_router, prefix="/api", tags=["production"])
+app.include_router(app_router, prefix="/api", tags=["app"])
 
 
 @app.get("/health")

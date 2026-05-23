@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DebugOptimizePanel } from '../debug/components/DebugOptimizePanel'
 import { DebugSidebar, type DebugPanelMode } from '../debug/components/DebugSidebar'
 import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugMapPanel'
-import { fitMapToFeatureCollections, fitMapToLineString } from '../lib/fitMapViewport'
+import { fitMapToLineString, fitMapWhenReady, ROUTE_FIT_PADDING } from '../lib/fitMapViewport'
 import {
   defaultGraphBuildOptions,
   normalizeGraphBuildOptions,
@@ -24,6 +24,7 @@ type DebugFlow = 'preprocess' | 'optimize'
 /** デバッグ用: Overpass → OSM GeoJSON → 平面グラフの可視化 */
 export function DebugPage() {
   const mapRef = useRef<MapLibreMap | null>(null)
+  const fitCleanupRef = useRef<(() => void) | null>(null)
   const graphFetchGen = useRef(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -228,8 +229,12 @@ export function DebugPage() {
 
   const handleFitViewport = useCallback((fc: GeoJSON.FeatureCollection) => {
     const map = mapRef.current
-    if (!map?.loaded() || fc.features.length === 0) return
-    fitMapToFeatureCollections(map, fc)
+    if (!map) return
+    fitCleanupRef.current?.()
+    fitCleanupRef.current = fitMapWhenReady(map, fc, {
+      onlyIfNeeded: true,
+      padding: ROUTE_FIT_PADDING,
+    })
   }, [])
 
   return (

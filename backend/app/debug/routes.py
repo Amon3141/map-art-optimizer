@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
 from ..osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
-from ..osm.overpass import fetch_interpreter
+from ..osm.overpass import OverpassTooManyWaysError, fetch_highway_elements_for_bbox
 from ..osm.projection import bbox_center_lon_lat
 from ..preprocess import (
     DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
@@ -53,8 +53,7 @@ from ..optimization.defaults import (
     DEFAULT_TRACE_STRIDE,
     DEFAULT_TRANSLATION_STEP_M_RATIO,
 )
-from ..optimization.run import run_joint_simulated_annealing, run_simulated_annealing
-from ..optimization.serialize import restart_result_to_dict
+from ..optimization.pipeline import run_optimization_pipeline
 from ..optimization.types import AnnealOptions, OptimizeWeights
 from .preview import ways_raw_preview
 
@@ -186,32 +185,29 @@ async def debug_ways(
     if min_lat >= max_lat or min_lon >= max_lon:
         raise HTTPException(status_code=400, detail="Invalid bbox")
 
-    # south,west,north,east — bbox 内の highway タグ付き way をすべて（クライアント側で種別フィルタ）
-    way_lines = f'  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});'
-    query = f"""[out:json][timeout:25];
-(
-{way_lines}
-);
-out body;
->;
-out skel qt;
-"""
     try:
-        data = await fetch_interpreter(query)
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Overpass error: {e}") from e
-
-    elements = data.get("elements") or []
-    ways = [e for e in elements if e.get("type") == "way"]
-    ways_sorted = sorted(ways, key=lambda w: int(w.get("id") or 0))
-    if len(ways_sorted) > DEBUG_OVERPASS_MAX_WAYS:
+        elements = await fetch_highway_elements_for_bbox(
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+            max_ways=DEBUG_OVERPASS_MAX_WAYS,
+        )
+    except OverpassTooManyWaysError as e:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"この範囲の way が多すぎます（{len(ways_sorted)} 件、上限 {DEBUG_OVERPASS_MAX_WAYS}）。"
+                f"この範囲の way が多すぎます（{e.way_count} 件、上限 {DEBUG_OVERPASS_MAX_WAYS}）。"
                 " 地図をズームして範囲を狭くしてください。"
             ),
-        )
+        ) from e
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Overpass error: {e}") from e
+
+    ways_sorted = sorted(
+        [el for el in elements if el.get("type") == "way"],
+        key=lambda w: int(w.get("id") or 0),
+    )
     geojson = overpass_elements_to_geojson(elements, limit_ways=None)
     raw_preview = ways_raw_preview(ways_sorted)
 
@@ -254,6 +250,7 @@ async def debug_graph_preview(body: GraphPreviewBody) -> dict[str, Any]:
 
 @router.post("/optimize")
 async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
+    # 入力 bbox と GeoJSON を検証する
     b = body.bbox
     if b.min_lat >= b.max_lat or b.min_lon >= b.max_lon:
         raise HTTPException(status_code=400, detail="Invalid bbox")
@@ -262,16 +259,21 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
     if fc.get("type") != "FeatureCollection":
         raise HTTPException(status_code=400, detail="geojson must be a FeatureCollection")
 
+    # 投影原点を決める
     lon0, lat0 = bbox_center_lon_lat(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
+
+    # 道路グラフを構築する
     opts = GraphPreprocessOptions(**body.options.model_dump())
     built = build_graph_from_geojson(fc, lon0, lat0, opts)
 
+    # 探索重みと焼きなましオプションを組み立てる
     w_body = body.weights
     weights = OptimizeWeights(**w_body.model_dump()) if w_body else OptimizeWeights()
 
     a_body = body.anneal
     anneal = _anneal_body_to_options(a_body)
 
+    # デバッグ用ベースレスポンスを組み立てる
     projection_summary = (
         "表示範囲の中心を原点とした平面座標（メートル換算）でグラフを構築しました。"
     )
@@ -287,83 +289,25 @@ async def debug_optimize(body: DebugOptimizeBody) -> dict[str, Any]:
         "stats": built.stats,
     }
 
-    if len(body.stroke_components) < 1:
-        raise HTTPException(status_code=400, detail="stroke_components must be non-empty")
+    # ストロークを API 用にシリアライズする
+    components_payload = [
+        [p.model_dump() for p in comp] for comp in body.stroke_components
+    ]
 
-    if len(body.stroke_components) > 1:
-        components_payload = [
-            [p.model_dump() for p in comp] for comp in body.stroke_components
-        ]
-        joint_result = run_joint_simulated_annealing(
+    # 焼きなましを実行する
+    try:
+        opt_response = run_optimization_pipeline(
             built.graph,
-            components_payload,
             lon0,
             lat0,
+            components_payload,
             weights=weights,
-            opt=anneal,
+            anneal=anneal,
             record_trace=body.record_trace,
+            include_debug_fields=True,
         )
-        total_length_m = sum(c.route_length_m for c in joint_result.components)
-        # best_breakdown は最初のコンポーネントを代表値として返す（デバッグ UI 互換）
-        rep_bd = joint_result.components[0].best_breakdown if joint_result.components else None
-        return {
-            **base_response,
-            "candidates_geojson": joint_result.candidates_geojson,
-            "ranked_candidates": joint_result.ranked_candidates,
-            "candidate_selection_meta": joint_result.candidate_selection_meta,
-            "best_score": joint_result.best_joint_score,
-            "best_breakdown": rep_bd.as_dict() if rep_bd else {},
-            "best_restart_index": min(
-                range(len(joint_result.restart_results)),
-                key=lambda i: joint_result.restart_results[i].best_score,
-                default=0,
-            ),
-            "route_length_m": total_length_m,
-            "route_length_km": round(total_length_m / 1000.0, 6),
-            "optimizer_meta": joint_result.optimizer_meta,
-            "restarts": [restart_result_to_dict(r) for r in joint_result.restart_results],
-            "components": [
-                {
-                    "component_index": c.component_index,
-                    "best_score": c.best_score,
-                    "best_breakdown": c.best_breakdown.as_dict(),
-                    "route_length_m": c.route_length_m,
-                    "route_length_km": round(c.route_length_m / 1000.0, 6),
-                }
-                for c in joint_result.components
-            ],
-        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
-    stroke_payload = [p.model_dump() for p in body.stroke_components[0]]
-    opt_result = run_simulated_annealing(
-        built.graph,
-        stroke_payload,
-        lon0,
-        lat0,
-        weights=weights,
-        opt=anneal,
-        record_trace=body.record_trace,
-    )
-
-    return {
-        **base_response,
-        "candidates_geojson": opt_result.candidates_geojson,
-        "ranked_candidates": opt_result.ranked_candidates,
-        "candidate_selection_meta": opt_result.candidate_selection_meta,
-        "best_score": opt_result.best_score,
-        "best_breakdown": opt_result.best_breakdown.as_dict(),
-        "best_restart_index": opt_result.best_restart_index,
-        "route_length_m": opt_result.best_route_length_m,
-        "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
-        "optimizer_meta": opt_result.optimizer_meta,
-        "restarts": [restart_result_to_dict(r) for r in opt_result.restart_results],
-        "components": [
-            {
-                "component_index": 0,
-                "best_score": opt_result.best_score,
-                "best_breakdown": opt_result.best_breakdown.as_dict(),
-                "route_length_m": opt_result.best_route_length_m,
-                "route_length_km": round(opt_result.best_route_length_m / 1000.0, 6),
-            }
-        ],
-    }
+    # 最適化結果を返す
+    return {**base_response, **opt_response}

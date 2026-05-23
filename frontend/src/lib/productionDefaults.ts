@@ -1,4 +1,4 @@
-/** 本番アプリ向け速度プリセット定義。バックエンドの production_defaults.py と同期して保つ。 */
+/** 本番アプリ向け速度プリセット定義。バックエンドの app_defaults.py と同期して保つ。 */
 
 export type SpeedPreset = 'fast' | 'normal' | 'thorough'
 
@@ -25,7 +25,7 @@ export const PRESET_BUDGET_S: Record<SpeedPreset, number> = {
   thorough: 30,
 }
 
-/** 道路取得半径 (m) — バックエンドの production_defaults.py と同期して保つ */
+/** 道路取得半径 (m) — バックエンドの app_defaults.py と同期して保つ */
 export const FETCH_RADIUS_MIN_M = 1000
 export const FETCH_RADIUS_MAX_M = 5000
 export const DEFAULT_FETCH_RADIUS_M = 3000

@@ -70,7 +70,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 | normal    | ふつう | 20s      | 5        | 300      |
 | thorough  | じっくり | 30s   | 10       | 500      |
 
-各プリセットは `backend/app/optimization/production_defaults.py` に定義。  
+各プリセットは `backend/app/optimization/app_defaults.py` に定義。  
 フロント側の UI メタ（ラベル・説明）は `frontend/src/lib/productionDefaults.ts` に定義。
 
 **UI / API 省略時のデフォルト: fast（速め）**
@@ -98,7 +98,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 - 最適化成功後: トグルは自動で OFF
 - スケッチ確定・探索設定（速度プリセット・探索範囲・向き固定）の変更時: トグルは自動で ON
 
-定数は `production_defaults.py` / `productionDefaults.ts` の `FETCH_RADIUS_*` に定義。
+定数は `app_defaults.py` / `productionDefaults.ts` の `FETCH_RADIUS_*` に定義。
 
 探索範囲が大きすぎる、または道路が密すぎて Overpass が失敗した場合、API は `detail: { code: "fetch_area_too_large", message: "..." }`（HTTP 413 または 502）を返す。フロントは `FetchRadiusErrorDialog`（`ModalShell`）で半径縮小を案内する。
 
@@ -137,7 +137,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 ## 実装原則
 
 ### バックエンド
-- 本番用パラメータは `backend/app/optimization/production_defaults.py` に集約する
+- 本番用パラメータは `backend/app/optimization/app_defaults.py` に集約する
 - 本番エンドポイントは `backend/app/routes.py`（デバッグとは別ファイル）
 - デバッグ専用ロジックを変更しないこと。本番エンドポイントから `run_simulated_annealing` / `run_joint_simulated_annealing` を直接インポートして使う
 - 環境変数での本番/デバッグ分岐はしない（同一デプロイを想定）

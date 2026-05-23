@@ -208,13 +208,13 @@ export function RouteOrderPreview({ paths, className = '' }: Props) {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-inner ${className}`}
+      className={`relative min-h-0 min-w-0 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-inner ${className}`}
       role="img"
       aria-label="巡回順プレビュー"
     >
       <svg
         viewBox={`0 0 ${VB} ${VB}`}
-        className="h-full w-full"
+        className="block h-full w-full"
         preserveAspectRatio="xMidYMid meet"
       >
         {componentElements}

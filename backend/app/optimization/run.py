@@ -353,6 +353,8 @@ def run_simulated_annealing(
     restart_results: list[RestartResult] = []
     for restart_index in range(restart_count):
         _check_cancel(should_cancel)
+        if not math.isinf(deadline) and time.monotonic() >= deadline:
+            break
         restart_seed = restart_seeds[restart_index]
         initial_transform = initial_transforms[restart_index]
         restart_opt = AnnealOptions(
@@ -626,6 +628,8 @@ def run_joint_simulated_annealing(
 
     for restart_index in range(restart_count):
         _check_cancel(should_cancel)
+        if not math.isinf(deadline) and time.monotonic() >= deadline:
+            break
         restart_seed = restart_seeds[restart_index]
         initial_transform = initial_transforms[restart_index]
         restart_opt = AnnealOptions(

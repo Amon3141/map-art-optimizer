@@ -39,13 +39,13 @@ export function SketchPreview({
 
   return (
     <div
-      className={`overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-inner ${className}`}
+      className={`min-h-0 min-w-0 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-inner ${className}`}
       role="img"
       aria-label="ストロークプレビュー"
     >
       <svg
         viewBox={`0 0 ${vb} ${vb}`}
-        className="h-full w-full"
+        className="block h-full w-full"
         preserveAspectRatio="xMidYMid meet"
       >
         {strokes.map((stroke, i) => {
