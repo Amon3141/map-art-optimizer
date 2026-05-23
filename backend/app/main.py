@@ -1,4 +1,6 @@
+import json
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -36,6 +38,23 @@ app = FastAPI(title="GPSアート作成機 API", version="0.1.0")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+
+
+@app.middleware("http")
+async def _log_optimize(request: FastAPIRequest, call_next):
+    if request.url.path != "/api/optimize":
+        return await call_next(request)
+    t0 = time.monotonic()
+    response = await call_next(request)
+    print(
+        json.dumps({
+            "event": "optimize",
+            "status": response.status_code,
+            "duration_ms": round((time.monotonic() - t0) * 1000),
+        }),
+        flush=True,
+    )
+    return response
 
 app.add_middleware(
     CORSMiddleware,
