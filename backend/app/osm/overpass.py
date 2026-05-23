@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import math
 import os
+import re
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
 from .geojson import overpass_elements_to_geojson
+from .highway_include import INCLUDED_HIGHWAY_TYPES
 
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 
@@ -34,12 +37,21 @@ def highway_bbox_query(
     max_lon: float,
     *,
     query_timeout_s: int = 25,
+    highway_values: Sequence[str] | None = None,
 ) -> str:
-    """bbox 内の highway タグ付き way を取得する Overpass QL。"""
-    way_lines = f'  way["highway"]({min_lat},{min_lon},{max_lat},{max_lon});'
+    """bbox 内の highway タグ付き way を取得する Overpass QL。
+
+    highway_values が None のときは way[\"highway\"] 全件。指定時はその値のみ（regex フィルタ）。
+    """
+    bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
+    if highway_values is None:
+        way_line = f'  way["highway"]({bbox});'
+    else:
+        pattern = "|".join(re.escape(v) for v in highway_values)
+        way_line = f'  way["highway"~"^({pattern})$"]({bbox});'
     return f"""[out:json][timeout:{query_timeout_s}];
 (
-{way_lines}
+{way_line}
 );
 out body;
 >;
@@ -62,10 +74,16 @@ async def fetch_highway_elements_for_bbox(
     *,
     timeout_s: float = 60.0,
     query_timeout_s: int = 25,
+    highway_values: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """bbox 内の highway way 要素列を返す。"""
     query = highway_bbox_query(
-        min_lat, min_lon, max_lat, max_lon, query_timeout_s=query_timeout_s
+        min_lat,
+        min_lon,
+        max_lat,
+        max_lon,
+        query_timeout_s=query_timeout_s,
+        highway_values=highway_values,
     )
     data = await fetch_interpreter(query, timeout_s=timeout_s)
     return data.get("elements") or []
@@ -88,6 +106,7 @@ async def fetch_highway_geojson_for_bbox(
         max_lon,
         timeout_s=timeout_s,
         query_timeout_s=query_timeout_s,
+        highway_values=INCLUDED_HIGHWAY_TYPES,
     )
     return overpass_elements_to_geojson(elements, limit_ways=max_ways)
 

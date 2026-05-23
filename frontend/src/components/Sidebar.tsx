@@ -12,7 +12,7 @@ import {
   FETCH_RADIUS_STEP_M,
   SPEED_PRESET_META,
   type SpeedPreset,
-} from '../lib/productionDefaults'
+} from '../lib/appDefaults'
 import { isDevelopment, isProduction } from '../lib/appEnv'
 import type { StrokeData } from '../lib/strokeTypes'
 

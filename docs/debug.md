@@ -20,7 +20,7 @@
 ### 命名
 
 - **`src/debug/components/`** のコンポーネントは **`Debug` で始まる名前**に統一する（例: `DebugSidebar`, `DebugWayList`）。
-- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う。`GET /api/debug/ways` は **bbox のみ**（クエリは緯度経度）で、Overpass から **その範囲の `highway` タグ付き way を全件**取得する。**どの highway 値を表示に含めるか**はデバッグ UI が **クライアント側**で GeoJSON をフィルタする（本番パイプラインとは別）。
+- 画面上・コード上の語は **OSM の線要素は way**、見た目としては **道路** とし、`highway` は **タグ名（`highway=*`）** のときだけ使う。`GET /api/debug/ways` は **bbox のみ**（クエリは緯度経度）で、Overpass から **その範囲の `highway` タグ付き way を全件**取得する。**どの highway 値を表示に含めるか**はデバッグ UI が **クライアント側**で GeoJSON をフィルタする（本番パイプラインとは別）。チェック既定 ON の 7 種は [`highwayInclude.ts`](../frontend/src/lib/highwayInclude.ts) の `INCLUDED_HIGHWAY_TYPES`（本番 Overpass 取得と同じ）。
 - コンポーネントではないヘルパーは **`src/debug/lib/`** に置き、ファイル名で用途を示す（例: `fitMapToWay.ts`）。
 
 ### ホームからの導線

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MdStop } from 'react-icons/md'
-import type { SpeedPreset } from '../lib/productionDefaults'
-import { PRESET_BUDGET_S } from '../lib/productionDefaults'
+import type { SpeedPreset } from '../lib/appDefaults'
+import { PRESET_BUDGET_S } from '../lib/appDefaults'
 
 const STEPS = [
   { label: '道路データを取得中', minSeconds: 0 },

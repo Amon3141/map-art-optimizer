@@ -52,6 +52,7 @@ from .types import (
 
 # グリッド探索の設定（ハードコード）
 # 4×4 位置 × 3 角度 × 3 スケール = 最大 144 評価点（時間切れで打ち切り）
+# 評価順: 角度 → 位置（グリッド中心に近い順）→ スケール（小→大）
 _GRID_POS_STEPS: int = 4        # 位置グリッドの一辺の点数（4×4 = 16 位置）
 _GRID_ANGLE_STEPS: int = 3      # 角度グリッドの点数（[0, 2π/3, 4π/3] | [-π/6, 0, π/6]）
 _GRID_SCALE_STEPS: int = 3      # スケール点数（log-uniform、TRANSFORM_SCALE_MIN..MAX）
@@ -83,6 +84,32 @@ def _transform_to_dict(t: Transform) -> dict[str, float]:
         "theta_rad": t.theta_rad,
         "scale": t.scale,
     }
+
+
+def _grid_position_pairs(n: int) -> list[tuple[int, int]]:
+    """位置グリッド (ti, tj) を中心に近い順に並べる。n=2 では全点が端相当。"""
+    if n <= 0:
+        return []
+    center = (n - 1) / 2.0
+    pairs = [(i, j) for i in range(n) for j in range(n)]
+    return sorted(
+        pairs,
+        key=lambda ij: (abs(ij[0] - center) + abs(ij[1] - center), ij[0], ij[1]),
+    )
+
+
+def _grid_evaluation_indices(
+    n_theta: int,
+    n_scale: int,
+    n_pos: int,
+) -> list[tuple[int, int, int, int]]:
+    """評価順の (theta_i, scale_i, tx_i, ty_i) インデックス列。"""
+    order: list[tuple[int, int, int, int]] = []
+    for ti in range(n_theta):
+        for tx_i, ty_i in _grid_position_pairs(n_pos):
+            for si in range(n_scale):
+                order.append((ti, si, tx_i, ty_i))
+    return order
 
 
 def _random_initial_transform(
@@ -153,22 +180,23 @@ def _coarse_grid_search(
 
     results: list[tuple[float, Transform]] = []
     for theta in theta_vals:
-        for scale in scale_vals:
-            for tx in tx_vals:
-                for ty in ty_vals:
-                    if time.monotonic() >= grid_deadline or _cancelled(should_cancel):
-                        results.sort(key=lambda x: x[0])
-                        return results
-                    t = Transform(tx_m=tx, ty_m=ty, theta_rad=theta, scale=scale)
-                    poly = apply_transform(base, t, center)
-                    route = build_route_from_polyline(
-                        graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index
-                    )
-                    score, _ = score_route(
-                        graph, poly, route, t, weights,
-                        ignore_source_rotation=opt.ignore_source_rotation,
-                    )
-                    results.append((score, t))
+        for ti, tj in _grid_position_pairs(n):
+            tx = tx_vals[ti]
+            ty = ty_vals[tj]
+            for scale in scale_vals:
+                if time.monotonic() >= grid_deadline or _cancelled(should_cancel):
+                    results.sort(key=lambda x: x[0])
+                    return results
+                t = Transform(tx_m=tx, ty_m=ty, theta_rad=theta, scale=scale)
+                poly = apply_transform(base, t, center)
+                route = build_route_from_polyline(
+                    graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index
+                )
+                score, _ = score_route(
+                    graph, poly, route, t, weights,
+                    ignore_source_rotation=opt.ignore_source_rotation,
+                )
+                results.append((score, t))
 
     results.sort(key=lambda x: x[0])
     return results

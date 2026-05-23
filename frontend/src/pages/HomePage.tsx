@@ -12,7 +12,7 @@ import {
   DEFAULT_SPEED_PRESET,
   PRESET_BUDGET_S,
   type SpeedPreset,
-} from '../lib/productionDefaults'
+} from '../lib/appDefaults'
 import { overlayForCandidate } from '../lib/routeOverlay'
 import { strokesToProcessedComponents } from '../lib/singlePathPostprocess'
 import type { StrokeData } from '../lib/strokeTypes'
@@ -177,9 +177,10 @@ export function HomePage() {
     (preset: SpeedPreset, ignoreSourceRotation: boolean) => {
       if (!processedComponents || processedComponents.length === 0) return
       if (optimizeState.kind === 'running') return
+      revealFetchRange()
       void runOptimize(preset, ignoreSourceRotation)
     },
-    [processedComponents, optimizeState.kind, runOptimize],
+    [processedComponents, optimizeState.kind, runOptimize, revealFetchRange],
   )
 
   const handleOpenSketch = useCallback(() => {

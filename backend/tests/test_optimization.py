@@ -20,7 +20,12 @@ from app.optimization.candidate_select import (
     normalized_transform_dist,
     select_ranked_candidates,
 )
-from app.optimization.run import OptimizationCancelled, run_simulated_annealing
+from app.optimization.run import (
+    OptimizationCancelled,
+    _grid_evaluation_indices,
+    _grid_position_pairs,
+    run_simulated_annealing,
+)
 from app.optimization.scoring import score_route, shape_similarity_loss
 from app.optimization.snap_route import (
     EdgeSnapIndexGrid,
@@ -672,6 +677,22 @@ def _long_chain_graph() -> RoadGraph:
             merged_osm_way_ids=[],
         )
     return RoadGraph(nodes=nodes, edges=edges)
+
+
+def test_grid_position_pairs_interior_first() -> None:
+    pairs = _grid_position_pairs(4)
+    assert pairs[0] == (1, 1)
+    assert (0, 0) in pairs
+    assert pairs.index((0, 0)) > pairs.index((1, 1))
+
+
+def test_grid_evaluation_indices_first_three_scales_at_center() -> None:
+    order = _grid_evaluation_indices(3, 3, 4)
+    assert order[:3] == [(0, 0, 1, 1), (0, 1, 1, 1), (0, 2, 1, 1)]
+    for _ti, si, tx_i, ty_i in order[:3]:
+        assert si in (0, 1, 2)
+        assert tx_i not in (0, 3)
+        assert ty_i not in (0, 3)
 
 
 def test_edge_snap_grid_nearest_matches_linear() -> None:

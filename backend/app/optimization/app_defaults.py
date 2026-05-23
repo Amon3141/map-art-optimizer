@@ -22,18 +22,18 @@ class SpeedPresetConfig:
 SPEED_PRESETS: dict[SpeedPreset, SpeedPresetConfig] = {
     "fast": SpeedPresetConfig(
         budget_s=5.0,
-        restart_count=1,
-        max_iterations=150,
-    ),
-    "normal": SpeedPresetConfig(
-        budget_s=10.0,
         restart_count=2,
         max_iterations=300,
     ),
+    "normal": SpeedPresetConfig(
+        budget_s=10.0,
+        restart_count=3,
+        max_iterations=400,
+    ),
     "thorough": SpeedPresetConfig(
         budget_s=20.0,
-        restart_count=4,
-        max_iterations=500,
+        restart_count=5,
+        max_iterations=550,
     ),
 }
 
@@ -43,7 +43,7 @@ IGNORE_SOURCE_ROTATION_DEFAULT: bool = True
 DEFAULT_SPEED_PRESET: SpeedPreset = "fast"
 
 FETCH_RADIUS_MIN_M: float = 1_000.0
-FETCH_RADIUS_MAX_M: float = 4_000.0
-DEFAULT_FETCH_RADIUS_M: float = 2_500.0
+FETCH_RADIUS_MAX_M: float = 5_000.0
+DEFAULT_FETCH_RADIUS_M: float = 3_000.0
 
-OVERPASS_MAX_WAYS: int = 30_000
+OVERPASS_MAX_WAYS: int = 250_000

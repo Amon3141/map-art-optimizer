@@ -1,3 +1,5 @@
+import { INCLUDED_HIGHWAY_TYPES } from '../../lib/highwayInclude'
+
 /**
  * デバッグ UI: API は bbox 内の highway=* 付き way を全件返す前提で、ここで表示用に含める値を選ぶ。
  * チェック ON = その highway 値の LineString を地図・一覧・グラフに含める。
@@ -47,16 +49,7 @@ const DEBUG_HIGHWAY_TAGS_ALL = [
   'via_ferrata',
 ] as const
 
-/** 既定で含める（チェック ON） */
-const DEBUG_HIGHWAY_INCLUDE_DEFAULT_ON = new Set<string>([
-  'trunk',
-  'primary',
-  'secondary',
-  'tertiary',
-  'unclassified',
-  'residential',
-  'service'
-])
+const includedHighwayDefaultOn = new Set<string>(INCLUDED_HIGHWAY_TYPES)
 
 export type DebugHighwayTag = (typeof DEBUG_HIGHWAY_TAGS_ALL)[number]
 
@@ -68,7 +61,7 @@ export type DebugHighwayIncludeSelection = Record<DebugHighwayTag, boolean>
 
 export function defaultDebugHighwayIncludeSelection(): DebugHighwayIncludeSelection {
   return Object.fromEntries(
-    DEBUG_HIGHWAY_TAG_OPTIONS.map((v) => [v, DEBUG_HIGHWAY_INCLUDE_DEFAULT_ON.has(v)]),
+    DEBUG_HIGHWAY_TAG_OPTIONS.map((v) => [v, includedHighwayDefaultOn.has(v)]),
   ) as DebugHighwayIncludeSelection
 }
 

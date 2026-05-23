@@ -71,7 +71,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 | thorough  | じっくり | 30s   | 10       | 500      |
 
 各プリセットは `backend/app/optimization/app_defaults.py` に定義。  
-フロント側の UI メタ（ラベル・説明）は `frontend/src/lib/productionDefaults.ts` に定義。
+フロント側の UI メタ（ラベル・説明）は `frontend/src/lib/appDefaults.ts` に定義。
 
 **UI / API 省略時のデフォルト: fast（速め）**
 
@@ -98,14 +98,14 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 - 最適化成功後: トグルは自動で OFF
 - スケッチ確定・探索設定（速度プリセット・探索範囲・向き固定）の変更時: トグルは自動で ON
 
-定数は `app_defaults.py` / `productionDefaults.ts` の `FETCH_RADIUS_*` に定義。
+定数は `app_defaults.py` / `appDefaults.ts` の `FETCH_RADIUS_*` に定義。
 
 Overpass で取得した highway way が `OVERPASS_MAX_WAYS`（`app_defaults.py`）を超える場合、OSM way ID 昇順で先頭上限件数のみを GeoJSON 化してグラフ構築に使う（エラーにしない）。Overpass の HTTP 失敗・タイムアウトは従来どおり API エラーとして返す。
 
 ### 道路データ取得
 ユーザーには Overpass の詳細を公開しない。`POST /api/optimize` 内部で自動実施:
 1. 地図中心座標 + リクエストの `fetch_radius_m` → bbox 計算
-2. Overpass API で `way["highway"]` を取得
+2. Overpass API で `INCLUDED_HIGHWAY_TYPES`（7 種: trunk / primary / secondary / tertiary / unclassified / residential / service）の way のみ取得（[`highway_include.py`](../backend/app/osm/highway_include.py) / [`highwayInclude.ts`](../frontend/src/lib/highwayInclude.ts)）
 3. グラフ構築（本番用デフォルトオプション）
 4. 最適化実行
 
@@ -124,7 +124,7 @@ Overpass で取得した highway way が `OVERPASS_MAX_WAYS`（`app_defaults.py`
 
 | 項目 | デバッグ | 本番 |
 |------|---------|------|
-| 道路データ取得 | ユーザーが手動でフェッチ・bbox指定 | 内部自動（地図中心 + ユーザー指定半径） |
+| 道路データ取得 | ユーザーが手動でフェッチ・bbox指定。Overpass は `highway=*` 全件、表示は UI でフィルタ（既定 ON は 7 種） | 内部自動（地図中心 + ユーザー指定半径）。Overpass で 7 種のみ取得 |
 | グラフ可視化 | ノード・エッジをオーバーレイ表示 | なし |
 | グラフ前処理オプション | UI から全パラメータ変更可 | デフォルト固定 |
 | 角度制約デフォルト | ON（回転ペナルティあり） | OFF（回転自由） |
