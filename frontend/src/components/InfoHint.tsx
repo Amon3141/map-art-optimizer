@@ -32,8 +32,8 @@ export function InfoHint({ label, children }: InfoHintProps) {
     if (!el) return
     const rect = el.getBoundingClientRect()
     setPos({
-      top: rect.top - GAP_PX,
-      left: rect.left + rect.width / 2,
+      top: rect.top + rect.height / 2,
+      left: rect.right + GAP_PX,
     })
   }, [])
 
@@ -73,7 +73,7 @@ export function InfoHint({ label, children }: InfoHintProps) {
           top: pos.top,
           left: pos.left,
           zIndex: TOOLTIP_Z_INDEX,
-          transform: 'translate(-50%, -100%)',
+          transform: 'translateY(-50%)',
         }}
       >
         {children}

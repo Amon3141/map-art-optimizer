@@ -91,9 +91,18 @@ export function Sidebar({
   return (
     <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 p-5 pb-4 max-lg:overflow-visible lg:h-full lg:max-w-sm lg:min-h-0 lg:overflow-hidden lg:py-5 lg:pl-5 lg:pr-0">
       <div className="flex shrink-0 flex-col gap-1.5">
-        <h1 className="text-xl font-semibold tracking-tight text-stone-800">GPSアート作成機</h1>
+        <h1 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-stone-800">
+          <img
+            src="/favicon.png"
+            alt=""
+            width={32}
+            height={32}
+            className="h-9 w-9 shrink-0 object-cover"
+          />
+          手描きGPSアート
+        </h1>
         <p className="text-sm leading-relaxed text-stone-600">
-          キャンバスに描いた形を、地図の道路上で再現するルートを探します。
+          あなたの手描きを、走れるルートに
         </p>
       </div>
 

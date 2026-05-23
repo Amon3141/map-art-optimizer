@@ -34,7 +34,7 @@ CORS_ORIGINS = [
     if o.strip()
 ]
 
-app = FastAPI(title="GPSアート作成機 API", version="0.1.0")
+app = FastAPI(title="手描きGPSアート API", version="0.1.0")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
