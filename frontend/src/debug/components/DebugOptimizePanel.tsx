@@ -49,8 +49,6 @@ export type DebugOptimizePanelProps = {
   } | null
   /** 地図に重ねるルート（トレーススライダーまたはベスト） */
   onRouteOverlayChange: (fc: GeoJSON.FeatureCollection | null) => void
-  /** 探索完了・表示候補変更時に viewport をルートへ合わせる */
-  onFitViewport?: (fc: GeoJSON.FeatureCollection) => void
 }
 
 /** トレース内で score_total が最小のステップ番号（その試行内ベスト） */
@@ -74,7 +72,6 @@ export function DebugOptimizePanel({
   onBack,
   getMapBounds,
   onRouteOverlayChange,
-  onFitViewport,
 }: DebugOptimizePanelProps) {
   const [sketchOpen, setSketchOpen] = useState(false)
   const [strokeData, setStrokeData] = useState<StrokeData | null>(null)
@@ -188,25 +185,6 @@ export function DebugOptimizePanel({
     graphPreview,
     onRouteOverlayChange,
   ])
-
-  const activeCandidateId =
-    showBestRoute && rankedCandidates.length > 0
-      ? rankedCandidates[0].candidate_id
-      : selectedCandidateId
-
-  useEffect(() => {
-    if (!result || !onFitViewport) return
-    if (activeCandidateId) {
-      const fc = overlayForCandidateId(activeCandidateId)
-      if (fc?.features.length) {
-        onFitViewport(fc)
-        return
-      }
-    }
-    if (result.candidates_geojson.features.length > 0) {
-      onFitViewport(result.candidates_geojson)
-    }
-  }, [result, activeCandidateId, onFitViewport])
 
   useEffect(() => {
     if (!result) return

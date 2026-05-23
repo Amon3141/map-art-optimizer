@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import time
 from typing import TypeAlias
 
 from app.preprocess.graph_model import InternalEdge, RoadGraph
@@ -564,6 +565,7 @@ def _build_smooth_dp_route(
     polyline_xy_m: list[tuple[float, float]],
     snap_index: AnyEdgeSnapIndex | None = None,
     node_index: NodeSpatialIndexGrid | None = None,
+    deadline: float | None = None,
 ) -> RouteBuildResult:
     if len(polyline_xy_m) < 2:
         return RouteBuildResult([], [], False, 0)
@@ -572,6 +574,8 @@ def _build_smooth_dp_route(
     failures = 0
 
     for i in range(len(polyline_xy_m) - 1):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         a_xy, b_xy = polyline_xy_m[i], polyline_xy_m[i + 1]
         if math.hypot(b_xy[0] - a_xy[0], b_xy[1] - a_xy[1]) < 1e-9:
             continue
@@ -602,7 +606,8 @@ def build_route_from_polyline(
     snap_index: AnyEdgeSnapIndex | None = None,
     node_index: NodeSpatialIndexGrid | None = None,
     snap_strategy: str = "smooth_dp",
+    deadline: float | None = None,
 ) -> RouteBuildResult:
     if snap_strategy == "nearest":
         return _build_nearest_sample_route(graph, adj, polyline_xy_m, arc_samples, snap_index)
-    return _build_smooth_dp_route(graph, adj, polyline_xy_m, snap_index, node_index)
+    return _build_smooth_dp_route(graph, adj, polyline_xy_m, snap_index, node_index, deadline=deadline)

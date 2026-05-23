@@ -18,15 +18,6 @@ _DEFAULT_HEADERS = {
 }
 
 
-class OverpassTooManyWaysError(Exception):
-    """Overpass 応答の way 件数が上限を超えた。"""
-
-    def __init__(self, way_count: int, max_ways: int) -> None:
-        self.way_count = way_count
-        self.max_ways = max_ways
-        super().__init__(f"way count {way_count} exceeds limit {max_ways}")
-
-
 def center_radius_to_bbox(
     lon: float, lat: float, radius_m: float
 ) -> tuple[float, float, float, float]:
@@ -56,15 +47,6 @@ out skel qt;
 """
 
 
-def _ways_from_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [e for e in elements if e.get("type") == "way"]
-
-
-def _check_way_count(ways: list[dict[str, Any]], max_ways: int) -> None:
-    if len(ways) > max_ways:
-        raise OverpassTooManyWaysError(len(ways), max_ways)
-
-
 async def fetch_interpreter(query: str, *, timeout_s: float = 60.0) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         r = await client.post(OVERPASS_URL, content=query.encode(), headers=_DEFAULT_HEADERS)
@@ -78,18 +60,15 @@ async def fetch_highway_elements_for_bbox(
     max_lat: float,
     max_lon: float,
     *,
-    max_ways: int,
     timeout_s: float = 60.0,
     query_timeout_s: int = 25,
 ) -> list[dict[str, Any]]:
-    """bbox 内の highway way 要素列を返す。way 件数が max_ways を超えると OverpassTooManyWaysError。"""
+    """bbox 内の highway way 要素列を返す。"""
     query = highway_bbox_query(
         min_lat, min_lon, max_lat, max_lon, query_timeout_s=query_timeout_s
     )
     data = await fetch_interpreter(query, timeout_s=timeout_s)
-    elements = data.get("elements") or []
-    _check_way_count(_ways_from_elements(elements), max_ways)
-    return elements
+    return data.get("elements") or []
 
 
 async def fetch_highway_geojson_for_bbox(
@@ -107,11 +86,10 @@ async def fetch_highway_geojson_for_bbox(
         min_lon,
         max_lat,
         max_lon,
-        max_ways=max_ways,
         timeout_s=timeout_s,
         query_timeout_s=query_timeout_s,
     )
-    return overpass_elements_to_geojson(elements, limit_ways=None)
+    return overpass_elements_to_geojson(elements, limit_ways=max_ways)
 
 
 async def fetch_highway_geojson_for_center(

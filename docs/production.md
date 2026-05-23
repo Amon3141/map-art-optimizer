@@ -100,7 +100,7 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 
 定数は `app_defaults.py` / `productionDefaults.ts` の `FETCH_RADIUS_*` に定義。
 
-探索範囲が大きすぎる、または道路が密すぎて Overpass が失敗した場合、API は `detail: { code: "fetch_area_too_large", message: "..." }`（HTTP 413 または 502）を返す。フロントは `FetchRadiusErrorDialog`（`ModalShell`）で半径縮小を案内する。
+Overpass で取得した highway way が `OVERPASS_MAX_WAYS`（`app_defaults.py`）を超える場合、OSM way ID 昇順で先頭上限件数のみを GeoJSON 化してグラフ構築に使う（エラーにしない）。Overpass の HTTP 失敗・タイムアウトは従来どおり API エラーとして返す。
 
 ### 道路データ取得
 ユーザーには Overpass の詳細を公開しない。`POST /api/optimize` 内部で自動実施:

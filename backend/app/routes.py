@@ -14,12 +14,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
-from .osm.overpass import OverpassTooManyWaysError, fetch_highway_geojson_for_center
+from .osm.overpass import fetch_highway_geojson_for_center
 from .preprocess import GraphPreprocessOptions
 from .optimization.app_defaults import (
     DEFAULT_FETCH_RADIUS_M,
     DEFAULT_SPEED_PRESET,
-    FETCH_AREA_TOO_LARGE_MESSAGE,
     FETCH_RADIUS_MAX_M,
     FETCH_RADIUS_MIN_M,
     IGNORE_SOURCE_ROTATION_DEFAULT,
@@ -31,10 +30,6 @@ from .optimization.pipeline import run_optimization_pipeline
 from .optimization.types import AnnealOptions, OptimizeWeights
 
 router = APIRouter()
-
-
-def _fetch_area_too_large_detail() -> dict[str, str]:
-    return {"code": "fetch_area_too_large", "message": FETCH_AREA_TOO_LARGE_MESSAGE}
 
 
 class StrokePointBody(BaseModel):
@@ -79,10 +74,14 @@ async def optimize(body: OptimizeBody) -> dict[str, Any]:
                 "message": "道路データの取得に時間がかかりすぎました。時間をおいて再試行してください。",
             },
         ) from e
-    except OverpassTooManyWaysError as e:
-        raise HTTPException(status_code=413, detail=_fetch_area_too_large_detail()) from e
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=_fetch_area_too_large_detail()) from e
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "osm_fetch_failed",
+                "message": "道路データの取得に失敗しました。時間をおいて再試行してください。",
+            },
+        ) from e
 
     # 道路グラフを構築する
     opts = GraphPreprocessOptions()

@@ -27,8 +27,6 @@ export const PRESET_BUDGET_S: Record<SpeedPreset, number> = {
 
 /** 道路取得半径 (m) — バックエンドの app_defaults.py と同期して保つ */
 export const FETCH_RADIUS_MIN_M = 1000
-export const FETCH_RADIUS_MAX_M = 5000
-export const DEFAULT_FETCH_RADIUS_M = 3000
+export const FETCH_RADIUS_MAX_M = 4000
+export const DEFAULT_FETCH_RADIUS_M = 2500
 export const FETCH_RADIUS_STEP_M = 500
-
-export const FETCH_AREA_TOO_LARGE_CODE = 'fetch_area_too_large' as const

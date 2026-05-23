@@ -1,4 +1,3 @@
-import type { Map as MapLibreMap } from 'maplibre-gl'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
 import { MapPanel } from '../components/MapPanel'
@@ -11,37 +10,26 @@ import type { OptimizeApiResponse } from '../lib/optimizeTypes'
 import {
   DEFAULT_FETCH_RADIUS_M,
   DEFAULT_SPEED_PRESET,
-  FETCH_AREA_TOO_LARGE_CODE,
   PRESET_BUDGET_S,
   type SpeedPreset,
 } from '../lib/productionDefaults'
-import { fitMapWhenReady, ROUTE_FIT_PADDING } from '../lib/fitMapViewport'
 import { overlayForCandidate } from '../lib/routeOverlay'
 import { strokesToProcessedComponents } from '../lib/singlePathPostprocess'
 import type { StrokeData } from '../lib/strokeTypes'
 
 const DEFAULT_CENTER = { lon: 139.7671, lat: 35.6812 }
 
-function parseOptimizeApiDetail(detail: unknown): {
-  fetchAreaTooLarge: boolean
-  message: string
-} {
-  if (detail && typeof detail === 'object' && 'code' in detail) {
-    const d = detail as { code?: string; message?: string }
-    if (d.code === FETCH_AREA_TOO_LARGE_CODE) {
-      return {
-        fetchAreaTooLarge: true,
-        message: d.message ?? '探索範囲を小さくして再試行してください。',
-      }
-    }
+function parseOptimizeApiDetail(detail: unknown): string {
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    const d = detail as { message?: string }
     if (typeof d.message === 'string') {
-      return { fetchAreaTooLarge: false, message: d.message }
+      return d.message
     }
   }
   if (typeof detail === 'string') {
-    return { fetchAreaTooLarge: false, message: detail }
+    return detail
   }
-  return { fetchAreaTooLarge: false, message: '不明なエラーが発生しました。' }
+  return '不明なエラーが発生しました。'
 }
 
 export function HomePage() {
@@ -61,13 +49,6 @@ export function HomePage() {
 
   const optimizeGenRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
-  const mapRef = useRef<MapLibreMap | null>(null)
-  /** 探索完了直後の 1 回だけ onlyIfNeeded をバイパスする */
-  const forceFitOnResultRef = useRef(false)
-
-  const onMapReady = useCallback((map: MapLibreMap) => {
-    mapRef.current = map
-  }, [])
 
   const processedComponents = useMemo(
     () => (strokeData ? strokesToProcessedComponents(strokeData.strokes) : null),
@@ -76,6 +57,14 @@ export function HomePage() {
 
   const revealFetchRange = useCallback(() => setShowFetchRange(true), [])
 
+  useEffect(() => {
+    if (optimizeState.kind === 'done') {
+      const top = optimizeState.result.ranked_candidates?.[0]
+      setSelectedCandidateId(top?.candidate_id ?? null)
+      setTraceRouteOverride(null)
+      setShowFetchRange(false)
+    }
+  }, [optimizeState])
 
   const fetchRangeCircle = useMemo(() => {
     if (!showFetchRange) return null
@@ -137,7 +126,6 @@ export function HomePage() {
       })
       setTraceRouteOverride(null)
       setSelectedCandidateId(null)
-      forceFitOnResultRef.current = false
 
       try {
         const body = {
@@ -164,20 +152,12 @@ export function HomePage() {
 
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}))
-          const parsed = parseOptimizeApiDetail(payload?.detail)
-          if (parsed.fetchAreaTooLarge) {
-            setOptimizeState({ kind: 'error', message: parsed.message })
-            return
-          }
-          throw new Error(parsed.message || `サーバーエラーが発生しました（${res.status}）`)
+          const message = parseOptimizeApiDetail(payload?.detail)
+          throw new Error(message || `サーバーエラーが発生しました（${res.status}）`)
         }
 
         const result: OptimizeApiResponse = await res.json()
         if (gen !== optimizeGenRef.current) return
-        setTraceRouteOverride(null)
-        setShowFetchRange(false)
-        setSelectedCandidateId(result.ranked_candidates?.[0]?.candidate_id ?? null)
-        forceFitOnResultRef.current = true
         setOptimizeState({ kind: 'done', result })
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -243,32 +223,6 @@ export function HomePage() {
     return fc ?? candidates_geojson
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
-  const fitTargetFc = useMemo((): GeoJSON.FeatureCollection | null => {
-    if (optimizeState.kind !== 'done' || !selectedCandidateId) return null
-    const { candidates_geojson, ranked_candidates, edges_geojson } = optimizeState.result
-    const fc = overlayForCandidate(
-      selectedCandidateId,
-      candidates_geojson,
-      ranked_candidates ?? [],
-      edges_geojson,
-    )
-    if (fc?.features.length) return fc
-    if (candidates_geojson.features.length > 0) return candidates_geojson
-    return null
-  }, [optimizeState, selectedCandidateId])
-
-  useEffect(() => {
-    if (optimizeState.kind !== 'done' || !selectedCandidateId || !fitTargetFc) return
-    const map = mapRef.current
-    if (!map) return
-    const force = forceFitOnResultRef.current
-    if (force) forceFitOnResultRef.current = false
-    return fitMapWhenReady(map, fitTargetFc, {
-      onlyIfNeeded: !force,
-      padding: ROUTE_FIT_PADDING,
-    })
-  }, [optimizeState, selectedCandidateId, fitTargetFc])
-
   return (
     <div className="scrollbar-hidden flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
       <Sidebar
@@ -290,7 +244,6 @@ export function HomePage() {
         <div className="relative flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200/80 bg-[#faf8f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] max-lg:h-[70dvh] max-lg:min-h-[320px] lg:min-h-0 lg:flex-1">
           <MapPanel
             className="min-h-0 w-full flex-1"
-            onMapReady={onMapReady}
             onCenterChange={(lon, lat) => setMapCenter({ lon, lat })}
             routeGeoJson={routeGeoJson}
             fetchRangeCircle={fetchRangeCircle}

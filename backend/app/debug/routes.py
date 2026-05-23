@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ..osm.geojson import overpass_elements_to_geojson
 from ..osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
-from ..osm.overpass import OverpassTooManyWaysError, fetch_highway_elements_for_bbox
+from ..osm.overpass import fetch_highway_elements_for_bbox
 from ..osm.projection import bbox_center_lon_lat
 from ..preprocess import (
     DEFAULT_CONNECT_OSM_NODE_IDS_ENABLED,
@@ -191,24 +191,15 @@ async def debug_ways(
             min_lon,
             max_lat,
             max_lon,
-            max_ways=DEBUG_OVERPASS_MAX_WAYS,
         )
-    except OverpassTooManyWaysError as e:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"この範囲の way が多すぎます（{e.way_count} 件、上限 {DEBUG_OVERPASS_MAX_WAYS}）。"
-                " 地図をズームして範囲を狭くしてください。"
-            ),
-        ) from e
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Overpass error: {e}") from e
 
     ways_sorted = sorted(
         [el for el in elements if el.get("type") == "way"],
         key=lambda w: int(w.get("id") or 0),
-    )
-    geojson = overpass_elements_to_geojson(elements, limit_ways=None)
+    )[:DEBUG_OVERPASS_MAX_WAYS]
+    geojson = overpass_elements_to_geojson(elements, limit_ways=DEBUG_OVERPASS_MAX_WAYS)
     raw_preview = ways_raw_preview(ways_sorted)
 
     return {"geojson": geojson, "raw_preview": raw_preview, "count": len(geojson.get("features") or [])}

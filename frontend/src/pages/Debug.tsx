@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DebugOptimizePanel } from '../debug/components/DebugOptimizePanel'
 import { DebugSidebar, type DebugPanelMode } from '../debug/components/DebugSidebar'
 import { DebugMapPanel, type DebugMapViewMode } from '../debug/components/DebugMapPanel'
-import { fitMapToLineString, fitMapWhenReady, ROUTE_FIT_PADDING } from '../lib/fitMapViewport'
+import { fitMapToLineString } from '../debug/lib/fitMapToWay'
 import {
   defaultGraphBuildOptions,
   normalizeGraphBuildOptions,
@@ -24,7 +24,6 @@ type DebugFlow = 'preprocess' | 'optimize'
 /** デバッグ用: Overpass → OSM GeoJSON → 平面グラフの可視化 */
 export function DebugPage() {
   const mapRef = useRef<MapLibreMap | null>(null)
-  const fitCleanupRef = useRef<(() => void) | null>(null)
   const graphFetchGen = useRef(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -227,16 +226,6 @@ export function DebugPage() {
     setRouteOverlay(fc)
   }, [])
 
-  const handleFitViewport = useCallback((fc: GeoJSON.FeatureCollection) => {
-    const map = mapRef.current
-    if (!map) return
-    fitCleanupRef.current?.()
-    fitCleanupRef.current = fitMapWhenReady(map, fc, {
-      onlyIfNeeded: true,
-      padding: ROUTE_FIT_PADDING,
-    })
-  }, [])
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-0 bg-[#faf8f4] lg:flex-row lg:gap-5">
       {debugFlow === 'preprocess' ? (
@@ -273,7 +262,6 @@ export function DebugPage() {
           onBack={handleBackFromOptimize}
           getMapBounds={getMapBounds}
           onRouteOverlayChange={handleRouteOverlayChange}
-          onFitViewport={handleFitViewport}
         />
       )}
 

@@ -133,7 +133,7 @@ export function Sidebar({
         </div>
       ) : null}
 
-      <div className="flex shrink-0 flex-col gap-3">
+      <div className="flex shrink-0 flex-col gap-3 lg:mt-auto">
         <p className="text-sm font-medium text-stone-700">探索設定</p>
 
         <div className="grid grid-cols-3 gap-1.5">
@@ -231,7 +231,7 @@ export function Sidebar({
       {isDevelopment ? (
         <Link
           to="/debug"
-          className="mt-auto shrink-0 text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline"
+          className="shrink-0 text-sm font-medium text-[#4a6f8a] underline-offset-2 hover:underline max-lg:mt-auto"
         >
           デバッグページへ →
         </Link>

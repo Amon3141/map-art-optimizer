@@ -297,7 +297,7 @@ def simulated_annealing_search(
 
     def evaluate(state: AnnealState) -> EvaluatedState:
         poly = apply_transform(base, state.transform, center)
-        route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index)
+        route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index, deadline=deadline)
         score, breakdown = score_route(
             graph,
             poly,
@@ -479,7 +479,7 @@ def joint_simulated_annealing_search(
             dx, dy = state.local_offsets[i]
             poly = apply_transform(base, state.global_t, center)
             poly = [(x + dx, y + dy) for x, y in poly]
-            route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index)
+            route = build_route_from_polyline(graph, adj, poly, ROUTE_ARC_SAMPLES, snap_index, node_index, deadline=deadline)
             score_i, bd_i = score_route(
                 graph, poly, route, state.global_t, weights,
                 ignore_source_rotation=opt.ignore_source_rotation,

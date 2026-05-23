@@ -26,13 +26,13 @@ SPEED_PRESETS: dict[SpeedPreset, SpeedPresetConfig] = {
         max_iterations=150,
     ),
     "normal": SpeedPresetConfig(
-        budget_s=20.0,
-        restart_count=5,
+        budget_s=10.0,
+        restart_count=2,
         max_iterations=300,
     ),
     "thorough": SpeedPresetConfig(
-        budget_s=30.0,
-        restart_count=10,
+        budget_s=20.0,
+        restart_count=4,
         max_iterations=500,
     ),
 }
@@ -43,12 +43,7 @@ IGNORE_SOURCE_ROTATION_DEFAULT: bool = True
 DEFAULT_SPEED_PRESET: SpeedPreset = "fast"
 
 FETCH_RADIUS_MIN_M: float = 1_000.0
-FETCH_RADIUS_MAX_M: float = 5_000.0
-DEFAULT_FETCH_RADIUS_M: float = 3_000.0
+FETCH_RADIUS_MAX_M: float = 4_000.0
+DEFAULT_FETCH_RADIUS_M: float = 2_500.0
 
-OVERPASS_MAX_WAYS: int = 200_000
-
-FETCH_AREA_TOO_LARGE_MESSAGE = (
-    "探索範囲が大きすぎるか、道路が密すぎる可能性があります。"
-    "探索範囲を小さくして再試行してください。"
-)
+OVERPASS_MAX_WAYS: int = 30_000
