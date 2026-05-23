@@ -159,7 +159,7 @@
 
 | フィールド | 既定 | 説明 |
 |---|---|---|
-| `source_rotation` | 0.38 | 入力の向きを保つ回転角ペナルティ |
+| `source_rotation` | 0.38 | 入力の形の向きを保つ回転角ペナルティ |
 | `source_scale` | 0.02 | `abs(log(scale))`（スケールずれ） |
 | `shape_distance` | 1.0 | 順序対応距離 + coverage 距離（双方向） |
 | `turn` | 0.0 | 旋回ペナルティ（現在は無効） |

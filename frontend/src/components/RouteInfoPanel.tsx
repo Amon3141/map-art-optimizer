@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnnealingTraceSlider } from './AnnealingTraceSlider'
+import { LabelWithInfoHint } from './InfoHint'
+import {
+  optimizationScoreDisplayColorClass,
+  optimizationScoreToDisplayPoints,
+} from '../lib/optimizationScoreDisplay'
 import type { OptimizeApiResponse } from '../lib/optimizeTypes'
 import { rebuildRouteForTraceStep } from '../lib/routeOverlay'
+
+const POOR_RESULT_HINT =
+  '良い形が見つからなかった場合は、位置を変える・探索時間を伸ばす・より簡単な形で試すなどしてください'
 
 export type RouteInfoPanelProps = {
   result: OptimizeApiResponse
@@ -100,11 +108,39 @@ export function RouteInfoPanel({
   }
 
   const distanceKm = selectedCandidate?.route_length_km ?? result.route_length_km
+  const matchPoints =
+    selectedCandidate != null
+      ? optimizationScoreToDisplayPoints(selectedCandidate.score_total)
+      : null
+  const matchColorClass =
+    matchPoints != null ? optimizationScoreDisplayColorClass(matchPoints) : ''
+  const formatDisplayScore = (raw: number) =>
+    `${optimizationScoreToDisplayPoints(raw)}点`
 
   return (
-    <div className="pointer-events-auto absolute bottom-4 left-4 z-10 w-64 rounded-xl border border-stone-200/80 bg-white/95 px-3.5 py-3 shadow-lg backdrop-blur-sm">
+    <div className="pointer-events-auto absolute bottom-4 left-1/2 z-10 w-64 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl border border-stone-200/80 bg-white/95 px-3.5 py-3 shadow-lg backdrop-blur-sm sm:left-4 sm:max-w-none sm:translate-x-0">
+      <div className="mb-2">
+        <LabelWithInfoHint
+          label="探索結果"
+          hintLabel="探索結果について"
+          className="text-sm text-stone-700"
+        >
+          {POOR_RESULT_HINT}
+        </LabelWithInfoHint>
+      </div>
+
+      {/* マッチ度 */}
+      {matchPoints != null && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-stone-500">マッチ度</span>
+          <span className={`text-sm font-semibold tabular-nums ${matchColorClass}`}>
+            {matchPoints}点
+          </span>
+        </div>
+      )}
+
       {/* ルート距離 */}
-      <div className="flex items-center justify-between">
+      <div className={`flex items-center justify-between ${matchPoints != null ? 'mt-1.5' : ''}`}>
         <span className="text-xs text-stone-500">ルート距離</span>
         <span className="text-sm font-semibold text-stone-900">
           {distanceKm != null ? `${distanceKm.toFixed(2)} km` : '—'}
@@ -143,13 +179,6 @@ export function RouteInfoPanel({
         </div>
       )}
 
-      {/* スコア */}
-      {selectedCandidate && (
-        <div className="mt-1.5 text-right text-[10px] text-stone-400">
-          スコア {selectedCandidate.score_total.toFixed(4)}
-        </div>
-      )}
-
       {/* 探索トレース */}
       {hasTrace && (
         <div className="mt-2 border-t border-stone-100 pt-2">
@@ -173,6 +202,7 @@ export function RouteInfoPanel({
                 onTraceSliderChange={handleTraceStepChange}
                 showBestLabel="候補地点を表示中"
                 returnToBestLabel="候補地点に戻す"
+                formatScore={formatDisplayScore}
               />
             </div>
           )}

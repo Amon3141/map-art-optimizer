@@ -56,10 +56,9 @@
 ## UX 設計決定
 
 ### 角度制約 (ignore_source_rotation)
-**本番デフォルト: 回転自由（ignore_source_rotation = true）**
+**本番デフォルト: 向き固定 ON（ignore_source_rotation = false）**
 
-GPS アートでは形の良さが最優先。向きに縛ると探索空間が狭まる。  
-ユーザー向けには「向きを固定する」トグル（デフォルト OFF）として公開。デバッグのデフォルト（回転ペナルティあり）とは逆。
+ユーザー向けには「形の向きを保つ」トグル（デフォルト ON）として公開。OFF にすると回転も含めあらゆる向きから探索する。
 
 ### 探索速度プリセット
 生の秒数は公開せず、3段階に抽象化する。
@@ -100,7 +99,9 @@ GPS アートでは形の良さが最優先。向きに縛ると探索空間が�
 
 定数は `app_defaults.py` / `appDefaults.ts` の `FETCH_RADIUS_*` に定義。
 
-Overpass で取得した highway way が `OVERPASS_MAX_WAYS`（`app_defaults.py`）を超える場合、OSM way ID 昇順で先頭上限件数のみを GeoJSON 化してグラフ構築に使う（エラーにしない）。Overpass の HTTP 失敗・タイムアウトは従来どおり API エラーとして返す。
+Overpass で取得した highway way が `OVERPASS_MAX_WAYS`（[`preprocess/defaults.py`](../backend/app/preprocess/defaults.py)）を超える場合、OSM way ID 昇順で先頭上限件数のみを GeoJSON 化してグラフ構築に使う（エラーにしない）。Overpass の HTTP 失敗・タイムアウトは従来どおり API エラーとして返す。
+
+本番 `POST /api/optimize` では、前処理前のネイティブノード数（各 way LineString の座標点数の合計）が `MAX_NATIVE_GRAPH_NODES`（[`app_defaults.py`](../backend/app/optimization/app_defaults.py)、既定 30,000）を超えるとグラフ構築に進まず HTTP 400（`code: graph_too_many_nodes`）を返す。地図上の探索ステータスオーバーレイに `detail.message` を表示する。デバッグ API にはこの上限はない。
 
 ### 道路データ取得
 ユーザーには Overpass の詳細を公開しない。`POST /api/optimize` 内部で自動実施:

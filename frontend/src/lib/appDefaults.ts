@@ -15,8 +15,8 @@ export const SPEED_PRESET_META: Record<SpeedPreset, SpeedPresetMeta> = {
 
 export const DEFAULT_SPEED_PRESET: SpeedPreset = 'fast'
 
-/** 本番デフォルト: 向き固定 OFF（回転自由） */
-export const DEFAULT_IGNORE_SOURCE_ROTATION = true
+/** 本番デフォルト: 向き固定 ON（ignore_source_rotation = false） */
+export const DEFAULT_IGNORE_SOURCE_ROTATION = false
 
 /** プリセット別の estimated budget (秒) — UI のプログレス表示に使う */
 export const PRESET_BUDGET_S: Record<SpeedPreset, number> = {
@@ -28,5 +28,5 @@ export const PRESET_BUDGET_S: Record<SpeedPreset, number> = {
 /** 道路取得半径 (m) — バックエンドの app_defaults.py と同期して保つ */
 export const FETCH_RADIUS_MIN_M = 1000
 export const FETCH_RADIUS_MAX_M = 5000
-export const DEFAULT_FETCH_RADIUS_M = 3000
+export const DEFAULT_FETCH_RADIUS_M = 2000
 export const FETCH_RADIUS_STEP_M = 500

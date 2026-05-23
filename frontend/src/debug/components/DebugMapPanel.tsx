@@ -7,11 +7,11 @@ import { useEffect, useRef, useState } from 'react'
 import { BasemapSelector, type BasemapMode } from '../../components/BasemapSelector'
 import { MapPillToggle } from '../../components/MapPillToggle'
 import {
-  DEBUG_BASEMAP_STYLE,
+  BASEMAP_STYLE,
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
-  applyDebugBasemapVisibility,
-} from '../lib/debugMapBasemap'
+  applyBasemapVisibility,
+} from '../../lib/basemapStyle'
 import { HIGHLIGHT_OSM_MERGE, HIGHLIGHT_SNAP_MERGE, HIGHLIGHT_SYNTHETIC } from '../lib/debugHighlightColors'
 import { injectOsmOverlaySelection } from '../lib/debugOsmOverlay'
 
@@ -193,7 +193,7 @@ export function DebugMapPanel({
     let cancelled = false
     const map = new maplibregl.Map({
       container: el,
-      style: DEBUG_BASEMAP_STYLE,
+      style: BASEMAP_STYLE,
       center: DEFAULT_MAP_CENTER,
       zoom: DEFAULT_MAP_ZOOM,
     })
@@ -211,7 +211,7 @@ export function DebugMapPanel({
       requestAnimationFrame(() => {
         if (cancelled || mapRef.current !== map) return
         map.resize()
-        applyDebugBasemapVisibility(map, basemapModeRef.current)
+        applyBasemapVisibility(map, basemapModeRef.current)
       })
       onMapReadyRef.current?.(map)
       setMapReady(true)
@@ -232,7 +232,7 @@ export function DebugMapPanel({
   useEffect(() => {
     const map = mapRef.current
     if (!mapReady || !map) return
-    applyDebugBasemapVisibility(map, basemapMode)
+    applyBasemapVisibility(map, basemapMode)
   }, [mapReady, basemapMode])
 
   useEffect(() => {

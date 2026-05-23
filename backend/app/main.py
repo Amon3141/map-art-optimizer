@@ -26,7 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(debug_router, prefix="/api/debug", tags=["debug"])
+if os.getenv("APP_ENV", "production") == "development":
+    app.include_router(debug_router, prefix="/api/debug", tags=["debug"])
 app.include_router(app_router, prefix="/api", tags=["app"])
 
 

@@ -7,22 +7,23 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from .osm.ingest import build_graph_from_geojson, graph_to_geojson_fc
+from .osm.ingest import build_graph_from_geojson, count_native_nodes_from_geojson, graph_to_geojson_fc
 from .osm.overpass import fetch_highway_geojson_for_center
 from .preprocess import GraphPreprocessOptions
+from .preprocess.defaults import OVERPASS_MAX_WAYS
 from .optimization.app_defaults import (
     DEFAULT_FETCH_RADIUS_M,
     DEFAULT_SPEED_PRESET,
     FETCH_RADIUS_MAX_M,
     FETCH_RADIUS_MIN_M,
     IGNORE_SOURCE_ROTATION_DEFAULT,
-    OVERPASS_MAX_WAYS,
+    MAX_NATIVE_GRAPH_NODES,
     SPEED_PRESETS,
     SpeedPreset,
 )
@@ -38,7 +39,10 @@ class StrokePointBody(BaseModel):
 
 
 class OptimizeBody(BaseModel):
-    stroke_components: list[list[StrokePointBody]]
+    stroke_components: Annotated[
+        list[Annotated[list[StrokePointBody], Field(max_length=500)]],
+        Field(max_length=10),
+    ]
     center_lon: float = Field(..., ge=-180.0, le=180.0)
     center_lat: float = Field(..., ge=-90.0, le=90.0)
     speed_preset: SpeedPreset = DEFAULT_SPEED_PRESET
@@ -82,6 +86,19 @@ async def optimize(body: OptimizeBody) -> dict[str, Any]:
                 "message": "道路データの取得に失敗しました。時間をおいて再試行してください。",
             },
         ) from e
+
+    native_node_count = count_native_nodes_from_geojson(fc)
+    if native_node_count > MAX_NATIVE_GRAPH_NODES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "graph_too_many_nodes",
+                "message": (
+                    f"道路データの規模が大きすぎます（ノード {native_node_count} 個）。"
+                    "探索範囲を小さくして再試行してください。"
+                ),
+            },
+        )
 
     # 道路グラフを構築する
     opts = GraphPreprocessOptions()

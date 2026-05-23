@@ -71,6 +71,11 @@ def parse_way_features(geojson_fc: dict[str, Any]) -> list[WayPolyline]:
     return out
 
 
+def count_native_nodes_from_geojson(geojson_fc: dict[str, Any]) -> int:
+    """build_native_graph 適用直前のノード数（各 way の座標点数の合計）。"""
+    return sum(len(w.coords_lonlat) for w in parse_way_features(geojson_fc))
+
+
 def build_native_graph(
     ways: list[WayPolyline],
     project: Callable[[float, float], tuple[float, float]],

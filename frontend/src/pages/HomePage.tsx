@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AboutModal } from '../components/AboutModal'
 import { ConfirmDialog, type StopOptimizeConfirmVariant } from '../components/ConfirmDialog'
 import { MapPanel } from '../components/MapPanel'
 import { OptimizeStatusOverlay } from '../components/OptimizeStatusOverlay'
@@ -46,6 +47,7 @@ export function HomePage() {
   const [stopConfirmVariant, setStopConfirmVariant] = useState<StopOptimizeConfirmVariant | null>(
     null,
   )
+  const [aboutOpen, setAboutOpen] = useState(false)
 
   const optimizeGenRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -225,7 +227,7 @@ export function HomePage() {
   }, [traceRouteOverride, optimizeState, selectedCandidateId])
 
   return (
-    <div className="scrollbar-hidden flex h-full min-h-0 flex-col gap-0 overflow-y-auto bg-[#faf8f4] max-lg:overscroll-y-contain lg:flex-row lg:gap-5 lg:overflow-hidden">
+    <div className="scrollbar-hidden flex min-h-0 flex-col gap-0 bg-[#faf8f4] max-lg:h-dvh max-lg:overflow-y-auto max-lg:overscroll-y-contain lg:h-full lg:flex-row lg:gap-5 lg:overflow-hidden">
       <Sidebar
         targetKm={targetKm}
         onTargetKmChange={setTargetKm}
@@ -275,8 +277,19 @@ export function HomePage() {
               onTraceOverride={setTraceRouteOverride}
             />
           )}
+
+          <button
+            type="button"
+            aria-label="このアプリについて"
+            onClick={() => setAboutOpen(true)}
+            className="absolute bottom-[10px] left-[10px] z-10 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-stone-300 bg-white text-xs font-bold text-stone-500 shadow-sm hover:bg-stone-50"
+          >
+            ?
+          </button>
         </div>
       </main>
+
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
       <ConfirmDialog
         open={stopConfirmVariant != null}

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -55,12 +55,10 @@ from ..optimization.defaults import (
 )
 from ..optimization.pipeline import run_optimization_pipeline
 from ..optimization.types import AnnealOptions, OptimizeWeights
+from ..preprocess.defaults import OVERPASS_MAX_WAYS
 from .preview import ways_raw_preview
 
 router = APIRouter()
-
-# Overpass 応答の way 件数の上限（メモリ・応答サイズの安全弁。通常は bbox を絞れば十分小さい）
-DEBUG_OVERPASS_MAX_WAYS = 250_000
 
 
 class BBoxBody(BaseModel):
@@ -167,7 +165,10 @@ class DebugOptimizeBody(BaseModel):
     bbox: BBoxBody
     options: GraphPreprocessOptionsBody = Field(default_factory=GraphPreprocessOptionsBody)
     # buildSinglePath 済みコンポーネントのリスト（1件以上必須）
-    stroke_components: list[list[StrokePointBody]]
+    stroke_components: Annotated[
+        list[Annotated[list[StrokePointBody], Field(max_length=500)]],
+        Field(max_length=10),
+    ]
     weights: OptimizeWeightsBody | None = None
     anneal: AnnealOptionsBody | None = None
     record_trace: bool = True
@@ -198,8 +199,8 @@ async def debug_ways(
     ways_sorted = sorted(
         [el for el in elements if el.get("type") == "way"],
         key=lambda w: int(w.get("id") or 0),
-    )[:DEBUG_OVERPASS_MAX_WAYS]
-    geojson = overpass_elements_to_geojson(elements, limit_ways=DEBUG_OVERPASS_MAX_WAYS)
+    )[:OVERPASS_MAX_WAYS]
+    geojson = overpass_elements_to_geojson(elements, limit_ways=OVERPASS_MAX_WAYS)
     raw_preview = ways_raw_preview(ways_sorted)
 
     return {"geojson": geojson, "raw_preview": raw_preview, "count": len(geojson.get("features") or [])}

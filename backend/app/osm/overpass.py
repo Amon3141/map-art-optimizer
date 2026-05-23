@@ -16,7 +16,7 @@ from .highway_include import INCLUDED_HIGHWAY_TYPES
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 
 _DEFAULT_HEADERS = {
-    "User-Agent": "map-draw-optimizer/0.1 (local dev; contact: local)",
+    "User-Agent": "map-art-optimizer/1.0 (contact: amon.kizawa@icloud.com)",
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
 }
 

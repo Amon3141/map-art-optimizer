@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import { BasemapSelector, type BasemapMode } from './BasemapSelector'
 import { MapPillToggle } from './MapPillToggle'
 import {
-  DEBUG_BASEMAP_STYLE,
+  BASEMAP_STYLE,
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
-  applyDebugBasemapVisibility,
-} from '../debug/lib/debugMapBasemap'
+  applyBasemapVisibility,
+} from '../lib/basemapStyle'
 import { circlePolygon } from '../lib/geoUtils'
 
 const FETCH_RANGE_SOURCE = 'prod-fetch-range'
@@ -54,11 +54,20 @@ export function MapPanel({
     let cancelled = false
     const map = new maplibregl.Map({
       container: el,
-      style: DEBUG_BASEMAP_STYLE,
+      style: BASEMAP_STYLE,
       center: DEFAULT_MAP_CENTER,
       zoom: DEFAULT_MAP_ZOOM,
     })
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: false,
+        showUserLocation: false,
+        fitBoundsOptions: { zoom: DEFAULT_MAP_ZOOM },
+      }),
+      'top-right',
+    )
     mapRef.current = map
 
     const resize = () => map.resize()
@@ -73,7 +82,7 @@ export function MapPanel({
       requestAnimationFrame(() => {
         if (cancelled || mapRef.current !== map) return
         map.resize()
-        applyDebugBasemapVisibility(map, basemapModeRef.current)
+        applyBasemapVisibility(map, basemapModeRef.current)
 
         // 探索範囲 circle（ルート overlay の下に追加）
         map.addSource(FETCH_RANGE_SOURCE, {
@@ -135,7 +144,7 @@ export function MapPanel({
   useEffect(() => {
     const map = mapRef.current
     if (!mapReady || !map) return
-    applyDebugBasemapVisibility(map, basemapMode)
+    applyBasemapVisibility(map, basemapMode)
   }, [mapReady, basemapMode])
 
   // 探索範囲 circle の更新

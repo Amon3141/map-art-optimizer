@@ -5,7 +5,8 @@ import type { Point } from '../lib/simplify'
 import { textToStrokes } from '../lib/textToStrokes'
 import { applyPenSnap } from '../lib/penNodeSnap'
 import { isProduction } from '../lib/appEnv'
-import { MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
+import { MAX_STROKE_COMPONENTS, MAX_STROKE_POINTS, type InputMode, type StrokeData } from '../lib/strokeTypes'
+import { findConnectedComponents } from '../lib/strokeConnectivity'
 import { ModalShell } from './ModalShell'
 import { SketchPreview } from './SketchPreview'
 
@@ -179,7 +180,9 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
   const displayPointCount =
     totalPoints + (inputMode === 'pen' ? penCurrentPts.length : 0)
   const pointsOverLimit = displayPointCount > MAX_STROKE_POINTS
-  const canConfirm = totalPoints >= 2 && !pointsOverLimit
+  const componentCount = findConnectedComponents(strokes).length
+  const componentsOverLimit = componentCount > MAX_STROKE_COMPONENTS
+  const canConfirm = totalPoints >= 2 && !pointsOverLimit && !componentsOverLimit
 
   // ────────────────────────────────────────────────────
   // キャンバス再描画
@@ -590,6 +593,11 @@ export function SketchModal({ onClose, onConfirm }: SketchModalProps) {
           {pointsOverLimit && (
             <p className="mb-2 text-xs text-red-700">
               点の数が上限（{MAX_STROKE_POINTS}）を超えています。点を減らしてから決定してください。
+            </p>
+          )}
+          {componentsOverLimit && (
+            <p className="mb-2 text-xs text-red-700">
+              図形のパーツ数が上限（{MAX_STROKE_COMPONENTS}）を超えています。パーツを減らしてから決定してください。
             </p>
           )}
           {hint && <p className="mb-2 text-xs text-amber-800">{hint}</p>}

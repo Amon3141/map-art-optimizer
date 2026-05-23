@@ -15,6 +15,8 @@ export type AnnealingTraceSliderProps = {
   showBestLabel?: string
   /** showBestRoute=false のときのボタン文字列（デフォルト: 'ベスト候補に戻す'） */
   returnToBestLabel?: string
+  /** 省略時は生スコアを toFixed(4) で表示 */
+  formatScore?: (rawScore: number) => string
 }
 
 export function AnnealingTraceSlider({
@@ -28,7 +30,9 @@ export function AnnealingTraceSlider({
   onTraceSliderChange,
   showBestLabel = 'ベスト候補を表示中',
   returnToBestLabel = 'ベスト候補に戻す',
+  formatScore,
 }: AnnealingTraceSliderProps) {
+  const formatScoreText = formatScore ?? ((s: number) => s.toFixed(4))
   const maxStepIdx = Math.max(0, steps.length - 1)
   const displayStep = showBestRoute ? null : steps[selectedTraceIndex]
   const fillColor = showBestRoute ? '#fbbf24' : '#4a6f8a'
@@ -100,12 +104,12 @@ export function AnnealingTraceSlider({
           selectedRestartIndex != null ? (
             <>
               試行 #{selectedRestartIndex} · トレース {selectedTraceIndex + 1}/{steps.length} · step{' '}
-              {displayStep.step_index} · score={displayStep.score_total.toFixed(4)}
+              {displayStep.step_index} · {formatScoreText(displayStep.score_total)}
             </>
           ) : (
             <>
-              ステップ {selectedTraceIndex + 1}/{steps.length} · score=
-              {displayStep.score_total.toFixed(4)}
+              ステップ {selectedTraceIndex + 1}/{steps.length} ·{' '}
+              {formatScoreText(displayStep.score_total)}
             </>
           )
         ) : null}

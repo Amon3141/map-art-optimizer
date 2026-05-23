@@ -1,15 +1,15 @@
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl'
-import type { BasemapMode } from '../../components/BasemapSelector'
+import type { BasemapMode } from '../components/BasemapSelector'
 
 export const DEFAULT_MAP_CENTER: [number, number] = [139.7671, 35.6812]
-export const DEFAULT_MAP_ZOOM = 12
+export const DEFAULT_MAP_ZOOM = 13
 
 export const BASEMAP_OSM = 'basemap-osm'
 export const BASEMAP_LIGHT = 'basemap-light'
 export const BASEMAP_DARK = 'basemap-dark'
 
 /** OSM + Carto（ライト／ダーク）を同一スタイルに載せ、visibility で切り替え */
-export const DEBUG_BASEMAP_STYLE: maplibregl.StyleSpecification = {
+export const BASEMAP_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
   sources: {
@@ -63,7 +63,7 @@ export const DEBUG_BASEMAP_STYLE: maplibregl.StyleSpecification = {
   ],
 }
 
-export function applyDebugBasemapVisibility(map: MapLibreMap, mode: BasemapMode) {
+export function applyBasemapVisibility(map: MapLibreMap, mode: BasemapMode) {
   for (const id of [BASEMAP_OSM, BASEMAP_LIGHT, BASEMAP_DARK]) {
     if (!map.getLayer(id)) return
   }

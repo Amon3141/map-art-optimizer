@@ -13,8 +13,16 @@ import {
   SPEED_PRESET_META,
   type SpeedPreset,
 } from '../lib/appDefaults'
+import { LabelWithInfoHint } from './InfoHint'
 import { isDevelopment, isProduction } from '../lib/appEnv'
 import type { StrokeData } from '../lib/strokeTypes'
+
+const FETCH_RADIUS_HINT =
+  '都市部など道路が密な地域では2.0km以下をお勧めします'
+const EXPLORATION_SETTINGS_HINT =
+  '都市部だったり形が複雑だったりすると、表示されている時間より最大10秒程度長くかかることがあります'
+const LOCK_ROTATION_HINT =
+  'ON のときは、描いた形の向きをおおよそ保ったままルートを探します。OFF のときは、回転も含めあらゆる向きから探します'
 
 export type OptimizeState =
   | { kind: 'idle' }
@@ -81,7 +89,7 @@ export function Sidebar({
     ) : null
 
   return (
-    <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-5 pb-4 max-lg:overscroll-y-contain lg:h-full lg:max-w-sm lg:min-h-0 lg:overflow-hidden lg:py-5 lg:pl-5 lg:pr-0">
+    <aside className="scrollbar-hidden flex w-full shrink-0 flex-col gap-4 p-5 pb-4 max-lg:overflow-visible lg:h-full lg:max-w-sm lg:min-h-0 lg:overflow-hidden lg:py-5 lg:pl-5 lg:pr-0">
       <div className="flex shrink-0 flex-col gap-1.5">
         <h1 className="text-xl font-semibold tracking-tight text-stone-800">GPSアート作成機</h1>
         <p className="text-sm leading-relaxed text-stone-600">
@@ -133,33 +141,43 @@ export function Sidebar({
         </div>
       ) : null}
 
-      <div className="flex shrink-0 flex-col gap-3 lg:mt-auto">
-        <p className="text-sm font-medium text-stone-700">探索設定</p>
-
-        <div className="grid grid-cols-3 gap-1.5">
-          {(Object.keys(SPEED_PRESET_META) as SpeedPreset[]).map((p) => (
-            <button
-              key={p}
-              type="button"
-              disabled={isRunning}
-              className={`rounded-xl border py-2 text-center transition-colors disabled:opacity-50 ${
-                speedPreset === p
-                  ? 'border-[#4a6f8a] bg-[#4a6f8a] text-white'
-                  : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300'
-              }`}
-              onClick={() => onSpeedPresetChange(p)}
-            >
-              <div className="text-xs font-semibold">{SPEED_PRESET_META[p].label}</div>
-              <div className={`text-[10px] ${speedPreset === p ? 'text-white/75' : 'text-stone-400'}`}>
-                {SPEED_PRESET_META[p].description}
-              </div>
-            </button>
-          ))}
+      <div className="flex shrink-0 flex-col gap-3.5 lg:mt-auto">
+        <div className="flex flex-col gap-1.5">
+          <LabelWithInfoHint
+            label="探索設定"
+            hintLabel="探索設定について"
+            className="text-sm text-stone-700"
+          >
+            {EXPLORATION_SETTINGS_HINT}
+          </LabelWithInfoHint>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(Object.keys(SPEED_PRESET_META) as SpeedPreset[]).map((p) => (
+              <button
+                key={p}
+                type="button"
+                disabled={isRunning}
+                className={`rounded-xl border py-2 text-center transition-colors disabled:opacity-50 ${
+                  speedPreset === p
+                    ? 'border-[#4a6f8a] bg-[#4a6f8a] text-white'
+                    : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300'
+                }`}
+                onClick={() => onSpeedPresetChange(p)}
+              >
+                <div className="text-xs font-semibold">{SPEED_PRESET_META[p].label}</div>
+                <div className={`text-[10px] ${speedPreset === p ? 'text-white/75' : 'text-stone-400'}`}>
+                  {SPEED_PRESET_META[p].description}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
+        
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between text-sm text-stone-700">
-            <span className="font-medium">探索範囲</span>
+            <LabelWithInfoHint label="探索範囲" hintLabel="探索範囲の目安">
+              {FETCH_RADIUS_HINT}
+            </LabelWithInfoHint>
             <span className="tabular-nums text-stone-600">
               {(fetchRadiusM / 1000).toFixed(1)} km
             </span>
@@ -177,30 +195,35 @@ export function Sidebar({
           />
         </div>
 
-        <button
-          type="button"
-          className="flex items-center justify-between text-sm text-stone-700"
-          onClick={() => {
-            setLockRotation((v) => !v)
-            onExplorationSettingsChange?.()
-          }}
-          disabled={isRunning}
-        >
-          <span>向きを固定する</span>
-          <span
+        <div className="flex items-center justify-between text-sm text-stone-700">
+          <LabelWithInfoHint label="形の向きを保つ" hintLabel="形の向きを保つについて">
+            {LOCK_ROTATION_HINT}
+          </LabelWithInfoHint>
+          <button
+            type="button"
             role="switch"
             aria-checked={lockRotation}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              lockRotation ? 'bg-[#4a6f8a]' : 'bg-stone-300'
-            }`}
+            aria-label="形の向きを保つ"
+            disabled={isRunning}
+            className="shrink-0 disabled:opacity-50"
+            onClick={() => {
+              setLockRotation((v) => !v)
+              onExplorationSettingsChange?.()
+            }}
           >
             <span
-              className={`inline-block h-3.5 w-3.5 translate-y-0 rounded-full bg-white shadow transition-transform ${
-                lockRotation ? 'translate-x-[18px]' : 'translate-x-[2px]'
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                lockRotation ? 'bg-[#4a6f8a]' : 'bg-stone-300'
               }`}
-            />
-          </span>
-        </button>
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 translate-y-0 rounded-full bg-white shadow transition-transform ${
+                  lockRotation ? 'translate-x-[18px]' : 'translate-x-[2px]'
+                }`}
+              />
+            </span>
+          </button>
+        </div>
       </div>
 
       {!isProduction ? (
@@ -236,6 +259,7 @@ export function Sidebar({
           デバッグページへ →
         </Link>
       ) : null}
+
     </aside>
   )
 }

@@ -37,13 +37,14 @@ SPEED_PRESETS: dict[SpeedPreset, SpeedPresetConfig] = {
     ),
 }
 
-# 本番 /api/optimize の既定: 回転自由（デバッグ UI 既定とは別）
-IGNORE_SOURCE_ROTATION_DEFAULT: bool = True
+# 本番 /api/optimize の既定: 向き固定 ON（デバッグ UI 既定とは別）
+IGNORE_SOURCE_ROTATION_DEFAULT: bool = False
 
 DEFAULT_SPEED_PRESET: SpeedPreset = "fast"
 
 FETCH_RADIUS_MIN_M: float = 1_000.0
 FETCH_RADIUS_MAX_M: float = 5_000.0
-DEFAULT_FETCH_RADIUS_M: float = 3_000.0
+DEFAULT_FETCH_RADIUS_M: float = 2_000.0
 
-OVERPASS_MAX_WAYS: int = 250_000
+# 本番 /api/optimize: build_native_graph 直前のノード数上限（前処理前）
+MAX_NATIVE_GRAPH_NODES: int = 35_000
