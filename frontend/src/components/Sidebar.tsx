@@ -97,7 +97,7 @@ export function Sidebar({
             alt=""
             width={32}
             height={32}
-            className="h-9 w-9 shrink-0 object-cover"
+            className="h-10 w-10 shrink-0 object-cover"
           />
           手描きGPSアート
         </h1>
@@ -150,7 +150,7 @@ export function Sidebar({
         </div>
       ) : null}
 
-      <div className="flex shrink-0 flex-col gap-3.5 lg:mt-auto">
+      <div className="flex shrink-0 flex-col gap-4 lg:mt-auto">
         <div className="flex flex-col gap-1.5">
           <LabelWithInfoHint
             label="探索設定"
