@@ -4,6 +4,16 @@ import type { BasemapMode } from '../components/BasemapSelector'
 export const DEFAULT_MAP_CENTER: [number, number] = [139.7671, 35.6812]
 export const DEFAULT_MAP_ZOOM = 13
 
+/** Tailwind `sm` と同じ（639px 以下を狭い画面とみなす） */
+const NARROW_VIEWPORT_MEDIA = '(max-width: 639px)'
+
+export function getInitialMapZoom(): number {
+  if (typeof window !== 'undefined' && window.matchMedia(NARROW_VIEWPORT_MEDIA).matches) {
+    return DEFAULT_MAP_ZOOM - 0.5
+  }
+  return DEFAULT_MAP_ZOOM
+}
+
 export const BASEMAP_OSM = 'basemap-osm'
 export const BASEMAP_LIGHT = 'basemap-light'
 export const BASEMAP_DARK = 'basemap-dark'

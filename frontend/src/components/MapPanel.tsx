@@ -5,7 +5,7 @@ import { MapPillToggle } from './MapPillToggle'
 import {
   BASEMAP_STYLE,
   DEFAULT_MAP_CENTER,
-  DEFAULT_MAP_ZOOM,
+  getInitialMapZoom,
   applyBasemapVisibility,
 } from '../lib/basemapStyle'
 import { circlePolygon } from '../lib/geoUtils'
@@ -52,11 +52,12 @@ export function MapPanel({
     if (!el) return
 
     let cancelled = false
+    const initialZoom = getInitialMapZoom()
     const map = new maplibregl.Map({
       container: el,
       style: BASEMAP_STYLE,
       center: DEFAULT_MAP_CENTER,
-      zoom: DEFAULT_MAP_ZOOM,
+      zoom: initialZoom,
     })
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.addControl(
@@ -64,7 +65,7 @@ export function MapPanel({
         positionOptions: { enableHighAccuracy: true },
         trackUserLocation: false,
         showUserLocation: false,
-        fitBoundsOptions: { zoom: DEFAULT_MAP_ZOOM },
+        fitBoundsOptions: { zoom: initialZoom },
       }),
       'top-right',
     )
