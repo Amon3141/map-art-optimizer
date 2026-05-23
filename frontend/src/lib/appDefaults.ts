@@ -13,7 +13,7 @@ export const SPEED_PRESET_META: Record<SpeedPreset, SpeedPresetMeta> = {
   thorough: { label: 'じっくり', description: '約30秒' },
 }
 
-export const DEFAULT_SPEED_PRESET: SpeedPreset = 'fast'
+export const DEFAULT_SPEED_PRESET: SpeedPreset = 'normal'
 
 /** 本番デフォルト: 向き固定 ON（ignore_source_rotation = false） */
 export const DEFAULT_IGNORE_SOURCE_ROTATION = false

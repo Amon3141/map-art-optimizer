@@ -72,7 +72,7 @@
 各プリセットは `backend/app/optimization/app_defaults.py` に定義。  
 フロント側の UI メタ（ラベル・説明）は `frontend/src/lib/appDefaults.ts` に定義。
 
-**UI / API 省略時のデフォルト: fast（速め）**
+**UI / API 省略時のデフォルト: normal（ふつう）**
 
 ### 走行順の可視化
 結果表示時、サイドパネルのプレビュー領域を「巡回順 SVG」に切り替えるトグルを設ける。  

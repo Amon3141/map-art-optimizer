@@ -40,7 +40,7 @@ SPEED_PRESETS: dict[SpeedPreset, SpeedPresetConfig] = {
 # 本番 /api/optimize の既定: 向き固定 ON（デバッグ UI 既定とは別）
 IGNORE_SOURCE_ROTATION_DEFAULT: bool = False
 
-DEFAULT_SPEED_PRESET: SpeedPreset = "fast"
+DEFAULT_SPEED_PRESET: SpeedPreset = "normal"
 
 FETCH_RADIUS_MIN_M: float = 1_000.0
 FETCH_RADIUS_MAX_M: float = 5_000.0
