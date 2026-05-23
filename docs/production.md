@@ -39,9 +39,9 @@
 - 地図・ルートオーバーレイ・`RouteInfoPanel`（距離・候補・トレース再生）
 - `POST /api/optimize`（道路取得〜最適化の一括）
 
-### バックエンド（本番ゲートの対象外）
+### バックエンド
 
-`/api/debug/*` は環境変数で無効化しない（同一デプロイ・下記「実装原則」のとおり）。フロントの `/debug` 遮断のみでデバッグ UI への導線を切る。API を直接叩くことは可能。
+`/api/debug/*` は `APP_ENV=development` のときのみ登録される（`backend/app/main.py` 参照）。本番環境では `APP_ENV` を未設定か `production` にすることでデバッグエンドポイントは無効になる。
 
 ### development との差（要約）
 

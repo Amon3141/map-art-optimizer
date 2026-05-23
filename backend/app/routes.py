@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .osm.ingest import build_graph_from_geojson, count_native_nodes_from_geojson, graph_to_geojson_fc
@@ -29,6 +29,7 @@ from .optimization.app_defaults import (
 )
 from .optimization.pipeline import run_optimization_pipeline
 from .optimization.types import AnnealOptions, OptimizeWeights
+from ._limiter import limiter
 
 router = APIRouter()
 
@@ -55,7 +56,8 @@ class OptimizeBody(BaseModel):
 
 
 @router.post("/optimize")
-async def optimize(body: OptimizeBody) -> dict[str, Any]:
+@limiter.limit("10/minute")
+async def optimize(body: OptimizeBody, request: Request) -> dict[str, Any]:
     # 速度プリセットと投影原点を決める
     preset = SPEED_PRESETS[body.speed_preset]
     lon0, lat0 = body.center_lon, body.center_lat

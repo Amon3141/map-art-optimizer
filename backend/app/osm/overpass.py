@@ -5,13 +5,28 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 from collections.abc import Sequence
+from math import ceil
 from typing import Any
 
 import httpx
 
 from .geojson import overpass_elements_to_geojson
 from .highway_include import INCLUDED_HIGHWAY_TYPES
+
+# center_lon/lat を ~1km グリッドに丸め、fetch_radius_m を 500m 切り上げしたキーで
+# Overpass レスポンスをキャッシュする。同一エリアの重複呼び出しを防ぐ。
+_CACHE_TTL_S = 300.0
+_cache: dict[tuple[float, float, float], tuple[float, dict[str, Any]]] = {}
+
+
+def _cache_key(center_lon: float, center_lat: float, fetch_radius_m: float) -> tuple[float, float, float]:
+    return (
+        round(center_lon, 2),
+        round(center_lat, 2),
+        float(500 * ceil(fetch_radius_m / 500)),
+    )
 
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 
@@ -120,10 +135,19 @@ async def fetch_highway_geojson_for_center(
     timeout_s: float = 20.0,
     query_timeout_s: int = 30,
 ) -> dict[str, Any]:
+    key = _cache_key(center_lon, center_lat, fetch_radius_m)
+    cached = _cache.get(key)
+    if cached is not None:
+        expires_at, data = cached
+        if time.monotonic() < expires_at:
+            return data
+
+    # キャッシュキーの丸めた値でリクエスト（少し広い bbox → 問題なし）
+    rounded_lon, rounded_lat, rounded_radius = key
     min_lat, min_lon, max_lat, max_lon = center_radius_to_bbox(
-        center_lon, center_lat, fetch_radius_m
+        rounded_lon, rounded_lat, rounded_radius
     )
-    return await fetch_highway_geojson_for_bbox(
+    data = await fetch_highway_geojson_for_bbox(
         min_lat,
         min_lon,
         max_lat,
@@ -132,3 +156,5 @@ async def fetch_highway_geojson_for_center(
         timeout_s=timeout_s,
         query_timeout_s=query_timeout_s,
     )
+    _cache[key] = (time.monotonic() + _CACHE_TTL_S, data)
+    return data
