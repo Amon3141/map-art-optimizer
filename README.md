@@ -6,7 +6,7 @@ Draw a shape on a canvas and find a running route on nearby roads that follows i
 
 **Live demo:** [gps-art.pages.dev](https://gps-art.pages.dev)
 
-![App screenshot](https://static.zenn.studio/user-upload/85a3a7484167-20260524.png)
+<img width="400" alt="Screen Recording 2026-05-23 at 10 37 58 PM (online-video-cutter com)" src="https://github.com/user-attachments/assets/937c6c70-904b-4b0f-8741-08133799acf7" />
 
 ## Setup
 
