@@ -1,12 +1,35 @@
-# ドキュメント索引
+**English** | [日本語](#日本語)
 
-エージェント間で共有する事項を分割して置いています。更新は都度、必要な節だけ短く追記してください。
+# Documentation
 
-| ファイル | 内容 |
-|----------|------|
-| [product.md](product.md) | プロダクトの目的・非目標 |
-| [architecture.md](architecture.md) | スタック、ディレクトリ、環境変数、データ取得経路 |
-| [frontend-ui.md](frontend-ui.md) | モーダル（ModalShell）、z-index、マップ内オーバーレイの使い分け |
-| [optimization.md](optimization.md) | 将来の最適化（現状はスタブ） |
-| [todo.md](todo.md) | タスク一覧 |
-| [decisions.md](decisions.md) | 重要な判断の記録 |
+Implementation-focused technical docs for contributors.
+
+| Topic | English | 日本語 |
+|-------|---------|--------|
+| Overview & pipeline | [overview.md](en/overview.md) | [overview.md](ja/overview.md) |
+| Architecture & deployment | [architecture.md](en/architecture.md) | [architecture.md](ja/architecture.md) |
+| Input stroke preprocessing | [input-preprocessing.md](en/input-preprocessing.md) | [input-preprocessing.md](ja/input-preprocessing.md) |
+| Road graph construction | [road-graph.md](en/road-graph.md) | [road-graph.md](ja/road-graph.md) |
+| Optimization engine | [optimization.md](en/optimization.md) | [optimization.md](ja/optimization.md) |
+| Local development & debug | [development.md](en/development.md) | [development.md](ja/development.md) |
+
+Pipeline diagrams: [English](en/article_visuals.html) · [日本語](ja/article_visuals.html)
+
+---
+
+[English](#documentation) | **日本語**
+
+# ドキュメント
+
+コントリビュータ向けの実装ベースの技術ドキュメント。
+
+| トピック | English | 日本語 |
+|---------|---------|--------|
+| 概要・パイプライン | [overview.md](en/overview.md) | [overview.md](ja/overview.md) |
+| アーキテクチャ・デプロイ | [architecture.md](en/architecture.md) | [architecture.md](ja/architecture.md) |
+| 入力ストローク前処理 | [input-preprocessing.md](en/input-preprocessing.md) | [input-preprocessing.md](ja/input-preprocessing.md) |
+| 道路グラフ構築 | [road-graph.md](en/road-graph.md) | [road-graph.md](ja/road-graph.md) |
+| 最適化エンジン | [optimization.md](en/optimization.md) | [optimization.md](ja/optimization.md) |
+| ローカル開発・デバッグ | [development.md](en/development.md) | [development.md](ja/development.md) |
+
+パイプライン図: [English](en/article_visuals.html) · [日本語](ja/article_visuals.html)

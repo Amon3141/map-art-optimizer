@@ -93,7 +93,7 @@ export function Sidebar({
       <div className="flex shrink-0 flex-col gap-1.5">
         <h1 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-stone-800">
           <img
-            src="/favicon.png"
+            src="/app-icon.png"
             alt=""
             width={32}
             height={32}

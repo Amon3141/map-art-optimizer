@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hand-drawn GPS Art — Pipeline Diagrams</title>
+  <style>
+    :root {
+      --page: #f6f1e8;
+      --card: #ffffff;
+      --ink: #25313a;
+      --muted: #6b7280;
+      --line: #d9dee5;
+      --blue: #4a6f8a;
+      --blue-soft: #edf5f8;
+      --orange: #c45c3e;
+      --orange-soft: #fff2ed;
+      --green: #23845c;
+      --green-soft: #edf7f1;
+      --yellow-soft: #fff7dc;
+      --gray-soft: #f7f8fa;
+      --road: #374151;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Hiragino Kaku Gothic ProN",
+        "Noto Sans JP",
+        "Yu Gothic",
+        sans-serif;
+    }
+
+    main {
+      width: min(780px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 72px;
+    }
+
+    .intro {
+      margin-bottom: 28px;
+    }
+
+    .lang-switch {
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+
+    .lang-switch a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    .lang-switch a:hover {
+      text-decoration: underline;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: 0.02em;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .toc {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-left: 4px solid var(--blue);
+      border-radius: 10px;
+      background: var(--card);
+      box-shadow: 0 1px 8px rgba(15, 23, 42, 0.06);
+    }
+
+    .toc-title {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .toc a {
+      display: inline-block;
+      margin: 2px 12px 2px 0;
+      color: var(--blue);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    section.figure {
+      margin: 32px 0 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      box-shadow: 0 2px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    .figure-header {
+      padding: 20px 24px 12px;
+    }
+
+    .figure-label {
+      margin-bottom: 4px;
+      color: #9ca3af;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .diagram {
+      padding: 8px 24px 24px;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      background: #ffffff;
+    }
+
+    .box {
+      fill: #ffffff;
+      stroke: var(--line);
+      stroke-width: 1.5;
+    }
+
+    .box-blue {
+      fill: var(--blue-soft);
+      stroke: #a9c4d1;
+      stroke-width: 1.5;
+    }
+
+    .box-orange {
+      fill: var(--orange-soft);
+      stroke: #e1a48f;
+      stroke-width: 1.5;
+    }
+
+    .box-green {
+      fill: var(--green-soft);
+      stroke: #9bcab1;
+      stroke-width: 1.5;
+    }
+
+    .box-yellow {
+      fill: var(--yellow-soft);
+      stroke: #e9d58f;
+      stroke-width: 1.5;
+    }
+
+    .box-gray {
+      fill: var(--gray-soft);
+      stroke: var(--line);
+      stroke-width: 1.5;
+    }
+
+    .title {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .label {
+      fill: var(--ink);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .small {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .tiny {
+      fill: var(--muted);
+      font-size: 9px;
+    }
+
+    .blue-text {
+      fill: var(--blue);
+    }
+
+    .orange-text {
+      fill: var(--orange);
+    }
+
+    .green-text {
+      fill: var(--green);
+    }
+
+    .muted-text {
+      fill: var(--muted);
+    }
+
+    .pill {
+      fill: #ffffff;
+      stroke: var(--line);
+      stroke-width: 1.2;
+    }
+
+    .callout {
+      fill: #ffffff;
+      stroke: #cbd5e1;
+      stroke-width: 1.2;
+    }
+
+    .road {
+      fill: none;
+      stroke: var(--road);
+      stroke-width: 2.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .road-muted {
+      fill: none;
+      stroke: #9ca3af;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .shape {
+      fill: none;
+      stroke: var(--orange);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .shape-blue {
+      fill: none;
+      stroke: #3b82f6;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .shape-dashed {
+      fill: none;
+      stroke: #3b82f6;
+      stroke-width: 3;
+      stroke-dasharray: 7 5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .arrow {
+      fill: none;
+      stroke: var(--blue);
+      stroke-width: 2;
+      marker-end: url(#arrow-blue);
+    }
+
+    .arrow-orange {
+      fill: none;
+      stroke: var(--orange);
+      stroke-width: 2;
+      marker-end: url(#arrow-orange);
+    }
+
+    .arrow-green {
+      fill: none;
+      stroke: var(--green);
+      stroke-width: 2;
+      marker-end: url(#arrow-green);
+    }
+
+    .node {
+      fill: var(--blue);
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-orange {
+      fill: var(--orange);
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-green {
+      fill: var(--green);
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-yellow {
+      fill: #e4b505;
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-blue {
+      fill: #3b82f6;
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-snap {
+      fill: #32c56a;
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-purple {
+      fill: #a855f7;
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+
+    .node-red {
+      fill: #ef4444;
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+  </style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#4a6f8a"></path>
+    </marker>
+    <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#c45c3e"></path>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#23845c"></path>
+    </marker>
+    <marker id="arrow-yellow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#d6a800"></path>
+    </marker>
+  </defs>
+</svg>
+<main>
+  <div class="intro">
+    <p class="lang-switch"><strong>English</strong> | <a href="../ja/article_visuals.html">日本語</a></p>
+    <h1>Hand-drawn GPS Art — Pipeline Diagrams</h1>
+    <p>Diagrams of the optimization pipeline. Each section is a self-contained figure with a white background and light borders.</p>
+    <div class="toc">
+      <div class="toc-title">Contents</div>
+      <a href="#architecture">1. Three-layer architecture</a>
+      <a href="#pipeline">2. End-to-end pipeline</a>
+      <a href="#transform">3. Transform parameters</a>
+      <a href="#preprocess">4. Road preprocessing</a>
+      <a href="#postman">5. Single-path conversion</a>
+      <a href="#snap">6. Snapping to roads</a>
+      <a href="#anneal">7. Simulated annealing</a>
+      <a href="#initial">8. Initial solution selection</a>
+      <a href="#multi">9. Multi-part shapes</a>
+    </div>
+  </div>
+
+  <section class="figure" id="architecture">
+    <div class="figure-header">
+      <div class="figure-label">Figure 1</div>
+      <h2>Three-layer architecture</h2>
+      <p>Instead of searching road data directly, the system separates the road graph from transform space.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 700 360" role="img" aria-label="Three-layer architecture">
+        <rect class="box-yellow" x="110" y="246" width="480" height="70" rx="10"></rect>
+        <text class="title" x="350" y="276" text-anchor="middle">Map road data</text>
+        <text class="small" x="350" y="298" text-anchor="middle">Fetch tagged highway ways from map data</text>
+
+        <rect class="box-green" x="110" y="144" width="480" height="76" rx="10"></rect>
+        <text class="title" x="350" y="174" text-anchor="middle">Road graph</text>
+        <text class="small" x="350" y="196" text-anchor="middle">Vertices = nodes, segments = edges, stored in planar meters</text>
+
+        <rect class="box-blue" x="110" y="36" width="480" height="82" rx="10"></rect>
+        <text class="title" x="350" y="71" text-anchor="middle">Transform space / parameters</text>
+        <text class="small" x="350" y="93" text-anchor="middle">Where to place the input shape, at what angle and scale</text>
+
+        <path class="arrow" d="M350 246 V223"></path>
+        <text class="small" x="372" y="238">Preprocess</text>
+        <path class="arrow-orange" d="M590 77 C642 86 642 180 593 184"></path>
+        <text class="small orange-text" x="620" y="132" text-anchor="middle">Snap shape to</text>
+        <text class="small orange-text" x="620" y="149" text-anchor="middle">road graph</text>
+        <text class="small blue-text" x="650" y="62" text-anchor="middle">Annealing</text>
+        <text class="small blue-text" x="650" y="79" text-anchor="middle">searches transform space</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="pipeline">
+    <div class="figure-header">
+      <div class="figure-label">Figure 2</div>
+      <h2>End-to-end pipeline</h2>
+      <p>From user input through road fetch, optimization, and map display.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 700 270" role="img" aria-label="End-to-end pipeline">
+        <g transform="translate(0,-36)">
+        <rect x="10" y="50" width="292" height="202" rx="12" fill="none" stroke="#e1a48f" stroke-width="1.4" stroke-dasharray="6 4"></rect>
+        <text class="tiny orange-text" x="34" y="68">Frontend</text>
+        <rect x="326" y="50" width="305" height="202" rx="12" fill="none" stroke="#a9c4d1" stroke-width="1.4" stroke-dasharray="6 4"></rect>
+        <text class="tiny blue-text" x="350" y="68">Backend</text>
+
+        <rect class="box-orange" x="20" y="78" width="112" height="70" rx="10"></rect>
+        <text class="label" x="76" y="106" text-anchor="middle">Draw shape</text>
+        <text class="tiny" x="76" y="126" text-anchor="middle">Freehand / pen</text>
+
+        <rect class="box-orange" x="164" y="78" width="118" height="70" rx="10"></rect>
+        <text class="label" x="223" y="108" text-anchor="middle">Input preprocessing</text>
+        <text class="tiny" x="223" y="128" text-anchor="middle">Single-path conversion</text>
+
+        <rect class="box-blue" x="362" y="78" width="112" height="58" rx="10"></rect>
+        <text class="label" x="418" y="103" text-anchor="middle">Fetch roads</text>
+        <text class="tiny" x="418" y="121" text-anchor="middle">Map data</text>
+
+        <rect class="box-blue" x="362" y="164" width="112" height="58" rx="10"></rect>
+        <text class="label" x="418" y="189" text-anchor="middle">Build graph</text>
+        <text class="tiny" x="418" y="207" text-anchor="middle">Preprocess</text>
+
+        <rect class="box-blue" x="522" y="124" width="76" height="98" rx="10"></rect>
+        <text class="label" x="560" y="149" text-anchor="middle">Search</text>
+        <text class="tiny" x="560" y="170" text-anchor="middle">Transform</text>
+        <text class="tiny" x="560" y="186" text-anchor="middle">road graph</text>
+        <text class="tiny" x="560" y="202" text-anchor="middle">Score</text>
+
+        <rect class="box-gray" x="20" y="166" width="262" height="44" rx="9"></rect>
+        <text class="small" x="151" y="184" text-anchor="middle">Output: route candidates + trace</text>
+        <text class="tiny" x="151" y="200" text-anchor="middle">Show candidates and search progress on the map</text>
+
+        <path class="arrow-orange" d="M132 113 H160"></path>
+        <path class="arrow-orange" d="M282 113 C318 113 332 108 359 107"></path>
+        <path class="arrow" d="M418 136 V161"></path>
+        <path class="arrow" d="M474 193 C492 193 500 174 518 174"></path>
+        <path class="arrow" d="M560 222 C528 230 346 210 286 188"></path>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="transform">
+    <div class="figure-header">
+      <div class="figure-label">Figure 3</div>
+      <h2>Four transform parameters</h2>
+      <p>Annealing searches placement of the input shape, not combinations of road edges.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 18 700 312" role="img" aria-label="Four transform parameters">
+        <rect class="box-gray" x="32" y="34" width="636" height="244" rx="12"></rect>
+
+        <rect class="box" x="58" y="88" width="176" height="134" rx="10"></rect>
+        <text class="label" x="146" y="112" text-anchor="middle">Input shape</text>
+        <path class="shape-blue" d="M88 182 L122 132 L162 184 L198 146"></path>
+        <circle fill="#3b82f6" cx="88" cy="182" r="4"></circle>
+        <circle fill="#3b82f6" cx="122" cy="132" r="4"></circle>
+        <circle fill="#3b82f6" cx="162" cy="184" r="4"></circle>
+        <circle fill="#3b82f6" cx="198" cy="146" r="4"></circle>
+
+        <rect class="box" x="466" y="88" width="176" height="134" rx="10"></rect>
+        <text class="label" x="554" y="112" text-anchor="middle">Placement on map</text>
+        <g transform="translate(555,154) rotate(-22) scale(1.12)">
+          <path class="shape" d="M-60 30 L-26 -20 L14 32 L50 -6"></path>
+          <circle class="node-orange" cx="-60" cy="30" r="4"></circle>
+          <circle class="node-orange" cx="-26" cy="-20" r="4"></circle>
+          <circle class="node-orange" cx="14" cy="32" r="4"></circle>
+          <circle class="node-orange" cx="50" cy="-6" r="4"></circle>
+        </g>
+
+        <path class="arrow-orange" d="M240 154 H292"></path>
+        <path class="arrow-orange" d="M408 154 H460"></path>
+
+        <rect class="box-orange" x="292" y="74" width="116" height="44" rx="9"></rect>
+        <text class="label orange-text" x="350" y="94" text-anchor="middle">Position</text>
+        <text class="tiny" x="350" y="110" text-anchor="middle">Translation</text>
+
+        <rect class="box-green" x="292" y="132" width="116" height="44" rx="9"></rect>
+        <text class="label green-text" x="350" y="152" text-anchor="middle">θ</text>
+        <text class="tiny" x="350" y="168" text-anchor="middle">Rotation</text>
+
+        <rect class="box-blue" x="292" y="190" width="116" height="44" rx="9"></rect>
+        <text class="label blue-text" x="350" y="210" text-anchor="middle">Scale</text>
+        <text class="tiny" x="350" y="226" text-anchor="middle">Size</text>
+
+        <rect class="box" x="88" y="300" width="524" height="28" rx="7"></rect>
+        <text class="small" x="350" y="319" text-anchor="middle">Search shape placement with 4 parameters, not the route itself</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="preprocess">
+    <div class="figure-header">
+      <div class="figure-label">Figure 4</div>
+      <h2>Five road preprocessing steps</h2>
+      <p>Raw road data is cleaned into a searchable graph. Production mainly uses steps 1, 3, and 5.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 700 610" role="img" aria-label="Five road preprocessing steps">
+        <text class="label" x="262" y="24" text-anchor="middle">Before</text>
+        <text class="label" x="532" y="24" text-anchor="middle">After</text>
+
+        <g transform="translate(0,42)">
+          <text class="label blue-text" x="20" y="28">1. Connect shared road nodes</text>
+          <line class="road" x1="190" y1="26" x2="250" y2="26"></line>
+          <line class="road" x1="274" y1="26" x2="334" y2="26"></line>
+          <circle class="node-red" cx="250" cy="26" r="6"></circle>
+          <circle class="node-red" cx="274" cy="26" r="6"></circle>
+          <text class="tiny" x="262" y="50" text-anchor="middle">Same ID but disconnected</text>
+          <path class="arrow" d="M370 26 H414"></path>
+          <line class="road" x1="460" y1="26" x2="604" y2="26"></line>
+          <circle class="node-yellow" cx="532" cy="26" r="6"></circle>
+          <text class="tiny" x="532" y="50" text-anchor="middle">Merged into one node</text>
+        </g>
+
+        <g transform="translate(0,130)">
+          <text class="label blue-text" x="20" y="28">2. Snap nearby endpoints</text>
+          <line class="road" x1="190" y1="34" x2="252" y2="34"></line>
+          <line class="road" x1="274" y1="22" x2="334" y2="48"></line>
+          <line x1="252" y1="34" x2="274" y2="22" stroke="#9ca3af" stroke-dasharray="4 3"></line>
+          <circle class="node-red" cx="252" cy="34" r="6"></circle>
+          <circle class="node-orange" cx="274" cy="22" r="6"></circle>
+          <path class="arrow" d="M370 32 H414"></path>
+          <line class="road" x1="460" y1="34" x2="532" y2="28"></line>
+          <line class="road" x1="532" y1="28" x2="604" y2="48"></line>
+          <circle class="node-snap" cx="532" cy="28" r="6"></circle>
+        </g>
+
+        <g transform="translate(0,218)">
+          <text class="label blue-text" x="20" y="28">3. Merge duplicate roads</text>
+          <line class="road-muted" x1="262" y1="0" x2="262" y2="20"></line>
+          <line class="road" x1="190" y1="20" x2="334" y2="20"></line>
+          <line class="road-muted" x1="190" y1="46" x2="334" y2="46"></line>
+          <text class="tiny" x="176" y="22" text-anchor="end">Carriageway</text>
+          <text class="tiny" x="176" y="49" text-anchor="end">Footway</text>
+          <circle class="node-purple" cx="262" cy="20" r="5"></circle>
+          <path class="arrow" d="M370 32 H414"></path>
+          <line class="road-muted" x1="532" y1="0" x2="532" y2="32"></line>
+          <line class="road" x1="460" y1="32" x2="604" y2="32"></line>
+          <circle class="node-purple" cx="460" cy="32" r="5"></circle>
+          <circle class="node-purple" cx="532" cy="32" r="5"></circle>
+          <circle class="node-purple" cx="604" cy="32" r="5"></circle>
+          <text class="tiny" x="532" y="56" text-anchor="middle">Intersections move onto representative line</text>
+        </g>
+
+        <g transform="translate(0,306)">
+          <text class="label blue-text" x="20" y="28">4. Split at intersections</text>
+          <line class="road" x1="196" y1="12" x2="328" y2="52"></line>
+          <line class="road" x1="196" y1="52" x2="328" y2="12"></line>
+          <text class="tiny" x="262" y="70" text-anchor="middle">No node at crossing</text>
+          <path class="arrow" d="M370 32 H414"></path>
+          <line class="road" x1="460" y1="12" x2="532" y2="32"></line>
+          <line class="road" x1="532" y1="32" x2="604" y2="52"></line>
+          <line class="road" x1="460" y1="52" x2="532" y2="32"></line>
+          <line class="road" x1="532" y1="32" x2="604" y2="12"></line>
+          <circle class="node-purple" cx="532" cy="32" r="6"></circle>
+        </g>
+
+        <g transform="translate(0,394)">
+          <text class="label blue-text" x="20" y="28">5. Prune chain vertices</text>
+          <polyline points="190,42 210,38 230,34 250,31 270,30 290,32 310,38 334,46" fill="none" stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+          <circle class="node" cx="190" cy="42" r="5"></circle>
+          <circle fill="#9ca3af" cx="210" cy="38" r="4"></circle>
+          <circle fill="#9ca3af" cx="230" cy="34" r="4"></circle>
+          <circle fill="#9ca3af" cx="250" cy="31" r="4"></circle>
+          <circle fill="#9ca3af" cx="270" cy="30" r="4"></circle>
+          <circle fill="#9ca3af" cx="290" cy="32" r="4"></circle>
+          <circle fill="#9ca3af" cx="310" cy="38" r="4"></circle>
+          <circle class="node" cx="334" cy="46" r="5"></circle>
+          <path class="arrow" d="M370 38 H414"></path>
+          <polyline points="460,42 532,30 604,46" fill="none" stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+          <circle class="node" cx="460" cy="42" r="5"></circle>
+          <circle fill="#64748b" stroke="#ffffff" stroke-width="2" cx="532" cy="30" r="5"></circle>
+          <circle class="node" cx="604" cy="46" r="5"></circle>
+          <text class="tiny" x="532" y="70" text-anchor="middle">Keep vertices by cumulative turn angle</text>
+        </g>
+
+        <rect class="box-gray" x="74" y="494" width="552" height="68" rx="8"></rect>
+        <circle class="node-yellow" cx="116" cy="512" r="6"></circle>
+        <text class="tiny" x="130" y="516">Merge shared nodes</text>
+        <circle class="node-snap" cx="226" cy="512" r="6"></circle>
+        <text class="tiny" x="240" y="516">Snap endpoints</text>
+        <circle class="node-purple" cx="348" cy="512" r="6"></circle>
+        <text class="tiny" x="362" y="516">Road merge / intersection split</text>
+        <circle fill="#64748b" stroke="#ffffff" stroke-width="2" cx="500" cy="512" r="6"></circle>
+        <text class="tiny" x="514" y="516">Kept intermediate node</text>
+        <text class="small" x="350" y="548" text-anchor="middle">Goal: reduce noise and search space while keeping shapes needed for GPS art</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="postman">
+    <div class="figure-header">
+      <div class="figure-label">Figure 5</div>
+      <h2>Convert multiple strokes to a single path</h2>
+      <p>Organize intersections and endpoints into one ordered vertex list for running.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 700 390" role="img" aria-label="Single-path conversion">
+        <rect class="box-blue" x="28" y="48" width="142" height="222" rx="12"></rect>
+        <text class="label blue-text" x="99" y="78" text-anchor="middle">Input strokes</text>
+        <line x1="62" y1="160" x2="136" y2="160" stroke="#3b82f6" stroke-width="4" stroke-linecap="round"></line>
+        <line x1="99" y1="104" x2="99" y2="216" stroke="#c45c3e" stroke-width="4" stroke-linecap="round"></line>
+        <circle class="node-blue" cx="62" cy="160" r="5"></circle>
+        <circle class="node-blue" cx="136" cy="160" r="5"></circle>
+        <circle class="node-orange" cx="99" cy="104" r="5"></circle>
+        <circle class="node-orange" cx="99" cy="216" r="5"></circle>
+        <text class="tiny" x="99" y="244" text-anchor="middle">Draw order alone</text>
+        <text class="tiny" x="99" y="258" text-anchor="middle">does not define run order</text>
+
+        <path class="arrow" d="M176 160 H212"></path>
+
+        <rect class="box-yellow" x="218" y="48" width="156" height="222" rx="12"></rect>
+        <text class="label" x="296" y="78" text-anchor="middle" fill="#a87900">Resolve intersections</text>
+        <line x1="254" y1="160" x2="338" y2="160" stroke="#374151" stroke-width="3" stroke-linecap="round"></line>
+        <line x1="296" y1="104" x2="296" y2="216" stroke="#374151" stroke-width="3" stroke-linecap="round"></line>
+        <circle class="node-red" cx="296" cy="160" r="7"></circle>
+        <circle class="node-yellow" cx="254" cy="160" r="5"></circle>
+        <circle class="node-yellow" cx="338" cy="160" r="5"></circle>
+        <circle class="node-yellow" cx="296" cy="104" r="5"></circle>
+        <circle class="node-yellow" cx="296" cy="216" r="5"></circle>
+        <text class="tiny" x="296" y="244" text-anchor="middle">Treat crossings as</text>
+        <text class="tiny" x="296" y="258" text-anchor="middle">pass-through vertices</text>
+
+        <path class="arrow" d="M382 160 H418"></path>
+
+        <rect class="box-orange" x="424" y="48" width="248" height="222" rx="12"></rect>
+        <text class="label orange-text" x="548" y="78" text-anchor="middle">Result</text>
+        <line x1="484" y1="160" x2="612" y2="160" stroke="#d1d5db" stroke-width="3" stroke-linecap="round"></line>
+        <line x1="548" y1="100" x2="548" y2="220" stroke="#d1d5db" stroke-width="3" stroke-linecap="round"></line>
+        <path d="M484 160 H548 V100 V160 H612 H548 V220 V160" fill="none" stroke="#c45c3e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M548 100 V160" fill="none" stroke="#c45c3e" stroke-width="7" stroke-linecap="round" opacity="0.22"></path>
+        <path d="M548 220 V160" fill="none" stroke="#c45c3e" stroke-width="7" stroke-linecap="round" opacity="0.22"></path>
+        <polygon points="524,160 516,155 516,165" fill="#c45c3e" opacity="0.62"></polygon>
+        <polygon points="548,118 543,127 553,127" fill="#c45c3e" opacity="0.62"></polygon>
+        <polygon points="548,142 543,133 553,133" fill="#c45c3e" opacity="0.62"></polygon>
+        <polygon points="586,160 578,155 578,165" fill="#c45c3e" opacity="0.62"></polygon>
+        <polygon points="548,202 543,193 553,193" fill="#c45c3e" opacity="0.62"></polygon>
+        <polygon points="548,178 543,187 553,187" fill="#c45c3e" opacity="0.62"></polygon>
+        <circle class="node-green" cx="484" cy="160" r="7"></circle>
+        <circle class="node-red" cx="548" cy="160" r="7"></circle>
+        <circle class="node-orange" cx="612" cy="160" r="6"></circle>
+        <polygon points="548,91 557,100 548,109 539,100" fill="#9ca3af" stroke="#ffffff" stroke-width="2"></polygon>
+        <polygon points="548,211 557,220 548,229 539,220" fill="#9ca3af" stroke="#ffffff" stroke-width="2"></polygon>
+        <text class="tiny green-text" x="484" y="146" text-anchor="middle">Start</text>
+        <text class="tiny orange-text" x="612" y="146" text-anchor="middle">End</text>
+        <text class="tiny" x="582" y="104" text-anchor="middle">Backtrack</text>
+        <text class="tiny" x="582" y="224" text-anchor="middle">Backtrack</text>
+        <text class="tiny" x="548" y="244" text-anchor="middle">Visit all strokes with backtracking</text>
+        <text class="tiny" x="548" y="258" text-anchor="middle">Arrows show the sent vertex order</text>
+
+        <rect class="callout" x="52" y="304" width="596" height="52" rx="10"></rect>
+        <text class="small" x="350" y="326" text-anchor="middle">Output is one path with a defined run order</text>
+        <text class="tiny" x="350" y="344" text-anchor="middle">No new edges added; backtracking reuses existing edges</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="snap">
+    <div class="figure-header">
+      <div class="figure-label">Figure 6</div>
+      <h2>Snapping to roads</h2>
+      <p>For each segment, collect nearby candidates and pick the smoothest forward path.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 58 700 232" role="img" aria-label="Snapping to roads">
+        <rect class="box-yellow" x="66" y="58" width="568" height="164" rx="12" stroke-dasharray="6 4"></rect>
+        <line x1="94" y1="168" x2="604" y2="108" stroke="#c45c3e" stroke-width="3" stroke-dasharray="9 5" marker-end="url(#arrow-orange)"></line>
+
+        <line class="road-muted" x1="116" y1="184" x2="198" y2="152"></line>
+        <line class="road-muted" x1="198" y1="152" x2="278" y2="166"></line>
+        <line class="road-muted" x1="278" y1="166" x2="356" y2="132"></line>
+        <line class="road-muted" x1="356" y1="132" x2="438" y2="148"></line>
+        <line class="road-muted" x1="438" y1="148" x2="524" y2="118"></line>
+        <line class="road-muted" x1="524" y1="118" x2="594" y2="138"></line>
+        <line class="road-muted" x1="198" y1="152" x2="230" y2="92"></line>
+        <line class="road-muted" x1="278" y1="166" x2="326" y2="214"></line>
+        <line class="road-muted" x1="356" y1="132" x2="390" y2="82"></line>
+        <line class="road-muted" x1="438" y1="148" x2="476" y2="210"></line>
+        <line class="road-muted" x1="524" y1="118" x2="566" y2="72"></line>
+        <line class="road-muted" x1="230" y1="92" x2="356" y2="132"></line>
+        <line class="road-muted" x1="326" y1="214" x2="438" y2="148"></line>
+        <line class="road-muted" x1="390" y1="82" x2="524" y2="118"></line>
+        <line class="road-muted" x1="476" y1="210" x2="594" y2="138"></line>
+        <line class="road-muted" x1="566" y1="72" x2="594" y2="138"></line>
+
+        <polyline points="116,184 198,152 278,166 356,132 438,148 524,118" fill="none" stroke="#23845c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-green)"></polyline>
+
+        <circle fill="#9ca3af" cx="230" cy="92" r="5"></circle>
+        <circle fill="#9ca3af" cx="326" cy="214" r="5"></circle>
+        <circle fill="#9ca3af" cx="390" cy="82" r="5"></circle>
+        <circle fill="#9ca3af" cx="476" cy="210" r="5"></circle>
+        <circle fill="#9ca3af" cx="566" cy="72" r="5"></circle>
+        <circle fill="#9ca3af" cx="594" cy="138" r="5"></circle>
+
+        <circle class="node-green" cx="116" cy="184" r="6"></circle>
+        <circle class="node-green" cx="198" cy="152" r="6"></circle>
+        <circle class="node-green" cx="278" cy="166" r="6"></circle>
+        <circle class="node-green" cx="356" cy="132" r="6"></circle>
+        <circle class="node-green" cx="438" cy="148" r="6"></circle>
+        <circle class="node-green" cx="524" cy="118" r="6"></circle>
+        <rect class="box-gray" x="78" y="238" width="544" height="36" rx="8"></rect>
+        <line x1="106" y1="256" x2="142" y2="256" stroke="#23845c" stroke-width="4" stroke-linecap="round"></line>
+        <circle class="node-green" cx="124" cy="256" r="5"></circle>
+        <text class="tiny" x="154" y="260">Selected road route</text>
+        <line x1="292" y1="256" x2="328" y2="256" stroke="#c45c3e" stroke-width="3" stroke-dasharray="9 5"></line>
+        <text class="tiny" x="340" y="260">Input segment direction</text>
+        <line x1="480" y1="256" x2="516" y2="256" stroke="#9ca3af" stroke-width="2.2" stroke-linecap="round"></line>
+        <circle fill="#9ca3af" cx="498" cy="256" r="5"></circle>
+        <text class="tiny" x="528" y="260">Nearby candidate roads</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="anneal">
+    <div class="figure-header">
+      <div class="figure-label">Figure 7</div>
+      <h2>One annealing iteration</h2>
+      <p>Perturb the transform, snap to roads, and accept or reject by score.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 700 310" role="img" aria-label="One annealing iteration">
+        <rect class="box-orange" x="252" y="26" width="196" height="58" rx="10"></rect>
+        <text class="label" x="350" y="51" text-anchor="middle">Propose transform</text>
+        <text class="tiny" x="350" y="69" text-anchor="middle">Translate / rotate / scale</text>
+
+        <rect class="box-blue" x="486" y="126" width="160" height="58" rx="10"></rect>
+        <text class="label" x="566" y="151" text-anchor="middle">Snap to roads</text>
+        <text class="tiny" x="566" y="169" text-anchor="middle">Pick nearby road sequence</text>
+
+        <rect class="box-green" x="252" y="226" width="196" height="58" rx="10"></rect>
+        <text class="label" x="350" y="251" text-anchor="middle">Compute score</text>
+        <text class="tiny" x="350" y="269" text-anchor="middle">Shape distance + penalties</text>
+
+        <rect class="box-yellow" x="54" y="126" width="160" height="58" rx="10"></rect>
+        <text class="label" x="134" y="151" text-anchor="middle">Accept / reject</text>
+        <text class="tiny" x="134" y="169" text-anchor="middle">Probabilistic acceptance</text>
+
+        <rect class="box" x="264" y="126" width="172" height="58" rx="10"></rect>
+        <text class="label" x="350" y="151" text-anchor="middle">State</text>
+        <text class="tiny" x="350" y="169" text-anchor="middle">Position, angle, scale</text>
+
+        <path class="arrow-orange" d="M448 55 C524 62 566 84 566 122"></path>
+        <path class="arrow" d="M566 184 C560 224 500 252 452 255"></path>
+        <path class="arrow-green" d="M252 255 C190 250 134 222 134 188"></path>
+        <path d="M134 126 C142 72 204 55 248 55" fill="none" stroke="#d6a800" stroke-width="2" marker-end="url(#arrow-yellow)"></path>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="initial">
+    <div class="figure-header">
+      <div class="figure-label">Figure 8</div>
+      <h2>Initial solutions from coarse grid search</h2>
+      <p>Spend part of the budget on a 4×4 position × 3 angle × 3 scale grid; pick diverse high-scoring starts.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 24 700 336" role="img" aria-label="Initial solution selection">
+        <rect class="box-blue" x="38" y="42" width="232" height="236" rx="12"></rect>
+        <text class="label blue-text" x="154" y="74" text-anchor="middle">Coarse placement grid</text>
+        <rect x="82" y="104" width="144" height="144" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"></rect>
+        <line x1="118" y1="104" x2="118" y2="248" stroke="#e5e7eb"></line>
+        <line x1="154" y1="104" x2="154" y2="248" stroke="#e5e7eb"></line>
+        <line x1="190" y1="104" x2="190" y2="248" stroke="#e5e7eb"></line>
+        <line x1="82" y1="140" x2="226" y2="140" stroke="#e5e7eb"></line>
+        <line x1="82" y1="176" x2="226" y2="176" stroke="#e5e7eb"></line>
+        <line x1="82" y1="212" x2="226" y2="212" stroke="#e5e7eb"></line>
+        <g transform="translate(118,140) rotate(-18) scale(0.68)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(154,140) rotate(22) scale(0.32)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(190,140) rotate(8) scale(0.58)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(118,176) rotate(35) scale(0.26)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(154,176) rotate(0) scale(0.76)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(190,176) rotate(-24) scale(0.42)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(118,212) rotate(16) scale(0.54)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(154,212) rotate(-32) scale(0.3)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(190,212) rotate(28) scale(0.64)">
+          <path class="shape-blue" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <text class="tiny" x="154" y="296" text-anchor="middle">Up to 144 evaluations</text>
+        <text class="tiny" x="154" y="312" text-anchor="middle">Up to 15% of time budget</text>
+
+        <path class="arrow" d="M276 160 H332"></path>
+
+        <rect class="box-orange" x="340" y="54" width="142" height="212" rx="12"></rect>
+        <text class="label orange-text" x="411" y="84" text-anchor="middle">Score and rank</text>
+        <rect class="pill" x="366" y="104" width="90" height="28" rx="7"></rect>
+        <text class="tiny" x="411" y="123" text-anchor="middle">Score 0.18</text>
+        <rect class="pill" x="366" y="144" width="90" height="28" rx="7"></rect>
+        <text class="tiny" x="411" y="163" text-anchor="middle">Score 0.21</text>
+        <rect class="pill" x="366" y="184" width="90" height="28" rx="7"></rect>
+        <text class="tiny" x="411" y="203" text-anchor="middle">Score 0.24</text>
+        <text class="tiny" x="411" y="236" text-anchor="middle">Rank by shape</text>
+        <text class="tiny" x="411" y="250" text-anchor="middle">match and score</text>
+
+        <path class="arrow-orange" d="M488 160 H536"></path>
+
+        <rect class="box-green" x="544" y="42" width="122" height="236" rx="12"></rect>
+        <text class="label green-text" x="605" y="74" text-anchor="middle">Initial solutions</text>
+        <g transform="translate(586,120) rotate(0) scale(0.76)">
+          <path class="shape" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(626,166) rotate(-18) scale(0.68)">
+          <path class="shape" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <g transform="translate(590,214) rotate(28) scale(0.64)">
+          <path class="shape" vector-effect="non-scaling-stroke" d="M0 24 C-28 4 -28 -18 -10 -18 C-3 -18 0 -12 0 -12 C0 -12 3 -18 10 -18 C28 -18 28 4 0 24 Z"></path>
+        </g>
+        <text class="tiny" x="605" y="296" text-anchor="middle">Keep the best and</text>
+        <text class="tiny" x="605" y="312" text-anchor="middle">retain diverse picks</text>
+
+        <rect class="callout" x="104" y="326" width="492" height="24" rx="7"></rect>
+        <text class="tiny" x="350" y="342" text-anchor="middle">Starting from several distant seeds reduces getting stuck in local minima</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="figure" id="multi">
+    <div class="figure-header">
+      <div class="figure-label">Figure 9</div>
+      <h2>Multi-part shapes</h2>
+      <p>Share one global transform; allow small per-part translation offsets only.</p>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 24 700 336" role="img" aria-label="Multi-part shapes">
+        <rect class="box" x="34" y="42" width="246" height="212" rx="12"></rect>
+        <text class="label" x="157" y="72" text-anchor="middle">Input shape</text>
+        <circle class="shape-blue" cx="157" cy="150" r="52"></circle>
+        <circle class="node-blue" cx="137" cy="136" r="7"></circle>
+        <circle class="node-blue" cx="178" cy="136" r="7"></circle>
+        <path class="shape-blue" d="M126 174 C146 196 168 196 188 174"></path>
+        <text class="tiny" x="157" y="228" text-anchor="middle">Part 0 / 1 / 2 / 3</text>
+
+        <path class="arrow-orange" d="M296 144 H396"></path>
+        <rect class="box-orange" x="298" y="70" width="98" height="52" rx="9"></rect>
+        <text class="small orange-text" x="347" y="91" text-anchor="middle">Global transform</text>
+        <text class="tiny" x="347" y="108" text-anchor="middle">Position, angle, scale</text>
+        <rect class="box-green" x="300" y="174" width="94" height="52" rx="9"></rect>
+        <text class="small green-text" x="347" y="195" text-anchor="middle">Local offset</text>
+        <text class="tiny" x="347" y="212" text-anchor="middle">Translation only</text>
+
+        <rect class="box-blue" x="420" y="42" width="246" height="212" rx="12"></rect>
+        <text class="label" x="543" y="72" text-anchor="middle">Placement on map</text>
+        <g transform="translate(543,153) scale(1.03)">
+          <circle class="shape-dashed" cx="0" cy="0" r="52"></circle>
+          <circle fill="#c45c3e" cx="-24" cy="-19" r="7"></circle>
+          <circle fill="#c45c3e" cx="22" cy="-13" r="7"></circle>
+          <path class="shape" d="M-26 27 C-6 49 16 49 36 27"></path>
+        </g>
+        <text class="tiny" x="543" y="232" text-anchor="middle">Slight per-part position adjustment</text>
+
+        <rect class="callout" x="70" y="286" width="560" height="48" rx="10"></rect>
+        <text class="small" x="350" y="307" text-anchor="middle">Score = arc-length-weighted average + penalty for large offsets</text>
+        <text class="tiny" x="350" y="324" text-anchor="middle">No per-part rotation or scale — keeps eyes and mouth aligned with the sketch</text>
+      </svg>
+    </div>
+  </section>
+</main>
+</body>
+</html>

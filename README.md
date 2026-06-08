@@ -1,45 +1,50 @@
-# map-draw-optimizer
+**English** | [日本語](README.ja.md)
 
-**手描きGPSアート** — 手描きの形と地図を扱うためのモノレポ（初期は UI と OSM 確認用 API のみ）。
+# Hand-drawn GPS Art Optimizer
 
-## 必要なもの
+Draw a shape on a canvas and find a running route on nearby roads that follows it. The app fetches OpenStreetMap data, builds a road graph, and searches for a good placement (translation, rotation, scale) with multi-start simulated annealing.
 
-- Node.js（プロジェクトでは Vite 8 を使用）
-- Python 3.11+ 推奨
+**Live demo:** [gps-art.pages.dev](https://gps-art.pages.dev)
 
-## 起動
+![App screenshot](https://static.zenn.studio/user-upload/85a3a7484167-20260524.png)
 
-### バックエンド
+## Setup
+
+**Requirements:** Node.js (Vite 8), Python 3.11+
+
+### Backend
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env        # 任意
+cp .env.example .env        # optional
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-テスト実行:
+Run tests: `pytest`
 
-```bash
-pytest
-```
+### Frontend
 
-### フロントエンド
-
-別ターミナルで:
+In another terminal:
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # 任意（開発 UI 用）
+cp .env.example .env        # optional
 npm run dev
 ```
 
-ブラウザで `http://localhost:5173` を開く。開発時は Vite が `/api` と `/health` を `http://127.0.0.1:8000` にプロキシする。
+Open `http://localhost:5173`. Vite proxies `/api` and `/health` to `http://127.0.0.1:8000`.
 
-- メイン: `/`
-- デバッグ: `/debug`（`VITE_APP_ENV=development` のときのみ。未設定の `vite dev` でも development）
+Set `VITE_APP_ENV=development` to enable the text input tool, target-distance UI, and `/debug` page locally. Set `APP_ENV=development` on the backend to enable `/api/debug/*`.
 
-詳細な共有用メモは [`docs/`](docs/) を参照。
+## Documentation
+
+[docs/](docs/README.md) — architecture, preprocessing, optimization, local development.
+
+- [English](docs/en/)
+- [日本語](docs/ja/)
+
+Pipeline diagrams: [English](docs/en/article_visuals.html) · [日本語](docs/ja/article_visuals.html)
